@@ -1,0 +1,45 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Gitflow-Simple Rule
+
+**提醒：** 修改程式碼時，請遵循 Git Flow 規範。
+
+## 1. 主要分支
+
+*   `main`: 正式版
+*   `develop`: 開發版
+*   `feature/*`: 新功能
+*   `hotfix/*`: 緊急修復
+
+## 2. 命名規則
+
+*   功能: `feature/簡短描述`
+*   修復: `hotfix/簡短描述`
+
+## 3. Commit 規範
+
+*   **格式**: `類型: 說明`
+    *   範例: `feat: 新增登入功能`, `fix: 修復首頁排版`
+*   **類型**:
+    *   `feat`: 新功能
+    *   `fix`: 修復
+    *   `docs`: 文件
+    *   `style`: 格式
+    *   `refactor`: 重構
+
+## 4. 基本流程
+
+*   **新功能**:
+    1.  從 `develop` 開 `feature` 分支
+    2.  完成後合併回 `develop`
+*   **緊急修復**:
+    1.  從 `main` 開 `hotfix` 分支
+    2.  完成後合併回 `main` 和 `develop`
+
+## 5. 保護設定
+
+*   `main` 分支需審核合併
+*   禁止直接推送 `main`
