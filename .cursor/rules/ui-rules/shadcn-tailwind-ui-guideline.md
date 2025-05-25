@@ -1,3 +1,5 @@
+<!-- Source: https://github.com/RayFernando1337/llm-cursor-rules/blob/main/fire-your-design-team.md -->
+
 # shadcn/ui with Tailwind v4 Design System Guidelines
 
 This document outlines design principles and implementation guidelines for applications using shadcn/ui with Tailwind v4. These guidelines ensure consistency, accessibility, and best practices throughout the UI development process.

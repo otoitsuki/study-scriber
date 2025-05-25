@@ -1,7 +1,9 @@
 ---
 description: Python best practices and patterns for modern software development with Flask and SQLite
 globs: **/*.py, src/**/*.py, tests/**/*.py
+alwaysApply: false
 ---
+<!-- Source: https://github.com/sanjeed5/awesome-cursor-rules-mdc/tree/main/rules-mdc -->
 
 # Python Best Practices
 
