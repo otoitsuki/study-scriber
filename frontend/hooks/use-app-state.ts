@@ -51,6 +51,7 @@ const mapBackendToFrontendState = (
       break
     case "error":
       resultState = "default" // 錯誤時回到預設狀態
+      console.log('🔄 [狀態映射] 檢測到錯誤狀態，轉換到 default')
       break
     default:
       resultState = "default"
@@ -225,6 +226,57 @@ export function useAppState() {
     session.currentSession,
     session.finishSession
   ])
+
+  // 監聽錄音和轉錄錯誤，處理錯誤狀態
+  useEffect(() => {
+    const recordingError = recording.error
+    const transcriptError = transcript.error
+
+    if (recordingError || transcriptError) {
+      console.log('🚨 [錯誤處理] 檢測到錯誤:', {
+        recordingError,
+        transcriptError,
+        currentState: appData.state,
+        sessionId: session.currentSession?.id
+      })
+
+      // 如果是錄音相關錯誤，停止錄音並回到預設狀態
+      if (appData.state === "recording_waiting" || appData.state === "recording_active") {
+        console.log('🚨 [錯誤處理] 錄音狀態錯誤，停止錄音並回到預設狀態')
+
+        // 停止錄音
+        recording.stopRecording()
+
+        // 清理連線
+        transcript.disconnect()
+
+        // 回到預設狀態
+        setAppData(prev => ({ ...prev, state: "default" }))
+
+        // 顯示錯誤訊息
+        const errorMessage = recordingError || transcriptError || '錄音或轉錄過程中發生錯誤'
+        toast({
+          title: '錄音錯誤',
+          description: errorMessage,
+          variant: 'destructive',
+        })
+      }
+
+      // 如果是處理狀態的錯誤，也回到預設狀態
+      if (appData.state === "processing") {
+        console.log('🚨 [錯誤處理] 處理狀態錯誤，回到預設狀態')
+
+        setAppData(prev => ({ ...prev, state: "default" }))
+
+        const errorMessage = transcriptError || recordingError || '處理轉錄過程中發生錯誤'
+        toast({
+          title: '處理錯誤',
+          description: errorMessage,
+          variant: 'destructive',
+        })
+      }
+    }
+  }, [recording.error, transcript.error, appData.state, session.currentSession, recording, transcript, toast])
 
   // 建立純筆記會話
   const createNoteSession = useCallback(async (title: string) => {

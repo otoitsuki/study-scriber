@@ -50,6 +50,15 @@ export function useTranscript(): UseTranscriptReturn {
             return
         }
 
+        // 處理轉錄錯誤 (需要類型轉換因為 TranscriptMessage 不包含錯誤類型)
+        const anyMessage = transcript as any
+        if (anyMessage.type === 'error' || anyMessage.type === 'transcription_error') {
+            console.error('🚨 [useTranscript] 收到轉錄錯誤:', transcript)
+            const errorMessage = anyMessage.error_message || anyMessage.details || '轉錄過程中發生錯誤'
+            setError(errorMessage)
+            return
+        }
+
         // 只處理逐字稿片段類型的訊息
         if (transcript.type !== 'transcript_segment') {
             console.log('⚠️ [useTranscript] 跳過非逐字稿片段訊息:', transcript.type)

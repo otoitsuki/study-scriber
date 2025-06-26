@@ -235,6 +235,17 @@ class TranscriptManager {
         phase: message.phase,
         timestamp: new Date().toISOString()
       })
+    } else if (message.type === 'error' || message.type === 'transcription_error') {
+      console.error('🚨 [TranscriptManager] 收到轉錄錯誤:', {
+        sessionId,
+        type: message.type,
+        error_type: message.error_type,
+        error_message: message.error_message,
+        details: message.details,
+        timestamp: new Date().toISOString()
+      })
+      // 廣播錯誤訊息給監聽器
+      this.broadcastToListeners(sessionId, message)
     } else {
       console.log('📨 [TranscriptManager] 未知訊息類型:', {
         sessionId,
