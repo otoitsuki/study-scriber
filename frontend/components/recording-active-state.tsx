@@ -3,16 +3,15 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Square, Lock, Unlock, RotateCcw } from "lucide-react"
+import { Square, Lock, Unlock } from "lucide-react"
 import type { TranscriptEntry } from "../types/app-state"
 
 interface RecordingActiveStateProps {
     transcriptEntries: TranscriptEntry[]
     onStopRecording: () => void
-    onNewNote?: () => void
 }
 
-export function RecordingActiveState({ transcriptEntries, onStopRecording, onNewNote }: RecordingActiveStateProps) {
+export function RecordingActiveState({ transcriptEntries, onStopRecording }: RecordingActiveStateProps) {
     const scrollAreaRef = useRef<HTMLDivElement>(null)
     const [isAutoScrollLocked, setIsAutoScrollLocked] = useState(true)
     const [userScrollTimeout, setUserScrollTimeout] = useState<NodeJS.Timeout | null>(null)
@@ -119,47 +118,30 @@ export function RecordingActiveState({ transcriptEntries, onStopRecording, onNew
                 </div>
             </ScrollArea>
 
-            <div className="p-4 border-t border-border space-y-2">
-                {/* New Note 按鈕 - 在錄音過程中也可以使用 */}
-                {onNewNote && (
-                    <div className="flex justify-center">
-                        <Button
-                            onClick={onNewNote}
-                            variant="outline"
-                            size="sm"
-                            className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
-                        >
-                            <RotateCcw className="w-4 h-4" />
-                            New note
-                        </Button>
-                    </div>
-                )}
+            <div className="p-4 border-t border-border flex justify-between items-center">
+                <Button
+                    onClick={toggleAutoScrollLock}
+                    variant="ghost"
+                    size="sm"
+                    className="flex items-center gap-2 text-muted-foreground"
+                >
+                    {isAutoScrollLocked ? (
+                        <>
+                            <Lock className="w-4 h-4" />
+                            Auto-scroll
+                        </>
+                    ) : (
+                        <>
+                            <Unlock className="w-4 h-4" />
+                            Manual
+                        </>
+                    )}
+                </Button>
 
-                <div className="flex justify-between items-center">
-                    <Button
-                        onClick={toggleAutoScrollLock}
-                        variant="ghost"
-                        size="sm"
-                        className="flex items-center gap-2 text-muted-foreground"
-                    >
-                        {isAutoScrollLocked ? (
-                            <>
-                                <Lock className="w-4 h-4" />
-                                Auto-scroll
-                            </>
-                        ) : (
-                            <>
-                                <Unlock className="w-4 h-4" />
-                                Manual
-                            </>
-                        )}
-                    </Button>
-
-                    <Button onClick={onStopRecording} variant="destructive" size="sm" className="flex items-center gap-2">
-                        <Square className="w-4 h-4" />
-                        Stop
-                    </Button>
-                </div>
+                <Button onClick={onStopRecording} variant="destructive" size="sm" className="flex items-center gap-2">
+                    <Square className="w-4 h-4" />
+                    Stop
+                </Button>
             </div>
         </div>
     )

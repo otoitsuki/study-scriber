@@ -8,16 +8,14 @@ interface RecordingStateProps {
   transcriptEntries: TranscriptEntry[]
   recordingTime: number
   onStopRecording: () => void
-  onNewNote?: () => void
 }
 
-export function RecordingState({ transcriptEntries, recordingTime, onStopRecording, onNewNote }: RecordingStateProps) {
+export function RecordingState({ transcriptEntries, recordingTime, onStopRecording }: RecordingStateProps) {
   if (transcriptEntries.length === 0) {
     return (
       <RecordingWaitingState
         recordingTime={recordingTime}
         onStopRecording={onStopRecording}
-        onNewNote={onNewNote}
       />
     )
   }
@@ -25,7 +23,6 @@ export function RecordingState({ transcriptEntries, recordingTime, onStopRecordi
     <RecordingActiveState
       transcriptEntries={transcriptEntries}
       onStopRecording={onStopRecording}
-      onNewNote={onNewNote}
     />
   )
 }

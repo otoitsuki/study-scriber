@@ -4,6 +4,8 @@ import dynamic from "next/dynamic"
 import "easymde/dist/easymde.min.css"
 import { useMemo, useState } from "react"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { RotateCcw, Download } from "lucide-react"
 
 // 動態匯入 SimpleMDE 以避免 SSR 問題
 const SimpleMDE = dynamic(() => import("react-simplemde-editor"), {
@@ -15,7 +17,6 @@ import { DefaultState } from "./components/default-state"
 import { RecordingState } from "./components/recording-state"
 import { WaitingState } from "./components/waiting-state"
 import { FinishState } from "./components/finish-state"
-import { Button } from "@/components/ui/button"
 
 export default function Component() {
   const { appData, isLoading, error, startRecording, stopRecording, newNote, saveLocalDraft, session } = useAppState()
@@ -69,8 +70,6 @@ export default function Component() {
             console.log("📱 StudyScriber: 準備調用 startRecording，標題:", draftTitle)
             startRecording(draftTitle)
           }}
-          onNewNote={newNote}
-          hasActiveSession={!!session}
         />
       case "recording_active":
         return (
@@ -78,7 +77,6 @@ export default function Component() {
             transcriptEntries={appData.transcriptEntries}
             recordingTime={appData.recordingTime}
             onStopRecording={stopRecording}
-            onNewNote={newNote}
           />
         )
       case "recording_waiting":
@@ -87,7 +85,6 @@ export default function Component() {
             transcriptEntries={[]}
             recordingTime={appData.recordingTime}
             onStopRecording={stopRecording}
-            onNewNote={newNote}
           />
         )
       case "processing":
@@ -96,7 +93,6 @@ export default function Component() {
         return (
           <FinishState
             transcriptEntries={appData.transcriptEntries}
-            onNewNote={newNote}
             onExport={() => {
               // TODO: 實現匯出功能
               console.log('Export functionality not implemented yet')
@@ -113,8 +109,6 @@ export default function Component() {
             console.log("📱 StudyScriber: 準備調用 startRecording (default)，標題:", draftTitle)
             startRecording(draftTitle)
           }}
-          onNewNote={newNote}
-          hasActiveSession={!!session}
         />
     }
   }
@@ -125,17 +119,27 @@ export default function Component() {
       <div className="bg-background border-b border-border px-6 flex-shrink-0 w-full h-20 flex justify-between items-center">
         <h1 className="text-2xl font-semibold text-foreground">Study Scriber</h1>
 
-        {/* Show action buttons only in finished state */}
-        {appData.state === "finished" && (
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={newNote} size="sm" className="px-4 h-8">
-              New note
-            </Button>
-            <Button onClick={() => console.log('Export functionality')} size="sm" className="px-4 h-8">
+        {/* Header action buttons */}
+        <div className="flex gap-2">
+          {/* New note 按鈕 - 在有活躍會話或需要的狀態下顯示 */}
+          {((appData.state === "default" && !!session) ||
+            appData.state === "recording_waiting" ||
+            appData.state === "recording_active" ||
+            appData.state === "finished") && (
+              <Button variant="outline" onClick={newNote} size="sm" className="px-4 h-8 flex items-center gap-2">
+                <RotateCcw className="w-4 h-4" />
+                New note
+              </Button>
+            )}
+
+          {/* Export 按鈕 - 只在 finished 狀態顯示 */}
+          {appData.state === "finished" && (
+            <Button onClick={() => console.log('Export functionality')} size="sm" className="px-4 h-8 flex items-center gap-2">
+              <Download className="w-4 h-4" />
               Export
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Main Content - Two Panel Layout - Adjusted for fixed header height */}

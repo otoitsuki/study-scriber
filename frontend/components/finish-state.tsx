@@ -2,17 +2,16 @@
 
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Download, RotateCcw, ChevronDown } from "lucide-react"
+import { Download, ChevronDown } from "lucide-react"
 import type { TranscriptEntry } from "../types/app-state"
 
 interface FinishStateProps {
   transcriptEntries: TranscriptEntry[]
-  onNewNote?: () => void
   onExport?: () => void
   onToLatest?: () => void
 }
 
-export function FinishState({ transcriptEntries, onNewNote, onExport, onToLatest }: FinishStateProps) {
+export function FinishState({ transcriptEntries, onExport, onToLatest }: FinishStateProps) {
   return (
     <div className="h-full flex flex-col">
       <ScrollArea className="flex-1">
@@ -31,28 +30,6 @@ export function FinishState({ transcriptEntries, onNewNote, onExport, onToLatest
       <div className="p-4 border-t border-border space-y-2">
         {/* Action buttons row */}
         <div className="flex justify-center gap-2">
-          {onExport && (
-            <Button
-              onClick={onExport}
-              variant="default"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              Export
-            </Button>
-          )}
-          {onNewNote && (
-            <Button
-              onClick={onNewNote}
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <RotateCcw className="w-4 h-4" />
-              New note
-            </Button>
-          )}
           {onToLatest && (
             <Button
               onClick={onToLatest}
