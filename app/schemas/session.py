@@ -17,22 +17,22 @@ class SessionCreateRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=150, description="會話標題")
     type: SessionType = Field(SessionType.NOTE_ONLY, description="會話類型")
     language: LanguageCode = Field(LanguageCode.ZH_TW, description="語言設定")
+    content: Optional[str] = Field(None, description="初始筆記內容")
 
 
 class SessionOut(BaseModel):
     """會話輸出模型"""
-    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    type: SessionType
+    status: SessionStatus
+    title: Optional[str] = None
+    language: LanguageCode
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
 
-    id: UUID = Field(description="會話唯一識別碼")
-    title: Optional[str] = Field(description="會話標題")
-    type: SessionType = Field(description="會話類型")
-    status: SessionStatus = Field(description="會話狀態")
-    active: bool = Field(description="是否為活躍會話")
-    duration: Optional[int] = Field(None, description="錄音時長（秒）")
-    language: LanguageCode = Field(description="語言設定")
-    error_reason: Optional[str] = Field(None, description="錯誤原因")
-    created_at: datetime = Field(description="建立時間")
-    updated_at: datetime = Field(description="更新時間")
+    class Config:
+        from_attributes = True
 
 
 class SessionUpgradeRequest(BaseModel):

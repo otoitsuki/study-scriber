@@ -19,7 +19,7 @@ class SupabaseConfig:
     def __init__(self):
         self.supabase_url = os.getenv("SUPABASE_URL")
         self.supabase_key = os.getenv("SUPABASE_KEY")  # 可以是 anon key 或 service key
-        self.db_mode = os.getenv("DB_MODE", "local")
+        self.db_mode = os.getenv("DB_MODE")
 
     def is_configured(self) -> bool:
         """檢查 Supabase 是否已正確配置"""

@@ -26,7 +26,10 @@ class NoteSaveRequest(BaseModel):
 
 class NoteOut(BaseModel):
     """筆記輸出模型"""
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={UUID: str}  # 添加 UUID 到字串的序列化器
+    )
 
     session_id: UUID = Field(description="會話 ID")
     content: str = Field(description="筆記內容")
@@ -44,6 +47,8 @@ class NoteSaveResponse(BaseModel):
 
 class NoteConflictError(BaseModel):
     """筆記衝突錯誤（客戶端時間戳較舊）"""
+    model_config = ConfigDict(json_encoders={UUID: str})
+
     error: str = Field("note_conflict", description="錯誤類型")
     message: str = Field(description="錯誤訊息")
     server_note: NoteOut = Field(description="伺服器端較新的筆記資料")

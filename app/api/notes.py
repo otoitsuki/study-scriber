@@ -7,13 +7,10 @@ StudyScriber Notes 管理 API 端點
 from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
+from supabase import Client
+import json
 
-from app.db.database import get_async_session
-from app.db.models import Session, Note, SessionStatus
+from app.db.database import get_supabase_client
 from app.schemas.note import (
     NoteSaveRequest, NoteOut, NoteSaveResponse, NoteConflictError
 )
@@ -27,7 +24,7 @@ router = APIRouter(prefix="/api", tags=["筆記管理"])
 async def save_note(
     session_id: UUID,
     request: NoteSaveRequest,
-    db: AsyncSession = Depends(get_async_session)
+    supabase: Client = Depends(get_supabase_client)
 ) -> NoteSaveResponse:
     """
     儲存筆記內容 (B-003)
@@ -39,37 +36,34 @@ async def save_note(
     """
     try:
         # 檢查會話是否存在且可編輯
-        session = await _ensure_session_editable(db, session_id)
+        session = await _ensure_session_editable(supabase, session_id)
 
         # 檢查是否已存在筆記
-        existing_note = await _get_existing_note(db, session_id)
+        existing_note = await _get_existing_note(supabase, session_id)
 
         if existing_note:
             # 更新現有筆記
-            updated_note = await _update_note(db, existing_note, request)
+            updated_note = await _update_note(supabase, existing_note, request)
         else:
             # 建立新筆記
-            updated_note = await _create_note(db, session_id, request)
+            updated_note = await _create_note(supabase, session_id, request)
 
         # 更新會話時間戳
-        await _update_session_timestamp(db, session)
+        await _update_session_timestamp(supabase, session_id)
 
-        # 提交異動
-        await db.commit()
-        await db.refresh(updated_note)
+        # 準備時間戳
+        server_ts = datetime.fromisoformat(updated_note['updated_at'].replace('Z', '+00:00')) if 'Z' in updated_note['updated_at'] else datetime.fromisoformat(updated_note['updated_at'])
 
         return NoteSaveResponse(
             success=True,
             message="筆記已成功儲存",
-            server_ts=updated_note.updated_at,
+            server_ts=server_ts,
             note=NoteOut.model_validate(updated_note)
         )
 
     except HTTPException:
-        await db.rollback()
         raise
     except Exception as e:
-        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": "internal_error", "message": f"儲存筆記時發生錯誤: {str(e)}"}
@@ -79,7 +73,7 @@ async def save_note(
 @router.get("/notes/{session_id}", response_model=NoteOut)
 async def get_note(
     session_id: UUID,
-    db: AsyncSession = Depends(get_async_session)
+    supabase: Client = Depends(get_supabase_client)
 ) -> NoteOut:
     """
     取得筆記內容
@@ -89,19 +83,19 @@ async def get_note(
     """
     try:
         # 檢查會話是否存在
-        await _ensure_session_exists(db, session_id)
+        await _ensure_session_exists(supabase, session_id)
 
         # 查詢筆記
-        note = await _get_existing_note(db, session_id)
+        note = await _get_existing_note(supabase, session_id)
 
         if not note:
             # 如果筆記不存在，返回空白筆記
-            note = Note(
-                session_id=session_id,
-                content="",
-                updated_at=datetime.utcnow(),
-                client_ts=None
-            )
+            note = {
+                'session_id': str(session_id),
+                'content': "",
+                'updated_at': datetime.utcnow().isoformat(),
+                'client_ts': None
+            }
 
         return NoteOut.model_validate(note)
 
@@ -116,79 +110,111 @@ async def get_note(
 
 # 私有輔助函式
 
-async def _ensure_session_exists(db: AsyncSession, session_id: UUID) -> Session:
+async def _ensure_session_exists(supabase: Client, session_id: UUID) -> dict:
     """確保會話存在"""
-    session = await db.get(Session, session_id)
-    if not session:
+    response = supabase.table("sessions").select("*").eq("id", str(session_id)).limit(1).execute()
+
+    if not response.data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "session_not_found", "message": "指定的會話不存在"}
         )
-    return session
+
+    return response.data[0]
 
 
-async def _ensure_session_editable(db: AsyncSession, session_id: UUID) -> Session:
+async def _ensure_session_editable(supabase: Client, session_id: UUID) -> dict:
     """確保會話存在且可編輯"""
-    session = await _ensure_session_exists(db, session_id)
+    session = await _ensure_session_exists(supabase, session_id)
 
     # 檢查會話狀態是否允許編輯
-    if session.status in [SessionStatus.ERROR]:
+    if session.get('status') == 'error':
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": "session_not_editable",
-                "message": f"會話狀態為 {session.status.value}，無法編輯筆記"
+                "message": f"會話狀態為 {session.get('status')}，無法編輯筆記"
             }
         )
 
     return session
 
 
-async def _get_existing_note(db: AsyncSession, session_id: UUID) -> Note | None:
+async def _get_existing_note(supabase: Client, session_id: UUID) -> dict | None:
     """取得現有筆記"""
-    result = await db.execute(
-        select(Note).where(Note.session_id == session_id)
-    )
-    return result.scalar_one_or_none()
+    response = supabase.table("notes").select("id, session_id, content, client_ts, created_at, updated_at").eq("session_id", str(session_id)).limit(1).execute()
+
+    return response.data[0] if response.data else None
 
 
-async def _update_note(db: AsyncSession, note: Note, request: NoteSaveRequest) -> Note:
+async def _update_note(supabase: Client, note: dict, request: NoteSaveRequest) -> dict:
     """更新現有筆記"""
     # 檢查時間戳衝突（如果提供客戶端時間戳）
-    if request.client_ts and note.updated_at > request.client_ts:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=NoteConflictError(
+    if request.client_ts:
+        note_updated_at = datetime.fromisoformat(note['updated_at'].replace('Z', '+00:00'))
+        if note_updated_at > request.client_ts:
+            # 準備伺服器端筆記資料
+            server_note_data = {
+                'session_id': str(note['session_id']),
+                'content': note['content'],
+                'updated_at': note_updated_at,
+                'client_ts': note.get('client_ts')
+            }
+
+            # 建立錯誤物件
+            conflict_error = NoteConflictError(
                 message="客戶端筆記版本較舊，請重新載入最新版本",
-                server_note=NoteOut.model_validate(note),
+                server_note=NoteOut.model_validate(server_note_data),
                 client_ts=request.client_ts,
-                server_ts=note.updated_at
-            ).model_dump()
-        )
+                server_ts=note_updated_at
+            )
+
+            # 使用 model_dump_json 確保完全序列化
+            error_detail_str = conflict_error.model_dump_json()
+            error_detail = json.loads(error_detail_str)
+
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_detail
+            )
 
     # 更新筆記內容
-    note.content = request.content
-    note.client_ts = request.client_ts
-    # updated_at 會由 SQLAlchemy 的 onupdate 自動更新
+    update_data = {
+        'content': request.content,
+        'client_ts': request.client_ts.isoformat() if request.client_ts else None,
+        'updated_at': datetime.utcnow().isoformat()
+    }
 
-    return note
+    response = supabase.table("notes").update(update_data).eq("session_id", str(note['session_id'])).execute()
+
+    if not response.data:
+        raise HTTPException(status_code=500, detail="無法更新筆記")
+
+    return response.data[0]
 
 
-async def _create_note(db: AsyncSession, session_id: UUID, request: NoteSaveRequest) -> Note:
+async def _create_note(supabase: Client, session_id: UUID, request: NoteSaveRequest) -> dict:
     """建立新筆記"""
-    new_note = Note(
-        session_id=session_id,
-        content=request.content,
-        client_ts=request.client_ts
-    )
+    current_time = datetime.utcnow().isoformat()
+    note_data = {
+        'session_id': str(session_id),
+        'content': request.content,
+        'client_ts': request.client_ts.isoformat() if request.client_ts else None,
+        'updated_at': current_time
+    }
 
-    db.add(new_note)
-    await db.flush()  # 確保獲得 updated_at
+    response = supabase.table("notes").insert(note_data).execute()
 
-    return new_note
+    if not response.data:
+        raise HTTPException(status_code=500, detail="無法建立筆記")
+
+    return response.data[0]
 
 
-async def _update_session_timestamp(db: AsyncSession, session: Session) -> None:
+async def _update_session_timestamp(supabase: Client, session_id: UUID) -> None:
     """更新會話時間戳"""
-    # updated_at 會由 SQLAlchemy 觸發器自動更新
-    session.updated_at = datetime.utcnow()  # 觸發更新
+    update_data = {
+        'updated_at': datetime.utcnow().isoformat()
+    }
+
+    supabase.table("sessions").update(update_data).eq("id", str(session_id)).execute()

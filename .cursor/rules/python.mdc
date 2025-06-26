@@ -106,7 +106,7 @@ alwaysApply: false
 - Document environment setup
 
 ## Development Workflow
-- Use virtual environments (venv)
+- Always use virtual environments (uv)
 - Implement pre-commit hooks
 - Use proper Git workflow
 - Follow semantic versioning

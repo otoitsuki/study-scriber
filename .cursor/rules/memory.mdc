@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: true
 ---
 
@@ -30,21 +30,6 @@ When new information relevant to the project's conventions, user preferences, or
 
 Before proposing solutions, code changes, or answering questions, the AI should consult `learned-memories.mdc` to ensure its response aligns with the recorded knowledge and preferences.
 
-## Example Scenario
-
-**User:** "We've decided to use Tailwind v4 for this project, not v3."
-
-**AI Action:**
-
-1.  Recognize this as a project-specific technical decision.
-2.  Check `learned-memories.mdc` for existing Tailwind version information.
-3.  Propose adding or updating an entry in `learned-memories.mdc`:
-    ```markdown
-    ## Technical Decisions
-
-    *   **CSS Framework:** Tailwind v4 is used. Ensure usage aligns with v4 documentation and practices, noting differences from v3.
-    ```
-4.  In subsequent interactions involving Tailwind, the AI will refer to this entry and consult v4 documentation if necessary.
 
 ## Memory File (`.cursor/rules/learned-memories.mdc`)
 

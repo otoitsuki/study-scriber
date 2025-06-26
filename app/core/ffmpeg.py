@@ -327,37 +327,56 @@ def check_ffmpeg_health() -> Dict[str, Any]:
 
         if result.returncode != 0:
             return {
+                "ffmpeg_available": False,
                 "status": "unhealthy",
-                "error": "FFmpeg 不可用",
+                "error": "FFmpeg 執行失敗",
                 "details": result.stderr
             }
 
+        # 解析版本資訊
+        version_line = result.stdout.split('\n')[0] if result.stdout else "Unknown"
+
         # 檢查進程池狀態
-        pool = get_process_pool()
-        with pool.lock:
-            active_count = len(pool.active_processes)
-            pool_count = pool.processes.qsize()
+        try:
+            pool = get_process_pool()
+            with pool.lock:
+                active_count = len(pool.active_processes)
+                pool_count = pool.processes.qsize()
+        except Exception as e:
+            logger.warning(f"無法取得進程池狀態: {e}")
+            active_count = 0
+            pool_count = 0
 
         return {
+            "ffmpeg_available": True,
             "status": "healthy",
-            "ffmpeg_version": result.stdout.split('\n')[0],
+            "version": version_line,
             "active_processes": active_count,
             "pooled_processes": pool_count,
-            "max_processes": pool.max_processes
+            "max_processes": getattr(get_process_pool(), 'max_processes', 3),
+            "installation_path": subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
         }
 
     except subprocess.TimeoutExpired:
         return {
+            "ffmpeg_available": False,
             "status": "unhealthy",
-            "error": "FFmpeg 檢查逾時"
+            "error": "FFmpeg 檢查逾時 (可能系統負載過高)"
         }
     except FileNotFoundError:
         return {
+            "ffmpeg_available": False,
             "status": "unhealthy",
-            "error": "FFmpeg 未安裝"
+            "error": "FFmpeg 未安裝",
+            "install_instructions": {
+                "ubuntu": "sudo apt update && sudo apt install ffmpeg",
+                "macos": "brew install ffmpeg",
+                "docker": "RUN apt-get update && apt-get install -y ffmpeg"
+            }
         }
     except Exception as e:
         return {
+            "ffmpeg_available": False,
             "status": "unhealthy",
-            "error": str(e)
+            "error": f"檢查時發生未預期錯誤: {str(e)}"
         }

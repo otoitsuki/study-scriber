@@ -9,7 +9,7 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE session_status AS ENUM ('active', 'completed');
+    CREATE TYPE session_status AS ENUM ('active', 'completed', 'error');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS notes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
     session_id UUID NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     content TEXT NOT NULL DEFAULT '',
+    client_ts TIMESTAMPTZ NULL COMMENT '客戶端時間戳，用於衝突檢測',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     -- 每個 session 只能有一個筆記
@@ -49,7 +50,8 @@ CREATE TABLE IF NOT EXISTS audio_files (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
     session_id UUID NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     chunk_sequence INTEGER NOT NULL,
-    blob_url TEXT NOT NULL,
+    r2_key TEXT NOT NULL,
+    r2_bucket TEXT NOT NULL,
     file_size INTEGER NOT NULL,
     duration_seconds DECIMAL(10, 3),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -66,6 +68,7 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
     end_time DECIMAL(10, 3) NOT NULL,
     text TEXT NOT NULL,
     confidence DECIMAL(5, 4) DEFAULT 0.0,
+    language lang_code DEFAULT 'zh-TW',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -6,8 +6,8 @@ StudyScriber Supabase 資料庫連接配置
 """
 
 import os
-from sqlalchemy import create_engine, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import create_engine, NullPool, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.pool import NullPool
 from typing import AsyncGenerator
@@ -67,13 +67,57 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     用於 FastAPI 的 Depends()
     """
     if AsyncSessionLocal is None:
-        raise RuntimeError("使用 anon key 時不支援 SQLAlchemy 會話，請使用 Supabase 客戶端")
+        error_msg = (
+            "使用 Supabase 客戶端模式時不支援 SQLAlchemy 會話。\n"
+            "請在您的程式碼中使用 get_supabase_client() 取代 Depends(get_async_session)。\n"
+            "範例: client = get_supabase_client()\n"
+            "      response = client.table('your_table').select('*').execute()"
+        )
+        raise RuntimeError(error_msg)
 
     async with AsyncSessionLocal() as session:
         try:
             yield session
+        except Exception as e:
+            await session.rollback()
+            raise
         finally:
             await session.close()
+
+
+def get_database_mode() -> str:
+    """
+    取得目前的資料庫連接模式
+
+    Returns:
+        str: 'client' 或 'direct'
+    """
+    return 'client' if AsyncSessionLocal is None else 'direct'
+
+
+def is_client_mode() -> bool:
+    """
+    檢查是否為客戶端模式
+
+    Returns:
+        bool: True 如果是客戶端模式
+    """
+    return AsyncSessionLocal is None
+
+
+async def get_database_session_safe():
+    """
+    安全地取得資料庫會話 - 自動根據模式選擇適當的方法
+
+    Returns:
+        AsyncSession 或 Client: 根據模式回傳適當的資料庫連接
+    """
+    if is_client_mode():
+        from .supabase_config import get_supabase_client
+        return get_supabase_client()
+    else:
+        async for session in get_async_session():
+            return session
 
 
 async def check_tables_exist() -> bool:
@@ -169,6 +213,8 @@ async def check_database_connection():
     """
     檢查 Supabase 資料庫連接狀態
     """
+    connection_mode = get_database_mode()
+
     try:
         # 使用 Supabase 客戶端測試連接
         client = get_supabase_client()
@@ -176,11 +222,38 @@ async def check_database_connection():
         # 嘗試執行一個簡單的查詢
         response = client.table('sessions').select("id").limit(1).execute()
 
-        print("✅ Supabase 資料庫連接正常")
+        print(f"✅ Supabase 資料庫連接正常 (模式: {connection_mode.upper()})")
+
+        # 如果是直連模式，額外測試 SQLAlchemy 連接
+        if connection_mode == 'direct' and AsyncSessionLocal is not None:
+            try:
+                async for session in get_async_session():
+                    # 執行簡單查詢測試 SQLAlchemy 連接
+                    result = await session.execute(text("SELECT 1"))
+                    await session.close()
+                    print("✅ SQLAlchemy 連接也正常")
+                    break
+            except Exception as e:
+                print(f"⚠️  SQLAlchemy 連接異常: {e}")
+                print("   將降級使用 Supabase 客戶端模式")
+
         return True
+
     except Exception as e:
         print(f"❌ Supabase 資料庫連接失敗: {e}")
         print("💡 請檢查 SUPABASE_URL 和 SUPABASE_KEY 環境變數")
+
+        # 提供模式特定的診斷建議
+        if connection_mode == 'client':
+            print("💡 客戶端模式診斷建議:")
+            print("   - 確認 SUPABASE_KEY 為 anon key 或 service_role key")
+            print("   - 檢查 RLS (Row Level Security) 設定")
+        else:
+            print("💡 直連模式診斷建議:")
+            print("   - 確認 SUPABASE_KEY 為 service_role key")
+            print("   - 檢查資料庫連接字串格式")
+            print("   - 確認網路防火牆設定")
+
         return False
 
 
@@ -188,24 +261,52 @@ async def get_database_stats():
     """
     取得 Supabase 資料庫統計資訊
     """
+    connection_mode = get_database_mode()
+
     try:
         client = get_supabase_client()
 
         # 檢查各表格的記錄數
         tables = ['sessions', 'notes', 'audio_files', 'transcript_segments', 'transcripts']
-        stats = {}
+        stats = {
+            'connection_mode': connection_mode,
+            'table_counts': {},
+            'total_records': 0
+        }
 
         for table in tables:
             try:
                 # 使用 Supabase 客戶端計算記錄數
                 response = client.table(table).select("*", count="exact").execute()
                 count = response.count if hasattr(response, 'count') else len(response.data)
-                stats[table] = count
-            except Exception:
+                stats['table_counts'][table] = count
+                stats['total_records'] += count
+            except Exception as e:
                 # 如果表格不存在或無法訪問，設為 0
-                stats[table] = 0
+                stats['table_counts'][table] = 0
+                print(f"⚠️  無法取得表格 '{table}' 統計: {e}")
+
+        # 增加連接模式特定的資訊
+        if connection_mode == 'direct':
+            stats['sqlalchemy_available'] = AsyncSessionLocal is not None
+            stats['engine_info'] = {
+                'pool_size': 10,
+                'max_overflow': 20,
+                'pool_recycle': 3600
+            } if AsyncSessionLocal is not None else None
+        else:
+            stats['client_mode_info'] = {
+                'using_supabase_client': True,
+                'rls_enabled': True  # 客戶端模式通常啟用 RLS
+            }
 
         return stats
+
     except Exception as e:
         print(f"❌ 無法取得資料庫統計: {e}")
-        return None
+        return {
+            'connection_mode': connection_mode,
+            'error': str(e),
+            'table_counts': {},
+            'total_records': 0
+        }

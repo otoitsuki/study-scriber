@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 前端除錯</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        .log {
+            background: #f5f5f5;
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+        }
+
+        button {
+            padding: 10px 15px;
+            margin: 5px;
+            cursor: pointer;
+        }
+
+        input {
+            padding: 5px;
+            margin: 5px;
+            width: 300px;
+        }
+
+        .success {
+            color: green;
+        }
+
+        .error {
+            color: red;
+        }
+
+        .info {
+            color: blue;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>WebSocket 前端除錯工具</h1>
+
+        <div class="section">
+            <h3>連接設定</h3>
+            <input type="text" id="sessionId" placeholder="Session ID" value="a16d5a44-1264-45df-8d92-ac1a3bf2d2d8">
+            <button onclick="connectWebSocket()">連接 WebSocket</button>
+            <button onclick="disconnectWebSocket()">斷開連接</button>
+            <button onclick="sendTestMessage()">發送測試訊息</button>
+            <button onclick="clearLog()">清除日誌</button>
+        </div>
+
+        <div class="section">
+            <h3>連接狀態</h3>
+            <div id="status">未連接</div>
+        </div>
+
+        <div class="section">
+            <h3>日誌</h3>
+            <div id="log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let sessionId = null;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+            logDiv.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(status) {
+            document.getElementById('status').textContent = status;
+        }
+
+        function connectWebSocket() {
+            sessionId = document.getElementById('sessionId').value;
+            if (!sessionId) {
+                log('請輸入 Session ID', 'error');
+                return;
+            }
+
+            if (ws) {
+                ws.close();
+            }
+
+            const wsUrl = `ws://localhost:8000/ws/transcript_feed/${sessionId}`;
+            log(`正在連接到: ${wsUrl}`);
+            updateStatus('連接中...');
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function (event) {
+                log('✅ WebSocket 連接成功', 'success');
+                updateStatus('已連接');
+            };
+
+            ws.onmessage = function (event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    log(`📥 收到訊息: ${JSON.stringify(data, null, 2)}`, 'success');
+
+                    // 特別處理逐字稿訊息
+                    if (data.type === 'transcript_segment') {
+                        log(`📝 逐字稿內容: "${data.text}"`, 'success');
+                    }
+                } catch (e) {
+                    log(`📥 收到原始訊息: ${event.data}`, 'info');
+                }
+            };
+
+            ws.onerror = function (error) {
+                log(`❌ WebSocket 錯誤: ${error}`, 'error');
+                updateStatus('錯誤');
+            };
+
+            ws.onclose = function (event) {
+                log(`🔌 WebSocket 關閉: code=${event.code}, reason=${event.reason}`, 'info');
+                updateStatus('已斷開');
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+                log('🔌 手動斷開 WebSocket 連接', 'info');
+                updateStatus('已斷開');
+            }
+        }
+
+        function sendTestMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket 未連接', 'error');
+                return;
+            }
+
+            const message = {
+                type: 'ping',
+                timestamp: Date.now()
+            };
+
+            ws.send(JSON.stringify(message));
+            log(`📤 發送訊息: ${JSON.stringify(message)}`, 'info');
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // 頁面載入時自動連接
+        window.onload = function () {
+            log('🚀 WebSocket 除錯工具已載入', 'info');
+        };
+    </script>
+</body>
+
+</html>

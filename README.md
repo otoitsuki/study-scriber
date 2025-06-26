@@ -16,7 +16,8 @@ StudyScriber 是一個先進的雲端筆記應用程式，專為學習者和專�
 - **Supabase PostgreSQL** - 雲端資料庫平台
 - **SQLAlchemy 2.0** - ORM 與資料庫抽象層
 - **Supabase Python SDK** - 官方客戶端
-- **Azure Services** - 雲端儲存與語音轉錄
+- **Azure OpenAI** - Whisper 語音轉錄服務
+- **Cloudflare R2** - 音檔雲端儲存
 
 ### 前端
 - **React** - 使用者介面框架
@@ -30,8 +31,9 @@ StudyScriber 是一個先進的雲端筆記應用程式，專為學習者和專�
 
 - Python 3.12+
 - **Supabase 帳戶** 
+- **Azure OpenAI 帳戶** (必須，語音轉錄服務)
+- **Cloudflare 帳戶** (可選，音檔儲存)
 - Node.js 18+ (前端開發用)
-- Azure 帳戶 (語音轉錄服務，可選)
 
 ### 1. 建立 Supabase 專案
 
@@ -70,13 +72,16 @@ DB_MODE=supabase
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_KEY=your-anon-public-key
 
-# === Azure 語音服務 (可選) ===
-AZURE_SPEECH_KEY=your_speech_service_key
-AZURE_SPEECH_REGION=eastus
+# === Azure OpenAI 服務 (必須) ===
+AZURE_OPENAI_API_KEY=your-api-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-02-01
+WHISPER_DEPLOYMENT_NAME=whisper-1
 
-# === Azure Blob Storage (可選) ===
-AZURE_STORAGE_CONNECTION_STRING=your_connection_string
-AZURE_CONTAINER_NAME=audio-files
+# === Cloudflare R2 儲存 (可選) ===
+R2_ACCOUNT_ID=your-account-id
+R2_API_TOKEN=your-r2-api-token
+R2_BUCKET_NAME=studyscriber-audio
 ```
 
 ### 4. 初始化 Supabase 資料庫
@@ -117,13 +122,37 @@ python test_final_integration.py
 ✨ 現在可以開始開發 T3 (音檔處理) 和 T4 (逐字稿) 功能了！
 ```
 
-### 6. 啟動開發伺服器
+### 6. 設定前端環境變數
 
 ```bash
-python main.py
+cd frontend
+cp .env.example .env.local
 ```
 
-API 服務將在 `http://localhost:8000` 啟動。
+編輯 `frontend/.env.local` 檔案：
+```env
+# StudyScriber Frontend Environment Variables
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8000
+NODE_ENV=development
+```
+
+### 7. 啟動開發伺服器
+
+#### 後端 (Terminal 1)
+```bash
+uv run python main.py
+```
+
+#### 前端 (Terminal 2)
+```bash
+cd frontend
+pnpm install  # 首次運行
+pnpm dev
+```
+
+- 後端 API 服務：`http://localhost:8000`
+- 前端應用程式：`http://localhost:3000`
 
 ## 📁 專案結構
 
@@ -153,8 +182,8 @@ study-scriber/
 
 ### 主要表格
 
-- **sessions** - 會話管理（純筆記或錄音模式）
-- **notes** - Markdown 筆記內容
+- **sessions** - 會話管理（純筆記或錄音模式），支援 active/completed/error 狀態
+- **notes** - Markdown 筆記內容，支援客戶端時間戳衝突檢測
 - **audio_files** - 音檔切片記錄
 - **transcript_segments** - 逐字稿片段
 - **transcripts** - 完整逐字稿
@@ -173,7 +202,7 @@ study-scriber/
 
 1. **自定義類型 (Enum)**
    - `session_type`: `'note_only'`, `'recording'`
-   - `session_status`: `'active'`, `'completed'`
+   - `session_status`: `'active'`, `'completed'`, `'error'`
    - `lang_code`: `'zh-TW'`, `'en-US'`
 
 2. **表格建立**
@@ -187,6 +216,37 @@ study-scriber/
 4. **觸發器設定**
    - 自動更新時間戳
    - 單一活躍會話保護
+
+## 🧪 測試
+
+### 前端單元測試
+
+專案已整合 **Vitest** 測試框架，提供 API 層與核心功能的單元測試。
+
+```bash
+cd frontend
+
+# 執行測試
+pnpm test
+
+# 執行測試並顯示 UI
+pnpm test:ui
+
+# 單次執行所有測試
+pnpm test:run
+```
+
+### 測試覆蓋範圍
+
+- ✅ **API 配置測試** - 驗證環境變數配置
+- ✅ **WebSocket URL 建構** - 確保 URL 正確生成
+- ✅ **API 方法存在性** - 驗證所有必要的 API 方法
+
+### 新增測試
+
+測試檔案位於：
+- `frontend/lib/api.test.ts` - API 層測試
+- `frontend/src/test-setup.ts` - 測試環境設定
 
 ## 🔧 開發指南
 
@@ -240,42 +300,6 @@ Supabase 自動提供：
 - 每日自動備份
 - 時間點還原 (Point-in-time recovery)
 - 可在 Dashboard 的 **Settings > Database** 中管理
-
-## 📊 開發進度
-
-### 已完成 ✅
-
-- [x] **T1: 基礎架構**
-  - 完整的 FastAPI 專案結構
-  - Supabase PostgreSQL 資料庫設計
-  - SQLAlchemy 模型定義
-  - 自動初始化機制
-
-- [x] **T2: Session 管理 API**
-  - Session 建立、讀取、更新、列表
-  - 筆記 CRUD 操作
-  - 單一活躍會話保護
-  - 完整測試覆蓋
-
-### 進行中 🚧
-
-- [ ] **T3: 音檔處理**
-  - 音檔上傳與分段儲存
-  - FFmpeg 音訊轉碼
-  - Supabase Storage 整合
-
-- [ ] **T4: 語音轉錄**
-  - Azure Whisper 整合
-  - 即時轉錄功能
-  - 分段與完整逐字稿
-
-### 待開發 📋
-
-- WebSocket 即時功能
-- 匯出功能 (ZIP 包)
-- 前端 React 應用程式
-- 使用者認證與權限
-- Supabase RLS 設定
 
 ## 🚨 常見問題
 

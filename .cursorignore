@@ -3,7 +3,6 @@
 /temp
 .gitignore
 /xnotes
-/.cursor
 /.claude
 /__pycache__
 CLAUDE.local.md

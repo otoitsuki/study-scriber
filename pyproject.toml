@@ -5,31 +5,39 @@ description = "Cloud note tool: record, real-time transcript, Markdown notes & e
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi[standard]>=0.111.0",
-    "uvicorn[standard]>=0.29.0",
-    "sqlalchemy>=2.0.0",
-    "asyncpg>=0.29.0",
-    "psycopg2-binary>=2.9.0",
-    "supabase>=2.0.0",
-    "postgrest>=0.10.0",
-    "python-dotenv>=1.0.0",
-    "ffmpeg-python>=0.2.0",
-    "azure-storage-blob>=12.19.0",
-    "openai>=1.14.0",
-    "pydantic>=2.6.0",
-    "boto3>=1.34.0",
-    "aiosqlite>=0.21.0",
-    "greenlet>=3.2.3",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+    "sqlalchemy",
+    "asyncpg",
+    "psycopg2-binary",
+    "uvloop",
+    "httpx",
+    "loguru",
+    "supabase",
+    "gotrue",
+    "postgrest",
+    "realtime",
+    "storage3",
+    "openai",
+    "aiofiles",
+    "python-multipart",
     # 測試依賴
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "httpx>=0.27.0",
     "pytest-cov>=4.0.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=app"

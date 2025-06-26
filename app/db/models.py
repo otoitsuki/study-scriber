@@ -27,9 +27,10 @@ class SessionType(str, enum.Enum):
 
 
 class SessionStatus(str, enum.Enum):
-    """會話狀態（簡化版）"""
+    """會話狀態"""
     ACTIVE = "active"        # 進行中（可編輯）
     COMPLETED = "completed"  # 已完成（可匯出）
+    ERROR = "error"          # 錯誤狀態（需要處理）
 
 
 class LanguageCode(str, enum.Enum):
@@ -155,6 +156,7 @@ class Note(Base):
     id = Column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
     session_id = Column(PostgresUUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, unique=True)
     content = Column(Text, nullable=False, default="")
+    client_ts = Column(DateTime(timezone=True), nullable=True, comment="客戶端時間戳，用於衝突檢測")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
