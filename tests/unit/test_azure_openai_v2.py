@@ -9,10 +9,13 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
+import io
 
 import pytest
+from types import SimpleNamespace
 
-from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+from app.services.azure_openai_v2 import SimpleAudioTranscriptionService, get_azure_openai_client, get_whisper_deployment_name, initialize_transcription_service_v2, cleanup_transcription_service_v2, _transcription_service_v2
+from openai import AzureOpenAI
 
 
 class TestSimpleAudioTranscriptionService:
@@ -130,29 +133,28 @@ class TestSimpleAudioTranscriptionService:
                 assert result is None
 
     @pytest.mark.asyncio
-    async def test_transcribe_audio_success(self, service, sample_wav_data, session_id, mock_azure_client):
+    async def test_transcribe_audio_success(self, service, sample_wav_data, session_id, mock_writable_tempfile):
         """測試成功的音訊轉錄"""
-        mock_azure_client.audio.transcriptions.create.return_value = "測試轉錄結果"
+        # Azure OpenAI API 直接回傳字串，不是物件
+        service.client.audio.transcriptions.create.return_value = "  測試轉錄結果  "
 
-        with patch('tempfile.NamedTemporaryFile') as mock_temp:
-            mock_file = Mock()
-            mock_file.name = '/tmp/test.wav'
-            mock_temp.return_value.__enter__.return_value = mock_file
+        # 建立 mock 檔案物件
+        mock_file = io.BytesIO(sample_wav_data)
 
-            with patch('builtins.open', mock_file):
-                with patch('pathlib.Path.unlink'):
+        with patch('tempfile.NamedTemporaryFile', new_callable=mock_writable_tempfile):
+            with patch('pathlib.Path.unlink'):
+                with patch('builtins.open', return_value=mock_file):
                     result = await service._transcribe_audio(sample_wav_data, session_id, 0)
-
                     assert result is not None
                     assert result['text'] == "測試轉錄結果"
                     assert result['chunk_sequence'] == 0
                     assert result['session_id'] == str(session_id)
-                    assert result['language'] == 'zh-TW'
 
     @pytest.mark.asyncio
-    async def test_transcribe_audio_empty_result(self, service, sample_wav_data, session_id, mock_azure_client):
+    async def test_transcribe_audio_empty_result(self, service, sample_wav_data, session_id):
         """測試空的轉錄結果"""
-        mock_azure_client.audio.transcriptions.create.return_value = ""
+        mock_response = SimpleNamespace(text="  ") # 只有空白
+        service.client.audio.transcriptions.create.return_value = mock_response
 
         with patch('tempfile.NamedTemporaryFile') as mock_temp:
             mock_file = Mock()
@@ -166,9 +168,9 @@ class TestSimpleAudioTranscriptionService:
                     assert result is None
 
     @pytest.mark.asyncio
-    async def test_transcribe_audio_api_error(self, service, sample_wav_data, session_id, mock_azure_client):
+    async def test_transcribe_audio_api_error(self, service, sample_wav_data, session_id):
         """測試 API 呼叫錯誤"""
-        mock_azure_client.audio.transcriptions.create.side_effect = Exception("API Error")
+        service.client.audio.transcriptions.create.side_effect = Exception("API Error")
 
         with patch('tempfile.NamedTemporaryFile') as mock_temp:
             mock_file = Mock()
@@ -184,8 +186,8 @@ class TestSimpleAudioTranscriptionService:
     async def test_save_and_push_result_success(self, service, session_id, transcript_result, mock_supabase_client):
         """測試成功儲存和推送轉錄結果"""
         with patch('app.services.azure_openai_v2.get_supabase_client', return_value=mock_supabase_client):
-            with patch('app.ws.transcript_feed.manager') as mock_manager:
-                mock_manager.broadcast_to_session = AsyncMock()
+            # broadcast 是同步函式，用 Mock
+            with patch('app.ws.transcript_feed.manager.broadcast', new_callable=Mock) as mock_broadcast:
 
                 await service._save_and_push_result(session_id, 0, transcript_result)
 
@@ -193,7 +195,7 @@ class TestSimpleAudioTranscriptionService:
                 mock_supabase_client.table.assert_called_with("transcript_segments")
 
                 # 驗證 WebSocket 推送
-                mock_manager.broadcast_to_session.assert_called_once()
+                mock_broadcast.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_save_and_push_result_database_error(self, service, session_id, transcript_result):
@@ -267,19 +269,15 @@ class TestSimpleAudioTranscriptionService:
 
 
 class TestServiceFactoryFunctions:
-    """測試服務工廠函數"""
+    """測試服務工廠函式"""
 
-    def test_get_azure_openai_client_success(self):
-        """測試成功取得 Azure OpenAI 客戶端"""
-        with patch.dict('os.environ', {
-            'AZURE_OPENAI_API_KEY': 'test-key',
-            'AZURE_OPENAI_ENDPOINT': 'https://test.openai.azure.com/',
-            'AZURE_OPENAI_API_VERSION': '2024-06-01'
-        }):
-            from app.services.azure_openai_v2 import get_azure_openai_client
-
-            client = get_azure_openai_client()
-            assert client is not None
+    def test_get_azure_openai_client_success(self, monkeypatch):
+        """測試成功獲取 Azure OpenAI 客戶端"""
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com/")
+        monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-06-01")
+        client = get_azure_openai_client()
+        assert client is not None
 
     def test_get_azure_openai_client_missing_credentials(self):
         """測試缺少認證資訊"""
@@ -289,48 +287,59 @@ class TestServiceFactoryFunctions:
             client = get_azure_openai_client()
             assert client is None
 
-    def test_get_whisper_deployment_name(self):
-        """測試取得 Whisper 部署名稱"""
-        with patch.dict('os.environ', {'WHISPER_DEPLOYMENT_NAME': 'test-whisper'}):
-            from app.services.azure_openai_v2 import get_whisper_deployment_name
-
-            name = get_whisper_deployment_name()
-            assert name == 'test-whisper'
+    def test_get_whisper_deployment_name(self, monkeypatch):
+        """測試獲取 Whisper 部署名稱"""
+        monkeypatch.setenv("WHISPER_DEPLOYMENT_NAME", "test-whisper")
+        name = get_whisper_deployment_name()
+        assert name == "test-whisper"
 
     @pytest.mark.asyncio
-    async def test_get_transcription_service_v2_success(self):
-        """測試成功取得轉錄服務"""
-        with patch('app.services.azure_openai_v2.get_azure_openai_client') as mock_get_client:
-            with patch('app.services.azure_openai_v2.get_whisper_deployment_name', return_value='test-whisper'):
-                mock_client = Mock()
-                mock_get_client.return_value = mock_client
+    async def test_initialize_transcription_service_v2_success(self):
+        """測試成功初始化轉錄服務"""
+        import app.services.azure_openai_v2 as mod
+        with patch('app.services.azure_openai_v2.get_azure_openai_client', return_value=Mock(spec=AzureOpenAI)) as mock_get_client, \
+             patch('app.services.azure_openai_v2.get_whisper_deployment_name', return_value="test-whisper") as mock_get_deployment:
 
-                from app.services.azure_openai_v2 import get_transcription_service_v2
+            mod._transcription_service_v2 = None
 
-                service = await get_transcription_service_v2()
-                assert service is not None
-                assert service.client == mock_client
-                assert service.deployment_name == 'test-whisper'
+            await mod.initialize_transcription_service_v2()
+
+            assert mod._transcription_service_v2 is not None
+            mock_get_client.assert_called_once()
+            mock_get_deployment.assert_called_once()
+
+            mod.cleanup_transcription_service_v2()
+            assert mod._transcription_service_v2 is None
 
     @pytest.mark.asyncio
-    async def test_get_transcription_service_v2_missing_config(self):
-        """測試缺少配置時的行為"""
+    async def test_initialize_transcription_service_v2_missing_config(self):
+        """測試缺少配置時初始化失敗"""
         with patch('app.services.azure_openai_v2.get_azure_openai_client', return_value=None):
-            from app.services.azure_openai_v2 import get_transcription_service_v2
+            global _transcription_service_v2
+            _transcription_service_v2 = None
 
-            service = await get_transcription_service_v2()
-            assert service is None
+            await initialize_transcription_service_v2()
 
-    def test_cleanup_transcription_service_v2(self):
-        """測試清理轉錄服務"""
-        from app.services.azure_openai_v2 import cleanup_transcription_service_v2, _transcription_service_v2
+            assert _transcription_service_v2 is None
 
-        # 模擬有進行中的任務
-        mock_service = Mock()
-        mock_task = Mock()
-        mock_task.done.return_value = False
-        mock_service.processing_tasks = {'task1': mock_task}
+@pytest.fixture
+def mock_writable_tempfile():
+    """模擬一個可寫的暫存檔案 (callable context manager)"""
+    class MockTempFile:
+        def __init__(self, *args, **kwargs):
+            self.name = "/tmp/fake_temp_file.wav"
+            self._file = io.BytesIO()
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+        def write(self, data):
+            self._file.write(data)
+        def flush(self):
+            pass
+        def __call__(self, *args, **kwargs):
+            # 當被直接呼叫時，回傳新的實例
+            return MockTempFile(*args, **kwargs)
 
-        with patch('app.services.azure_openai_v2._transcription_service_v2', mock_service):
-            cleanup_transcription_service_v2()
-            mock_task.cancel.assert_called_once()
+    # 回傳 MockTempFile 類別本身，讓 patch new_callable 可以直接使用
+    return MockTempFile

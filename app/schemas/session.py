@@ -3,13 +3,27 @@ StudyScriber Session Pydantic 模型
 
 定義會話相關的請求和響應模型
 """
-
+import enum
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict
 
-from app.db.models import SessionType, SessionStatus, LanguageCode
+class SessionType(str, enum.Enum):
+    """會話類型"""
+    NOTE_ONLY = "note_only"
+    RECORDING = "recording"
+
+class SessionStatus(str, enum.Enum):
+    """會話狀態"""
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    ERROR = "error"
+
+class LanguageCode(str, enum.Enum):
+    """支援的語言代碼"""
+    ZH_TW = "zh-TW"
+    EN_US = "en-US"
 
 
 class SessionCreateRequest(BaseModel):

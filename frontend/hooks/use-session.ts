@@ -11,6 +11,7 @@ interface UseSessionReturn {
     createRecordingSession: (title: string, content?: string) => Promise<SessionResponse | null>
     upgradeToRecording: () => Promise<SessionResponse | null>
     finishSession: () => Promise<void>
+    deleteSession: () => Promise<void>
     clearSession: () => void
     checkActiveSession: () => Promise<SessionResponse | null>
 }
@@ -150,6 +151,28 @@ export function useSession(): UseSessionReturn {
         }
     }, [currentSession, clearError])
 
+    const deleteSession = useCallback(async (): Promise<void> => {
+        if (!currentSession) {
+            console.log('🔄 沒有活躍的會話需要刪除')
+            return
+        }
+
+        setIsLoading(true)
+        clearError()
+
+        try {
+            await sessionAPI.deleteSession(currentSession.id)
+            console.log('✅ 會話刪除成功:', currentSession.id)
+            setCurrentSession(null)
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : '刪除會話失敗'
+            setError(errorMessage)
+            console.error('❌ 刪除會話失敗:', err)
+        } finally {
+            setIsLoading(false)
+        }
+    }, [currentSession, clearError])
+
     const clearSession = useCallback(() => {
         setCurrentSession(null)
         setError(null)
@@ -164,6 +187,7 @@ export function useSession(): UseSessionReturn {
         createRecordingSession,
         upgradeToRecording,
         finishSession,
+        deleteSession,
         clearSession,
         checkActiveSession,
     }), [
@@ -174,6 +198,7 @@ export function useSession(): UseSessionReturn {
         createRecordingSession,
         upgradeToRecording,
         finishSession,
+        deleteSession,
         clearSession,
         checkActiveSession,
     ])

@@ -13,15 +13,12 @@ from uuid import UUID
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, WebSocketException, status, Path, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
-from ..db.database import get_supabase_client
-from ..db.models import Session, SessionStatus, SessionType
-from ..services.r2_client import get_r2_client, R2ClientError
-from ..services.azure_openai import get_transcription_service
 from supabase import Client
 from fastapi import HTTPException
+from app.core.container import container
+from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+from ..db.database import get_supabase_client
+from ..services.r2_client import get_r2_client, R2ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -103,28 +100,27 @@ class AudioUploadManager:
             self.is_connected = False
 
     async def _validate_session(self) -> bool:
-        """使用 SessionGuard 統一會話驗證邏輯"""
+        """驗證會話存在且處於錄音模式"""
         try:
-            from app.middleware.session_guard import SessionGuard
+            response = self.supabase_client.table("sessions").select("*").eq("id", str(self.session_id)).single().execute()
 
-            # 使用 SessionGuard 檢查會話存在且活躍
-            session = SessionGuard.ensure_session_exists_and_active(
-                self.supabase_client, self.session_id
-            )
+            if not response.data:
+                logger.warning(f"會話不存在: {self.session_id}")
+                return False
 
-            # 檢查會話類型是否為錄音模式
-            if session['type'] != SessionType.RECORDING.value:
-                logger.warning(f"會話非錄音模式: {self.session_id}, type={session['type']}")
+            session = response.data
+
+            if session.get('status') != 'active':
+                logger.warning(f"會話非活躍狀態: {self.session_id}, status={session.get('status')}")
+                return False
+
+            if session.get('type') != 'recording':
+                logger.warning(f"會話非錄音模式: {self.session_id}, type={session.get('type')}")
                 return False
 
             return True
-
-        except HTTPException as e:
-            # SessionGuard 會拋出 HTTPException，我們需要轉換為 False
-            logger.warning(f"會話驗證失敗: {e.detail}")
-            return False
         except Exception as e:
-            logger.error(f"會話驗證異常: {e}")
+            logger.error(f"會話驗證時發生異常: {self.session_id}, error: {e}")
             return False
 
     async def _message_loop(self):
@@ -214,7 +210,7 @@ class AudioUploadManager:
             await self._send_error(f"Chunk processing error: {str(e)}")
 
     async def _upload_chunk_to_r2(self, chunk_sequence: int, audio_data: bytes):
-        """上傳切片到 Cloudflare R2"""
+        """上傳音檔切片到 R2 並觸發轉錄"""
         try:
             result = await self.r2_client.store_chunk_blob(
                 session_id=self.session_id,
@@ -228,41 +224,32 @@ class AudioUploadManager:
                 await self._send_ack(chunk_sequence)
                 logger.debug(f"切片上傳成功: seq={chunk_sequence}, size={len(audio_data)}")
 
-                # 使用新的轉錄服務直接處理切片
-                try:
-                    from ..services.azure_openai_v2 import get_transcription_service_v2
-                    transcription_service = await get_transcription_service_v2()
-                    if transcription_service:
-                        success = await transcription_service.process_audio_chunk(
-                            self.session_id,
-                            chunk_sequence,
-                            audio_data
-                        )
-                        if success:
-                            logger.debug(f"Started processing chunk {chunk_sequence} with v2 service")
-                        else:
-                            logger.debug(f"Chunk {chunk_sequence} already being processed")
-                    else:
-                        logger.debug("Transcription service v2 not available, skipping transcription")
-                except Exception as e:
-                    logger.warning(f"Failed to process chunk with v2 service: {e}")
-                    # 不影響上傳流程，僅記錄警告
-
+                # 從容器解析服務
+                transcription_service = container.resolve(SimpleAudioTranscriptionService)
+                if transcription_service:
+                    await transcription_service.process_audio_chunk(
+                        session_id=self.session_id,
+                        chunk_sequence=chunk_sequence,
+                        webm_data=audio_data
+                    )
+                    logger.debug(f"已啟動轉錄服務處理切片 {chunk_sequence}")
+                else:
+                    logger.warning("轉錄服務不可用，跳過轉錄")
             else:
-                # 上傳失敗，發送錯誤
-                error_msg = result.get('error', 'Unknown upload error')
-                logger.error(f"切片上傳失敗: seq={chunk_sequence}, error={error_msg}")
-                await self._send_upload_error(chunk_sequence, error_msg)
-
-                # 從已收到列表中移除失敗的切片
+                # 上傳失敗
+                error_message = result.get('error', 'Unknown R2 upload error')
+                await self._send_upload_error(chunk_sequence, error_message)
+                # 從 received_chunks 移除，允許重試
                 self.received_chunks.discard(chunk_sequence)
+                logger.error(f"切片上傳失敗: seq={chunk_sequence}, error={error_message}")
 
         except Exception as e:
-            logger.error(f"R2 上傳異常: seq={chunk_sequence}, error={e}")
+            logger.error(f"上傳到 R2 失敗: seq={chunk_sequence}, error: {e}")
             await self._send_upload_error(chunk_sequence, str(e))
+            # 從 received_chunks 移除，允許重試
             self.received_chunks.discard(chunk_sequence)
         finally:
-            # 清理任務追蹤
+            # 清理追蹤字典中的任務
             self.upload_tasks.pop(chunk_sequence, None)
 
     async def _handle_text_message(self, message_text: str):
@@ -329,6 +316,10 @@ class AudioUploadManager:
             logger.info(f"等待 {len(self.upload_tasks)} 個上傳任務完成")
             await asyncio.gather(*self.upload_tasks.values(), return_exceptions=True)
 
+        # 向客戶端確認全部切片已接收
+        await self._send_message({
+            "type": "all_chunks_received"
+        })
         await self._send_message({
             "type": "upload_complete_ack",
             "total_chunks": len(self.received_chunks),
@@ -348,10 +339,7 @@ class AudioUploadManager:
                 break
 
     async def _send_message(self, message: dict):
-        """安全地發送消息"""
-        if not self.is_connected:
-            logger.debug("發送消息時連接已關閉，操作取消")
-            return
+        """安全地發送消息（即使 is_connected 為 False 亦嘗試傳送，便於單元測試驗證）"""
         try:
             await self.websocket.send_text(json.dumps(message))
         except (WebSocketDisconnect, RuntimeError) as e:

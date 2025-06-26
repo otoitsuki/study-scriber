@@ -14,7 +14,6 @@ from app.db.database import get_supabase_client
 from app.schemas.note import (
     NoteSaveRequest, NoteOut, NoteSaveResponse, NoteConflictError
 )
-from app.middleware.session_guard import SessionGuard
 
 # 建立路由器
 router = APIRouter(prefix="/api", tags=["筆記管理"])

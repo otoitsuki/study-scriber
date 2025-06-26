@@ -76,21 +76,46 @@ export function useRecording(): UseRecordingReturn {
 
   // 處理逐字稿接收 - 透過 TranscriptManager
   const handleTranscript = useCallback((transcript: TranscriptMessage) => {
-    console.log('📝 收到逐字稿訊息:', transcript)
+    console.log('📝 [useRecording] 收到逐字稿訊息:', {
+      type: transcript.type,
+      text: transcript.text,
+      textLength: transcript.text?.length || 0,
+      start_time: transcript.start_time,
+      end_time: transcript.end_time,
+      start_sequence: transcript.start_sequence,
+      confidence: transcript.confidence,
+      sessionId: currentSessionIdRef.current,
+      timestamp: new Date().toISOString()
+    })
 
     // 處理轉錄完成通知
     if (transcript.type === 'transcript_complete' || transcript.message === 'transcription_complete') {
-      console.log('✅ 逐字稿轉錄完成')
+      console.log('✅ [useRecording] 逐字稿轉錄完成，設定 transcriptCompleted=true')
       setTranscriptCompleted(true)
       return
     }
 
     // 只處理逐字稿片段類型的訊息
-    if (transcript.type !== 'transcript_segment' || !transcript.text) {
+    if (transcript.type !== 'transcript_segment') {
+      console.log('⚠️ [useRecording] 跳過非逐字稿片段訊息:', transcript.type)
       return
     }
 
+    if (!transcript.text) {
+      console.log('⚠️ [useRecording] 跳過空文字逐字稿')
+      return
+    }
+
+    console.log('🔄 [useRecording] 開始處理逐字稿片段...')
+
     setTranscripts((prev) => {
+      console.log('📊 [useRecording] 合併前狀態:', {
+        existingCount: prev.length,
+        newSegmentText: transcript.text,
+        newSegmentSequence: transcript.start_sequence,
+        newSegmentTime: transcript.start_time
+      })
+
       // 使用 start_sequence 作為排序依據，如果沒有則使用時間戳
       const sequence = transcript.start_sequence ?? transcript.timestamp ?? 0
 
@@ -106,7 +131,15 @@ export function useRecording(): UseRecordingReturn {
         return aSequence - bSequence
       })
 
-      console.log(`📝 更新逐字稿: ${updated.length} 個片段`)
+      console.log('📊 [useRecording] 合併後狀態:', {
+        newCount: updated.length,
+        countChange: updated.length - prev.length,
+        filteredCount: filtered.length,
+        isDuplicate: filtered.length === prev.length ? false : true,
+        lastSegmentText: updated[updated.length - 1]?.text?.substring(0, 50) + '...'
+      })
+
+      console.log(`✅ [useRecording] 逐字稿更新完成: ${prev.length} → ${updated.length} 個片段`)
       return updated
     })
   }, [])
@@ -150,19 +183,22 @@ export function useRecording(): UseRecordingReturn {
     }
   }, [])
 
-  // 開始錄音 - 使用 TranscriptManager
+  // 開始錄音 - 優化連線時序和穩定性
   const startRecording = useCallback(async (sessionId: string): Promise<void> => {
     try {
       setError(null)
       setTranscriptCompleted(false)
       currentSessionIdRef.current = sessionId
 
+      console.log('🎤 [useRecording] 開始錄音流程:', { sessionId })
+
       // 確保在瀏覽器環境中執行
       if (typeof window === 'undefined') {
         throw new Error('此功能僅在瀏覽器環境中可用')
       }
 
-      // 建立音檔錄製器（12 秒切片）
+      // 步驟 1: 建立音檔錄製器（12 秒切片）
+      console.log('🎤 [useRecording] 步驟 1: 初始化音檔錄製器')
       const audioRecorder = new AudioRecorder({
         chunkInterval: 12000, // 12 秒切片
         mimeType: 'audio/webm;codecs=opus'
@@ -179,10 +215,15 @@ export function useRecording(): UseRecordingReturn {
         setError(err.message)
       })
 
-      // 初始化音訊權限
+      // 步驟 2: 初始化音訊權限
+      console.log('🎤 [useRecording] 步驟 2: 初始化音訊權限')
       await audioRecorder.initialize()
 
-      // 建立音檔上傳 WebSocket
+      // 步驟 3: 建立 WebSocket 連線（並行建立，確保都就緒）
+      console.log('🎤 [useRecording] 步驟 3: 建立 WebSocket 連線')
+
+      // 3a. 建立音檔上傳 WebSocket
+      console.log('🔌 [useRecording] 建立音檔上傳 WebSocket')
       const uploadWs = new AudioUploadWebSocket(sessionId)
       await uploadWs.connect()
 
@@ -190,24 +231,55 @@ export function useRecording(): UseRecordingReturn {
       uploadWs.onAckMissing(handleAckMissing)
       audioUploadWsRef.current = uploadWs
 
-      // 使用 TranscriptManager 連接逐字稿
+      // 3b. 建立逐字稿接收 WebSocket（透過 TranscriptManager）
+      console.log('🔌 [useRecording] 建立逐字稿接收 WebSocket')
       await transcriptManager.connect(sessionId)
       transcriptManager.addListener(sessionId, handleTranscript)
 
-      // 開始音檔上傳心跳
+      // 步驟 4: 驗證連線狀態
+      console.log('🎤 [useRecording] 步驟 4: 驗證連線狀態')
+      if (!uploadWs.isConnected) {
+        throw new Error('音檔上傳 WebSocket 連線失敗')
+      }
+
+      if (!transcriptManager.isConnected(sessionId)) {
+        throw new Error('逐字稿接收 WebSocket 連線失敗')
+      }
+
+      console.log('✅ [useRecording] 所有 WebSocket 連線已建立')
+
+      // 步驟 5: 啟動心跳機制
+      console.log('🎤 [useRecording] 步驟 5: 啟動心跳機制')
       startHeartbeat(uploadWs)
 
-      // 開始錄音
-      await audioRecorder.startRecording()
+      // 步驟 6: 開始錄音
+      console.log('🎤 [useRecording] 步驟 6: 開始錄音')
+
+      // 先設置錄音狀態，確保狀態映射正確
       setIsRecording(true)
+      console.log('🎤 [useRecording] 錄音狀態已設置為 true')
+
+      await audioRecorder.startRecording()
       startTimer()
 
-      console.log('✅ 錄音開始，Session ID:', sessionId)
+      console.log('✅ [useRecording] 錄音開始成功，Session ID:', sessionId)
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '開始錄音失敗'
       setError(errorMessage)
-      console.error('❌ 開始錄音失敗:', err)
+      console.error('❌ [useRecording] 開始錄音失敗:', err)
+
+      // 錯誤時清理資源
+      if (audioRecorderRef.current) {
+        audioRecorderRef.current.stopRecording()
+      }
+      if (audioUploadWsRef.current) {
+        audioUploadWsRef.current.disconnect()
+        audioUploadWsRef.current = null
+      }
+      if (currentSessionIdRef.current) {
+        transcriptManager.removeListener(currentSessionIdRef.current, handleTranscript)
+      }
     }
   }, [handleAudioChunk, handleAckMissing, handleTranscript, startTimer, startHeartbeat])
 

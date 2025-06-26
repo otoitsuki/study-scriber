@@ -92,6 +92,12 @@ export const sessionAPI = {
     const response = await apiClient.patch(`/api/session/${sessionId}/upgrade`)
     return response.data
   },
+
+  // 刪除會話及其所有相關數據
+  async deleteSession(sessionId: string): Promise<{ success: boolean; message: string }> {
+    const response = await apiClient.delete(`/api/session/${sessionId}`)
+    return response.data
+  },
 }
 
 // Notes API

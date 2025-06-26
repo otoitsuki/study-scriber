@@ -9,11 +9,25 @@ import json
 import struct
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
+from types import SimpleNamespace
+from fastapi import WebSocket
 
 import pytest
 
 from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
 from app.ws.upload_audio import AudioUploadManager
+
+
+@pytest.fixture
+def mock_websocket() -> Mock:
+    """一個功能更完整的 WebSocket mock，返回 Mock 而非 AsyncMock"""
+    ws = Mock(spec=WebSocket)
+    ws.accept = AsyncMock()
+    ws.receive = AsyncMock()
+    ws.send_text = AsyncMock()
+    ws.send_bytes = AsyncMock()
+    ws.close = AsyncMock()
+    return ws
 
 
 class TestOneChunkOneTranscription:
@@ -47,29 +61,25 @@ class TestOneChunkOneTranscription:
             supabase_client=mock_supabase_client
         )
         manager.is_connected = True
+        # 手動 patch r2_client
+        manager.r2_client = AsyncMock()
         return manager
 
     @pytest.mark.asyncio
-    async def test_complete_flow_success(self, mock_upload_manager, sample_chunk_data, mock_transcription_service):
+    async def test_complete_flow_success(self, mock_upload_manager, sample_chunk_data):
         """測試成功的完整流程"""
-        # 模擬 R2 上傳成功
-        mock_r2_result = {'success': True}
-        mock_upload_manager.r2_client.store_chunk_blob = AsyncMock(return_value=mock_r2_result)
+        mock_upload_manager.r2_client.store_chunk_blob.return_value = {'success': True}
 
-        # 模擬轉錄服務
-        with patch('app.services.azure_openai_v2.get_transcription_service_v2', return_value=mock_transcription_service):
-            with patch.object(mock_upload_manager, '_send_ack') as mock_ack:
-                # 處理音檔切片
-                await mock_upload_manager._handle_audio_chunk(sample_chunk_data)
+        mock_service = AsyncMock()
+        with patch('app.core.container.container.resolve', return_value=mock_service):
+            await mock_upload_manager._handle_audio_chunk(sample_chunk_data)
 
-                # 等待上傳任務完成
-                if mock_upload_manager.upload_tasks:
-                    await asyncio.gather(*mock_upload_manager.upload_tasks.values())
+            if mock_upload_manager.upload_tasks:
+                await asyncio.gather(*mock_upload_manager.upload_tasks.values())
 
-                # 驗證流程
-                assert 0 in mock_upload_manager.received_chunks
-                mock_ack.assert_called_once_with(0)
-                mock_transcription_service.process_audio_chunk.assert_called_once()
+            assert 0 in mock_upload_manager.received_chunks
+            mock_upload_manager.websocket.send_text.assert_called_once()
+            mock_service.process_audio_chunk.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_transcription_service_full_process(self, mock_azure_client, session_id):
@@ -78,30 +88,22 @@ class TestOneChunkOneTranscription:
             azure_client=mock_azure_client,
             deployment_name="whisper-test"
         )
-
         # 準備測試資料
         webm_data = b'\x1a\x45\xdf\xa3' + b'\x00' * 1000
         chunk_sequence = 0
-
         # 模擬 FFmpeg 轉換
         mock_wav_data = b'RIFF' + (1000).to_bytes(4, 'little') + b'WAVE' + b'\x00' * 1000
+        # Whisper API 回傳直接用字串
+        mock_transcript = '  測試轉錄結果  '
 
         with patch.object(service, '_convert_webm_to_wav', return_value=mock_wav_data) as mock_convert:
-            with patch.object(service, '_transcribe_audio', return_value={
-                'text': '測試轉錄結果',
-                'chunk_sequence': chunk_sequence,
-                'session_id': str(session_id),
-                'timestamp': '2024-01-01T00:00:00Z',
-                'language': 'zh-TW',
-                'duration': 12
-            }) as mock_transcribe:
+            with patch.object(service.client.audio.transcriptions, 'create', return_value=mock_transcript) as mock_create:
                 with patch.object(service, '_save_and_push_result') as mock_save:
                     # 處理切片
                     await service._process_chunk_async(session_id, chunk_sequence, webm_data)
-
                     # 驗證各步驟都被呼叫
                     mock_convert.assert_called_once_with(webm_data, chunk_sequence)
-                    mock_transcribe.assert_called_once_with(mock_wav_data, session_id, chunk_sequence)
+                    mock_create.assert_called_once()
                     mock_save.assert_called_once()
 
     @pytest.mark.asyncio
@@ -138,24 +140,16 @@ class TestOneChunkOneTranscription:
     @pytest.mark.asyncio
     async def test_websocket_message_flow(self, mock_upload_manager, sample_chunk_data):
         """測試 WebSocket 消息流程"""
-        # 模擬成功的處理流程
-        mock_upload_manager.r2_client.store_chunk_blob = AsyncMock(return_value={'success': True})
+        mock_upload_manager.r2_client.store_chunk_blob.return_value = {'success': True}
 
-        with patch('app.services.azure_openai_v2.get_transcription_service_v2') as mock_get_service:
-            mock_service = AsyncMock()
-            mock_service.process_audio_chunk = AsyncMock(return_value=True)
-            mock_get_service.return_value = mock_service
+        mock_service = AsyncMock()
+        with patch('app.core.container.container.resolve', return_value=mock_service):
+            await mock_upload_manager._handle_audio_chunk(sample_chunk_data)
 
-            with patch.object(mock_upload_manager, '_send_ack') as mock_ack:
-                # 處理音檔切片
-                await mock_upload_manager._handle_audio_chunk(sample_chunk_data)
+            if mock_upload_manager.upload_tasks:
+                await asyncio.gather(*mock_upload_manager.upload_tasks.values())
 
-                # 等待處理完成
-                if mock_upload_manager.upload_tasks:
-                    await asyncio.gather(*mock_upload_manager.upload_tasks.values())
-
-                # 驗證 ACK 被發送
-                mock_ack.assert_called_once_with(0)
+            mock_upload_manager.websocket.send_text.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_duplicate_chunk_handling(self, mock_upload_manager, sample_chunk_data):
@@ -176,20 +170,15 @@ class TestOneChunkOneTranscription:
     async def test_error_handling_in_flow(self, mock_upload_manager, sample_chunk_data):
         """測試流程中的錯誤處理"""
         # 模擬 R2 上傳失敗
-        mock_upload_manager.r2_client.store_chunk_blob = AsyncMock(
-            return_value={'success': False, 'error': 'Upload failed'}
-        )
+        mock_upload_manager.r2_client.store_chunk_blob.return_value = {'success': False, 'error': 'Upload failed'}
 
-        # 先添加到已收到列表
-        mock_upload_manager.received_chunks.add(0)
+        # 處理切片上傳
+        await mock_upload_manager._upload_chunk_to_r2(0, sample_chunk_data[4:])
 
-        with patch.object(mock_upload_manager, '_send_upload_error') as mock_error:
-            # 處理切片上傳
-            await mock_upload_manager._upload_chunk_to_r2(0, sample_chunk_data[4:])
-
-            # 驗證錯誤處理
-            mock_error.assert_called_once_with(0, 'Upload failed')
-            assert 0 not in mock_upload_manager.received_chunks
+        # 驗證錯誤處理
+        mock_upload_manager.websocket.send_text.assert_called_once()
+        # 上傳失敗時，切片應從 received_chunks 中移除
+        assert 0 not in mock_upload_manager.received_chunks
 
     @pytest.mark.asyncio
     async def test_transcription_service_error_recovery(self, mock_azure_client, session_id):

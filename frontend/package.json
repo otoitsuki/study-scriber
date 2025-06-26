@@ -9,7 +9,8 @@
     "start": "next start",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -64,8 +65,6 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@stagewise-plugins/react": "^0.4.8",
-    "@stagewise/toolbar-next": "^0.4.8",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
@@ -79,7 +78,8 @@
     "postcss": "^8.5.0",
     "tailwindcss": "^3.4.17",
     "typescript": "^5",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@playwright/test": "^1.44.1"
   },
   "packageManager": "pnpm@10.7.0+sha1.66453f13fbf9078d3db193718206a8d738afdbdb"
 }

@@ -31,26 +31,57 @@ export function useTranscript(): UseTranscriptReturn {
 
     // 處理逐字稿接收與合併邏輯
     const handleTranscript = useCallback((transcript: TranscriptMessage) => {
-        console.log('📝 use-transcript 收到逐字稿訊息:', transcript)
+        console.log('📝 [useTranscript] 收到逐字稿訊息:', {
+            type: transcript.type,
+            text: transcript.text,
+            textLength: transcript.text?.length || 0,
+            start_time: transcript.start_time,
+            end_time: transcript.end_time,
+            confidence: transcript.confidence,
+            sessionId: currentSessionIdRef.current,
+            currentTranscriptCount: transcripts.length,
+            timestamp: new Date().toISOString()
+        })
 
         // 處理轉錄完成通知
         if (transcript.type === 'transcript_complete' || transcript.message === 'transcription_complete') {
-            console.log('✅ 逐字稿轉錄完成')
+            console.log('✅ [useTranscript] 逐字稿轉錄完成，設定 isCompleted=true')
             setIsCompleted(true)
             return
         }
 
         // 只處理逐字稿片段類型的訊息
-        if (transcript.type !== 'transcript_segment' || !transcript.text) {
+        if (transcript.type !== 'transcript_segment') {
+            console.log('⚠️ [useTranscript] 跳過非逐字稿片段訊息:', transcript.type)
             return
         }
 
+        if (!transcript.text) {
+            console.log('⚠️ [useTranscript] 跳過空文字逐字稿')
+            return
+        }
+
+        console.log('🔄 [useTranscript] 開始處理逐字稿片段...')
+
         setTranscripts((prev) => {
+            console.log('📊 [useTranscript] 合併前狀態:', {
+                existingCount: prev.length,
+                newSegmentText: transcript.text,
+                newSegmentTime: transcript.start_time
+            })
+
             const newTranscripts = mergeSegments(prev, transcript)
-            console.log(`📝 更新逐字稿: ${newTranscripts.length} 個片段`)
+
+            console.log('📊 [useTranscript] 合併後狀態:', {
+                newCount: newTranscripts.length,
+                countChange: newTranscripts.length - prev.length,
+                lastSegmentText: newTranscripts[newTranscripts.length - 1]?.text?.substring(0, 50) + '...'
+            })
+
+            console.log(`✅ [useTranscript] 逐字稿更新完成: ${prev.length} → ${newTranscripts.length} 個片段`)
             return newTranscripts
         })
-    }, [])
+    }, [transcripts.length])
 
     // 逐字稿片段合併邏輯 - 相鄰 ≤1 s 合併段落
     const mergeSegments = useCallback((

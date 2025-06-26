@@ -1,7 +1,8 @@
 // 前端應用狀態 - 對應 PRD 四狀態流程
 export type AppState =
   | "default"     // 預設畫面：可寫筆記，顯示錄音按鈕
-  | "recording"   // 錄音畫面：錄音中，即時顯示逐字稿
+  | "recording_waiting" // 錄音畫面：錄音中，尚未收到逐字稿
+  | "recording_active"  // 錄音畫面：錄音中，已顯示逐字稿
   | "processing"  // 處理畫面：停止錄音後，處理剩餘逐字稿
   | "finished"    // 完整逐字稿畫面：可編輯筆記、匯出、開新筆記
 

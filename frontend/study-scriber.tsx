@@ -64,27 +64,58 @@ export default function Component() {
   const renderRightPanel = () => {
     switch (appData.state) {
       case "default":
-        return <DefaultState onStartRecording={() => {
-          console.log("📱 StudyScriber: 準備調用 startRecording，標題:", draftTitle)
-          startRecording(draftTitle)
-        }} />
-      case "recording":
+        return <DefaultState
+          onStartRecording={() => {
+            console.log("📱 StudyScriber: 準備調用 startRecording，標題:", draftTitle)
+            startRecording(draftTitle)
+          }}
+          onNewNote={newNote}
+          hasActiveSession={!!session}
+        />
+      case "recording_active":
         return (
           <RecordingState
             transcriptEntries={appData.transcriptEntries}
             recordingTime={appData.recordingTime}
             onStopRecording={stopRecording}
+            onNewNote={newNote}
+          />
+        )
+      case "recording_waiting":
+        return (
+          <RecordingState
+            transcriptEntries={[]}
+            recordingTime={appData.recordingTime}
+            onStopRecording={stopRecording}
+            onNewNote={newNote}
           />
         )
       case "processing":
         return <WaitingState />
       case "finished":
-        return <FinishState transcriptEntries={appData.transcriptEntries} />
+        return (
+          <FinishState
+            transcriptEntries={appData.transcriptEntries}
+            onNewNote={newNote}
+            onExport={() => {
+              // TODO: 實現匯出功能
+              console.log('Export functionality not implemented yet')
+            }}
+            onToLatest={() => {
+              // TODO: 實現捲動到最新功能
+              console.log('To Latest functionality not implemented yet')
+            }}
+          />
+        )
       default:
-        return <DefaultState onStartRecording={() => {
-          console.log("📱 StudyScriber: 準備調用 startRecording (default)，標題:", draftTitle)
-          startRecording(draftTitle)
-        }} />
+        return <DefaultState
+          onStartRecording={() => {
+            console.log("📱 StudyScriber: 準備調用 startRecording (default)，標題:", draftTitle)
+            startRecording(draftTitle)
+          }}
+          onNewNote={newNote}
+          hasActiveSession={!!session}
+        />
     }
   }
 

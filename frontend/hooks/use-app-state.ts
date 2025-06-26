@@ -13,25 +13,52 @@ import { useToast } from "@/components/ui/use-toast"
 const mapBackendToFrontendState = (
   status: SessionStatus,
   type: SessionType,
-  isRecording: boolean
+  isRecording: boolean,
+  transcriptsPresent: boolean
 ): AppState => {
+  console.log('🔄 [狀態映射] 輸入參數:', {
+    status,
+    type,
+    isRecording,
+    transcriptsPresent,
+    timestamp: new Date().toISOString()
+  })
+
+  let resultState: AppState
+
   switch (status) {
     case "draft":
-      return "default"
+      resultState = "default"
+      break
     case "active":
       if (type === "recording") {
-        return isRecording ? "recording" : "default"
+        if (!isRecording) {
+          resultState = "default"
+          console.log('🔄 [狀態映射] recording session 但 isRecording=false，回到 default')
+        } else {
+          resultState = transcriptsPresent ? "recording_active" : "recording_waiting"
+          console.log(`🔄 [狀態映射] recording session + isRecording=true，transcriptsPresent=${transcriptsPresent} → ${resultState}`)
+        }
+      } else {
+        resultState = "default"
       }
-      return "default"
+      break
     case "processing":
-      return "processing"
+      resultState = "processing"
+      break
     case "completed":
-      return "finished"
+      resultState = "finished"
+      break
     case "error":
-      return "default" // 錯誤時回到預設狀態
+      resultState = "default" // 錯誤時回到預設狀態
+      break
     default:
-      return "default"
+      resultState = "default"
+      break
   }
+
+  console.log(`🔄 [狀態映射] 最終結果: ${status}(${type}) → ${resultState}`)
+  return resultState
 }
 
 export function useAppState() {
@@ -56,19 +83,41 @@ export function useAppState() {
   // 狀態同步：前端狀態與後端 session status 對應
   useEffect(() => {
     const activeSession = session.currentSession
+    console.log('🔄 [狀態同步] useEffect 觸發:', {
+      hasActiveSession: !!activeSession,
+      sessionId: activeSession?.id,
+      sessionStatus: activeSession?.status,
+      sessionType: activeSession?.type,
+      isRecording: recording.isRecording,
+      transcriptCount: transcript.transcripts.length,
+      recordingTranscriptCount: recording.transcripts.length,
+      currentAppState: appData.state
+    })
+
     if (activeSession) {
+      // 統一使用 recording.transcripts，避免雙重逐字稿管理
+      const transcriptsPresent = (recording.transcripts.length > 0)
+      console.log('🔄 [狀態同步] 計算 transcriptsPresent (統一路徑):', {
+        recordingTranscriptCount: recording.transcripts.length,
+        transcriptsPresent,
+        note: '已移除 transcript.transcripts 避免雙重管理'
+      })
+
       const frontendState = mapBackendToFrontendState(
         activeSession.status,
         activeSession.type,
-        recording.isRecording
+        recording.isRecording,
+        transcriptsPresent
       )
+
+      console.log(`🔄 [狀態同步] 狀態變化: ${appData.state} → ${frontendState}`)
 
       setAppData(prev => ({
         ...prev,
         state: frontendState
       }))
     }
-  }, [session.currentSession, recording.isRecording])
+  }, [session.currentSession, recording.isRecording, recording.transcripts.length, appData.state])
 
   // 初始化應用狀態 - 只在組件掛載時執行一次
   useEffect(() => {
@@ -129,11 +178,14 @@ export function useAppState() {
     }))
   }, [notes.noteContent])
 
-  // 處理逐字稿更新 - 使用專門的 useTranscript hook
+  // 處理逐字稿更新 - 統一使用 recording.transcripts
   useEffect(() => {
-    const sourceTranscripts = transcript.transcripts.length > 0 ? transcript.transcripts : recording.transcripts
+    console.log('📝 [逐字稿更新] useEffect 觸發:', {
+      recordingTranscriptCount: recording.transcripts.length,
+      note: '統一使用 recording.transcripts，避免雙重管理'
+    })
 
-    const transcriptEntries = sourceTranscripts.map((transcriptMsg: TranscriptMessage) => {
+    const transcriptEntries = recording.transcripts.map((transcriptMsg: TranscriptMessage) => {
       // 使用 start_time 或 timestamp 計算時間
       const startTime = transcriptMsg.start_time ?? 0
       const minutes = Math.floor(startTime / 60)
@@ -146,11 +198,16 @@ export function useAppState() {
       }
     })
 
+    console.log('📝 [逐字稿更新] 轉換完成:', {
+      entriesCount: transcriptEntries.length,
+      firstEntry: transcriptEntries[0]?.text?.substring(0, 30) + '...'
+    })
+
     setAppData(prev => ({
       ...prev,
       transcriptEntries,
     }))
-  }, [transcript.transcripts, recording.transcripts])
+  }, [recording.transcripts])
 
   // 監聽轉錄完成，自動轉為 finished 狀態
   useEffect(() => {
@@ -301,14 +358,14 @@ export function useAppState() {
       }
 
       console.log("🎤 startRecording: 準備呼叫 recording.startRecording")
-      // recording.startRecording 現在使用 TranscriptManager，會統一管理連接
+      // recording.startRecording 使用 TranscriptManager，統一管理逐字稿連接
       await recording.startRecording(sessionToRecord.id)
       console.log("🎤 startRecording: recording.startRecording 呼叫完畢")
 
-      console.log("🎤 startRecording: 準備連接 transcript")
-      // 同時連接 useTranscript hook 以確保逐字稿顯示
-      await transcript.connect(sessionToRecord.id)
-      console.log("🎤 startRecording: transcript.connect 呼叫完畢")
+      console.log("🎤 startRecording: 跳過 transcript.connect，避免雙重監聽器")
+      // 移除重複連接：useRecording 已經透過 TranscriptManager 連接逐字稿
+      // 避免 useTranscript 和 useRecording 同時添加監聽器導致競爭條件
+      console.log("🎤 startRecording: 逐字稿將由 useRecording hook 統一管理")
 
       toast({ title: '錄音開始' })
     } catch (err) {
@@ -386,32 +443,54 @@ export function useAppState() {
   }, [session, toast])
 
   // 開新筆記 - 清空當前資料，狀態回到 default
-  const newNote = useCallback(() => {
-    // 清空當前資料
-    setAppData({
-      state: "default",
-      transcriptEntries: [],
-      editorContent: "",
-      isRecording: false,
-      recordingTime: 0,
-    })
-
-    // 清除會話、錄音和逐字稿狀態
-    session.clearSession()
-    recording.clearTranscripts()
-    transcript.clearTranscripts()
-    notes.clearNote()
-
-    // 清除本地草稿
-    localStorage.removeItem('draft_note')
-
+  const newNote = useCallback(async () => {
+    setIsLoading(true)
     setError(null)
-    console.log('🔄 已開始新筆記')
 
-    toast({
-      title: '新筆記',
-      description: '已清空內容，可以開始新的筆記',
-    })
+    try {
+      // 如果有活躍會話，先刪除它
+      if (session.currentSession) {
+        console.log('🗑️ 刪除當前活躍會話:', session.currentSession.id)
+        await session.deleteSession()
+        console.log('✅ 會話刪除成功')
+      }
+
+      // 清空當前資料
+      setAppData({
+        state: "default",
+        transcriptEntries: [],
+        editorContent: "",
+        isRecording: false,
+        recordingTime: 0,
+      })
+
+      // 清除錄音和逐字稿狀態
+      recording.clearTranscripts()
+      transcript.clearTranscripts()
+      notes.clearNote()
+
+      // 清除本地草稿
+      localStorage.removeItem('draft_note')
+
+      console.log('🔄 已開始新筆記')
+
+      toast({
+        title: '新筆記',
+        description: '已清空內容，可以開始新的筆記',
+      })
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : '開始新筆記失敗'
+      setError(errorMessage)
+      console.error('❌ 開始新筆記失敗:', err)
+
+      toast({
+        title: '操作失敗',
+        description: errorMessage,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }, [session, recording, transcript, notes, toast])
 
   // 自動儲存筆記內容到本地草稿
@@ -458,3 +537,5 @@ export function useAppState() {
     scrollToLatest: transcript.scrollToLatest,
   }
 }
+
+export { mapBackendToFrontendState }

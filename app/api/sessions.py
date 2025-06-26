@@ -11,13 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
 from app.db.database import get_supabase_client
-from app.db.models import Session, SessionType, SessionStatus
 from app.schemas.session import (
     SessionCreateRequest, SessionOut, SessionUpgradeRequest,
-    SessionFinishRequest, SessionStatusResponse
+    SessionFinishRequest, SessionStatusResponse, SessionStatus, SessionType, LanguageCode
 )
-from app.middleware.session_guard import SessionGuard
-from app.services.azure_openai import get_transcription_service
 
 # 建立路由器
 router = APIRouter(prefix="/api", tags=["會話管理"])
@@ -36,7 +33,13 @@ async def create_session(
     - 自動建立對應的空白筆記記錄
     """
     try:
-        SessionGuard.check_no_active_session(supabase)
+        # 檢查是否有其他活躍會話
+        active_session_response = supabase.table("sessions").select("id").eq("status", "active").limit(1).execute()
+        if active_session_response.data:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="已有一個活躍的會話，無法建立新會話。"
+            )
 
         session_data = {
             "title": request.title,
@@ -70,7 +73,6 @@ async def create_session(
 @router.patch("/session/{session_id}/finish", response_model=SessionStatusResponse)
 async def finish_session(
     session_id: UUID,
-    request: SessionFinishRequest,
     supabase: Client = Depends(get_supabase_client)
 ) -> SessionStatusResponse:
     """
@@ -81,17 +83,19 @@ async def finish_session(
     - 釋放會話鎖定，允許建立新會話
     """
     try:
-        # 檢查會話是否可以完成
-        session_data = SessionGuard.ensure_session_can_finish(supabase, session_id)
+        # 檢查會話是否存在且活躍
+        session_response = supabase.table("sessions").select("*").eq("id", str(session_id)).eq("status", "active").limit(1).execute()
+        if not session_response.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="找不到活躍的會話或會話已被完成。"
+            )
 
         # 準備更新數據
         update_data = {
             "status": SessionStatus.COMPLETED.value,
             "completed_at": datetime.utcnow().isoformat()
         }
-
-        # 注意：當前資料庫 schema 中沒有 duration 欄位
-        # 如果需要記錄錄音時長，可以考慮添加到 audio_files 表中
 
         # 更新會話狀態
         response = supabase.table("sessions").update(update_data).eq("id", str(session_id)).execute()
@@ -117,6 +121,52 @@ async def finish_session(
         )
 
 
+@router.delete("/session/{session_id}", response_model=SessionStatusResponse)
+async def delete_session(
+    session_id: UUID,
+    supabase: Client = Depends(get_supabase_client)
+) -> SessionStatusResponse:
+    """
+    刪除會話及其所有相關數據 (B-020)
+
+    - 刪除指定的會話及其所有關聯數據（筆記、音檔、逐字稿等）
+    - 由於資料庫有 CASCADE DELETE 約束，會自動清理所有相關表格的數據
+    - 此操作不可逆，請謹慎使用
+    """
+    try:
+        # 檢查會話是否存在
+        session_response = supabase.table("sessions").select("*").eq("id", str(session_id)).limit(1).execute()
+        if not session_response.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="找不到指定的會話。"
+            )
+
+        session_data = session_response.data[0]
+        session_title = session_data.get('title', '未命名筆記')
+
+        # 刪除會話（會自動級聯刪除所有相關數據）
+        delete_response = supabase.table("sessions").delete().eq("id", str(session_id)).execute()
+
+        if not delete_response.data:
+            raise HTTPException(status_code=500, detail="無法刪除會話")
+
+        return SessionStatusResponse(
+            success=True,
+            message=f"會話 '{session_title}' ({session_id}) 及其所有相關數據已成功刪除",
+            session=None
+        )
+
+    except HTTPException:
+        # 重新拋出已處理的 HTTP 異常
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "internal_error", "message": f"刪除會話時發生錯誤: {str(e)}"}
+        )
+
+
 @router.patch("/session/{session_id}/upgrade", response_model=SessionOut)
 async def upgrade_session_to_recording(
     session_id: UUID,
@@ -127,21 +177,22 @@ async def upgrade_session_to_recording(
     升級會話至錄音模式 (B-015)
 
     - 將純筆記會話升級為錄音模式
-    - 只有 draft 狀態的 note_only 會話可以升級
-    - 升級後狀態變為 recording
+    - 只有 active 狀態的 note_only 會話可以升級
     """
     try:
         # 檢查會話是否可以升級
-        session_data = SessionGuard.ensure_session_can_upgrade(supabase, session_id)
+        session_response = supabase.table("sessions").select("*").eq("id", str(session_id)).eq("status", "active").eq("type", "note_only").limit(1).execute()
+        if not session_response.data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="只有活躍的純筆記會話才能升級。"
+            )
 
         # 準備更新數據
         update_data = {
             "type": SessionType.RECORDING.value,
+            "language": request.language.value,
         }
-
-        # 更新語言設定（如果提供）
-        if request.language is not None:
-            update_data["language"] = request.language.value
 
         # 執行升級
         response = supabase.table("sessions").update(update_data).eq("id", str(session_id)).execute()
@@ -154,7 +205,6 @@ async def upgrade_session_to_recording(
         return SessionOut.model_validate(updated_session)
 
     except HTTPException:
-        # 重新拋出已處理的 HTTP 異常
         raise
     except Exception as e:
         raise HTTPException(
@@ -163,7 +213,7 @@ async def upgrade_session_to_recording(
         )
 
 
-@router.get("/session/active", response_model=SessionOut)
+@router.get("/session/active", response_model=SessionOut, status_code=status.HTTP_200_OK)
 async def get_active_session(
     supabase: Client = Depends(get_supabase_client)
 ) -> SessionOut:
@@ -173,15 +223,14 @@ async def get_active_session(
     - 用於前端檢查是否有進行中的會話
     - 如果沒有活躍會話則返回 404
     """
-    active_session_data = SessionGuard.get_active_session(supabase)
-
-    if not active_session_data:
+    response = supabase.table("sessions").select("*").eq("status", "active").limit(1).execute()
+    if not response.data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "no_active_session", "message": "目前沒有活躍的會話"}
         )
 
-    return SessionOut.model_validate(active_session_data)
+    return SessionOut.model_validate(response.data[0])
 
 
 @router.get("/session/{session_id}", response_model=SessionOut)
@@ -203,58 +252,3 @@ async def get_session(
         )
 
     return SessionOut.model_validate(response.data[0])
-
-
-@router.get("/transcription/performance")
-async def get_transcription_performance() -> Dict[str, Any]:
-    """
-    獲取轉錄系統效能報告
-
-    - 顯示平均處理時間、最大/最小延遲
-    - 評估是否達到 ≤5秒 的延遲目標
-    - 提供效能等級評估
-    """
-    try:
-        transcription_service = await get_transcription_service()
-
-        if not transcription_service:
-            return {
-                "status": "disabled",
-                "message": "Transcription service is not available",
-                "timestamp": datetime.utcnow().isoformat()
-            }
-
-        performance_report = transcription_service.get_performance_report()
-
-        # 計算效能評級
-        avg_time = performance_report.get('average_processing_time', 0)
-        if avg_time == 0:
-            performance_grade = "N/A"
-            latency_target_met = None
-        elif avg_time <= 3:
-            performance_grade = "🟢 Excellent"
-            latency_target_met = True
-        elif avg_time <= 5:
-            performance_grade = "🟡 Good"
-            latency_target_met = True
-        elif avg_time <= 8:
-            performance_grade = "🟠 Fair"
-            latency_target_met = False
-        else:
-            performance_grade = "🔴 Poor"
-            latency_target_met = False
-
-        return {
-            "status": "active",
-            "performance_grade": performance_grade,
-            "latency_target_met": latency_target_met,
-            "target_latency_seconds": 5,
-            **performance_report,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": "performance_error", "message": f"無法獲取效能報告: {str(e)}"}
-        )

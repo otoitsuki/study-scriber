@@ -1,15 +1,29 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Upload, FileText } from "lucide-react"
+import { Upload, FileText, RotateCcw } from "lucide-react"
 
 interface DefaultStateProps {
   onStartRecording: () => void
+  onNewNote?: () => void
+  hasActiveSession?: boolean
 }
 
-export function DefaultState({ onStartRecording }: DefaultStateProps) {
+export function DefaultState({ onStartRecording, onNewNote, hasActiveSession = false }: DefaultStateProps) {
   return (
     <div className="h-full flex flex-col items-center justify-center p-6 space-y-6">
+      {/* 如果有活躍會話，顯示 New Note 按鈕 */}
+      {hasActiveSession && onNewNote && (
+        <Button
+          onClick={onNewNote}
+          variant="outline"
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
+        >
+          <RotateCcw className="w-4 h-4" />
+          New note
+        </Button>
+      )}
+
       <Button onClick={onStartRecording} className="bg-foreground text-background hover:bg-foreground/90 px-6 py-3">
         Start recording
       </Button>

@@ -1,10 +1,4 @@
 {
-  "node_modules/.pnpm/@stagewise+toolbar-next@0.4.8_@types+react@19.0.0_next@15.2.4_@babel+core@7.27.4_react-_480edaf6836ac8abda8a89579471cdbd/node_modules/@stagewise/toolbar-next/dist/index.js -> @stagewise/toolbar-react": {
-    "id": "node_modules/.pnpm/@stagewise+toolbar-next@0.4.8_@types+react@19.0.0_next@15.2.4_@babel+core@7.27.4_react-_480edaf6836ac8abda8a89579471cdbd/node_modules/@stagewise/toolbar-next/dist/index.js -> @stagewise/toolbar-react",
-    "files": [
-      "static/chunks/_app-pages-browser_node_modules_pnpm_stagewise_toolbar-react_0_4_8__types_react_19_0_0_react_-f15b39.js"
-    ]
-  },
   "study-scriber.tsx -> react-simplemde-editor": {
     "id": "study-scriber.tsx -> react-simplemde-editor",
     "files": [

@@ -18,11 +18,11 @@ from app.api.sessions import router as sessions_router
 from app.api.notes import router as notes_router
 from app.ws.upload_audio import router as upload_audio_router
 from app.ws.transcript_feed import router as transcript_feed_router
-from app.services.azure_openai import get_transcription_service
 from app.core.ffmpeg import check_ffmpeg_health
 from app.core.config import settings
-from app.services.azure_openai_v2 import initialize_transcription_service_v2
-from app.middleware.session_guard import SingleActiveSessionMiddleware
+from app.core.container import container
+from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+from openai import AzureOpenAI
 
 # 配置日誌
 logging.basicConfig(level=settings.LOG_LEVEL, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -37,64 +37,29 @@ async def lifespan(app: FastAPI):
     """
     # 啟動時執行
     logger.info("🚀 StudyScriber 正在啟動...")
+    check_ffmpeg_health()
+    await check_database_connection()
 
-    try:
-        # 自動檢測並初始化資料庫
-        await auto_init_database()
+    # 初始化並註冊服務
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    deployment = os.getenv("WHISPER_DEPLOYMENT_NAME")
+    if api_key and endpoint and deployment:
+        azure_client = AzureOpenAI(api_key=api_key, api_version="2024-06-01", azure_endpoint=endpoint)
+        transcription_service = SimpleAudioTranscriptionService(azure_client, deployment)
+        container.register(SimpleAudioTranscriptionService, lambda: transcription_service)
+        logger.info("✅ Transcription service initialized and registered.")
+    else:
+        logger.warning("Transcription service not initialized due to missing Azure credentials.")
 
-        # 檢查資料庫連接
-        db_ok = await check_database_connection()
-        if not db_ok:
-            raise Exception("資料庫連接失敗")
-
-        logger.info("✅ 資料庫初始化完成")
-
-        # 檢查 FFmpeg 可用性
-        logger.info("🎬 檢查 FFmpeg 可用性...")
-        ffmpeg_health = check_ffmpeg_health()
-        if ffmpeg_health['ffmpeg_available']:
-            logger.info(f"✅ FFmpeg 可用: {ffmpeg_health['version']}")
-            if ffmpeg_health.get('installation_path'):
-                logger.info(f"   安裝路徑: {ffmpeg_health['installation_path']}")
-        else:
-            logger.warning(f"⚠️ 警告: FFmpeg 不可用 - {ffmpeg_health['error']}")
-            logger.warning("   音訊轉碼功能將無法使用")
-            if 'install_instructions' in ffmpeg_health:
-                logger.warning("   安裝建議:")
-                for platform, cmd in ffmpeg_health['install_instructions'].items():
-                    logger.warning(f"   - {platform}: {cmd}")
-            logger.warning("   詳細資訊: https://ffmpeg.org/download.html")
-
-        # 初始化轉錄服務 v2
-        logger.info("🎤 正在初始化轉錄服務 v2...")
-        await initialize_transcription_service_v2()
-        logger.info("✅ 轉錄服務 v2 初始化完成")
-
-    except Exception as e:
-        logger.error(f"❌ 應用程式啟動失敗: {e}")
-        raise
 
     yield
 
     # 關閉時執行
     logger.info("🔄 StudyScriber 正在關閉...")
-
-    # 清理 FFmpeg 資源
-    try:
-        from app.core.ffmpeg import cleanup_ffmpeg_resources
-        cleanup_ffmpeg_resources()
-        logger.info("✅ FFmpeg 資源清理完成")
-    except Exception as e:
-        logger.warning(f"⚠️  FFmpeg 資源清理失敗: {e}")
-
-    # 清理轉錄服務 v2
-    try:
-        from app.services.azure_openai_v2 import cleanup_transcription_service_v2
-        cleanup_transcription_service_v2()
-        logger.info("✅ 轉錄服務 v2 清理完成")
-    except Exception as e:
-        logger.warning(f"⚠️  轉錄服務 v2 清理失敗: {e}")
-
+    service_instance = container.resolve(SimpleAudioTranscriptionService)
+    if service_instance:
+        await service_instance.shutdown()
 
 # 建立 FastAPI 應用程式
 app = FastAPI(
@@ -151,7 +116,7 @@ async def health_check():
         ffmpeg_health = check_ffmpeg_health()
 
         # 檢查轉錄服務狀態
-        transcription_service = await get_transcription_service()
+        transcription_service = container.resolve(SimpleAudioTranscriptionService)
         transcription_available = transcription_service is not None
 
         return {
@@ -218,7 +183,7 @@ async def performance_stats():
     """效能統計端點"""
     try:
         # 取得轉錄服務效能統計
-        transcription_service = await get_transcription_service()
+        transcription_service = container.resolve(SimpleAudioTranscriptionService)
 
         if not transcription_service:
             return {

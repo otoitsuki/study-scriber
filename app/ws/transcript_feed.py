@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict, List
 
@@ -34,17 +35,44 @@ class ConnectionManager:
 
     async def broadcast(self, message: str, session_id: str):
         if session_id in self.active_connections and self.active_connections[session_id]:
-            logger.info(f"正在向 session_id: {session_id} 的 {len(self.active_connections[session_id])} 個客戶端廣播訊息...")
+            client_count = len(self.active_connections[session_id])
+            logger.info(f"📡 [ConnectionManager] 正在向 session_id: {session_id} 的 {client_count} 個客戶端廣播訊息")
+
+            # 記錄訊息內容（簡化版）
+            try:
+                import json
+                parsed_msg = json.loads(message)
+                msg_type = parsed_msg.get('type', parsed_msg.get('phase', 'unknown'))
+                logger.info(f"📡 [ConnectionManager] 訊息類型: {msg_type}")
+                if 'text' in parsed_msg:
+                    text_preview = parsed_msg['text'][:30] + ('...' if len(parsed_msg['text']) > 30 else '')
+                    logger.info(f"📡 [ConnectionManager] 文字預覽: '{text_preview}'")
+            except:
+                logger.info(f"📡 [ConnectionManager] 原始訊息: {message[:100]}...")
+
             # 建立一個任務列表以併發發送
             tasks = [connection.send_text(message) for connection in self.active_connections[session_id]]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 檢查發送結果
+            success_count = sum(1 for r in results if not isinstance(r, Exception))
+            error_count = len(results) - success_count
+
+            if error_count > 0:
+                logger.warning(f"📡 [ConnectionManager] 廣播結果: {success_count} 成功, {error_count} 失敗")
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        logger.error(f"📡 [ConnectionManager] 客戶端 {i} 發送失敗: {result}")
+            else:
+                logger.info(f"✅ [ConnectionManager] 廣播成功: 所有 {client_count} 個客戶端都收到訊息")
         else:
-            logger.warning(f"廣播失敗：找不到 session_id: {session_id} 的活躍連接。")
+            logger.warning(f"⚠️ [ConnectionManager] 廣播失敗：找不到 session_id: {session_id} 的活躍連接")
+            logger.info(f"📊 [ConnectionManager] 目前活躍 sessions: {list(self.active_connections.keys())}")
 
 # 建立一個全域的 ConnectionManager 實例
 manager = ConnectionManager()
 
-@router.websocket("/ws/transcript/{session_id}")
+@router.websocket("/ws/transcript_feed/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """
     用於接收即時逐字稿的 WebSocket 端點。
@@ -54,6 +82,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     - 後端轉錄服務完成後，會將結果發布到此頻道。
     """
     await manager.connect(websocket, session_id)
+    # 新增：告知前端等待階段
+    await websocket.send_text(json.dumps({"phase": "waiting"}))
     try:
         # 保持連線開啟以接收廣播
         while True:

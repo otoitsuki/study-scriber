@@ -11,27 +11,57 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Set
 from uuid import UUID
 import json
+import os
 
 from openai import AzureOpenAI
 
-from .azure_openai import PerformanceTimer
 from ..db.database import get_supabase_client
-from app.db.database import get_async_session
-from app.db import models
 from app.core.config import settings
 from app.ws.transcript_feed import manager as transcript_manager
 from app.services.r2_client import R2Client
 
 logger = logging.getLogger(__name__)
 
+# 全域效能監控開關
+ENABLE_PERFORMANCE_LOGGING = os.getenv("ENABLE_PERFORMANCE_LOGGING", "true").lower() == "true"
+
+class PerformanceTimer:
+    """效能計時器"""
+
+    def __init__(self, operation_name: str):
+        self.operation_name = operation_name
+        self.start_time = None
+        self.end_time = None
+
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.end_time = time.time()
+        duration = self.get_duration()
+
+        if ENABLE_PERFORMANCE_LOGGING:
+            if duration > 1.0:  # 記錄超過1秒的操作
+                logger.warning(f"⚠️  {self.operation_name} took {duration:.2f}s (slow)")
+            else:
+                logger.info(f"⏱️  {self.operation_name} completed in {duration:.2f}s")
+
+    def get_duration(self) -> float:
+        if self.start_time and self.end_time:
+            return self.end_time - self.start_time
+        return 0.0
+
 # 配置常數
 CHUNK_DURATION = 12  # 12 秒切片
 PROCESSING_TIMEOUT = 30  # 處理超時（秒）
 MAX_RETRIES = 3  # 最大重試次數
 
+# 全域集合追蹤已廣播 active 相位的 session
+_active_phase_sent: Set[str] = set()
 
 class SimpleAudioTranscriptionService:
     """簡化的音訊轉錄服務"""
@@ -240,20 +270,41 @@ class SimpleAudioTranscriptionService:
                 logger.debug(f"Saved transcript segment {segment_id} for chunk {chunk_sequence}")
 
                 # 透過 WebSocket 廣播轉錄結果
-                logger.info(f"廣播逐字稿片段到 session {session_id}")
+                # 若尚未廣播 active 相位，先送出
+                if str(session_id) not in _active_phase_sent:
+                    logger.info(f"🚀 [轉錄推送] 首次廣播 active 相位到 session {session_id}")
+                    await transcript_manager.broadcast(
+                        json.dumps({"phase": "active"}),
+                        str(session_id)
+                    )
+                    _active_phase_sent.add(str(session_id))
+                    logger.info(f"✅ [轉錄推送] Active 相位廣播完成 for session {session_id}")
+
+                # 構建逐字稿片段訊息
+                transcript_message = {
+                    "type": "transcript_segment",
+                    "session_id": str(session_id),
+                    "segment_id": segment_id,
+                    "text": transcript_result['text'],
+                    "chunk_sequence": chunk_sequence,
+                    "start_sequence": chunk_sequence,  # 添加 start_sequence 欄位
+                    "start_time": segment_data['start_time'],
+                    "end_time": segment_data['end_time'],
+                    "confidence": segment_data['confidence'],
+                    "timestamp": segment_data['created_at']
+                }
+
+                logger.info(f"📡 [轉錄推送] 廣播逐字稿片段到 session {session_id}:")
+                logger.info(f"   - 文字: '{transcript_result['text'][:50]}{'...' if len(transcript_result['text']) > 50 else ''}'")
+                logger.info(f"   - 序號: {chunk_sequence}")
+                logger.info(f"   - 時間: {segment_data['start_time']}s - {segment_data['end_time']}s")
+
                 await transcript_manager.broadcast(
-                    json.dumps({
-                        "type": "transcript_segment",
-                        "session_id": str(session_id),
-                        "segment_id": segment_id,
-                        "text": transcript_result['text'],
-                        "chunk_sequence": chunk_sequence,
-                        "start_time": segment_data['start_time'],
-                        "end_time": segment_data['end_time'],
-                        "timestamp": segment_data['created_at']
-                    }),
+                    json.dumps(transcript_message),
                     str(session_id)
                 )
+
+                logger.info(f"✅ [轉錄推送] 逐字稿片段廣播完成 for session {session_id}")
 
                 # 廣播轉錄完成消息
                 logger.info(f"廣播轉錄完成訊息到 session {session_id}")
@@ -265,66 +316,54 @@ class SimpleAudioTranscriptionService:
                     }),
                     str(session_id)
                 )
-                logger.info(f"轉錄任務完成 for session: {session_id}, task_key: {task_key}")
+                logger.info(f"轉錄任務完成 for session: {session_id}, chunk: {chunk_sequence}")
 
         except Exception as e:
             logger.error(f"Failed to save/push transcript for chunk {chunk_sequence}: {e}")
 
+    # TODO: 在此處實現更優雅的關閉邏輯
+    logger.info("Transcription service is shutting down...")
 
-# 全域服務實例
+# ----------------------
+# 兼容舊測試的工廠函式與全域變數
+# ----------------------
+
 _transcription_service_v2: Optional[SimpleAudioTranscriptionService] = None
 
 
 def get_azure_openai_client() -> Optional[AzureOpenAI]:
-    """取得 Azure OpenAI 客戶端"""
-    import os
-
+    """根據環境變數建立 AzureOpenAI 用戶端，缺值時回傳 None。"""
     api_key = os.getenv("AZURE_OPENAI_API_KEY")
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-06-01")
-
     if not api_key or not endpoint:
-        logger.warning("Azure OpenAI credentials not configured")
         return None
-
-    return AzureOpenAI(
-        api_key=api_key,
-        api_version=api_version,
-        azure_endpoint=endpoint
-    )
+    # 使用預設 API 版本即可
+    return AzureOpenAI(api_key=api_key, api_version="2024-06-01", azure_endpoint=endpoint)
 
 
 def get_whisper_deployment_name() -> Optional[str]:
-    """取得 Whisper 部署名稱"""
-    import os
+    """取得 Whisper 部署名稱，環境變數缺值時回傳 None。"""
     return os.getenv("WHISPER_DEPLOYMENT_NAME")
 
 
-async def initialize_transcription_service_v2():
+async def initialize_transcription_service_v2() -> Optional[SimpleAudioTranscriptionService]:
+    """初始化並快取 SimpleAudioTranscriptionService 實例。若設定不足則回傳 None。"""
     global _transcription_service_v2
-    if _transcription_service_v2 is None:
-        client = get_azure_openai_client()
-        deployment = get_whisper_deployment_name()
-        if client and deployment:
-            _transcription_service_v2 = SimpleAudioTranscriptionService(client, deployment)
+    if _transcription_service_v2 is not None:
+        return _transcription_service_v2
+
+    client = get_azure_openai_client()
+    deployment = get_whisper_deployment_name()
+    if not client or not deployment:
+        logger.warning("Azure OpenAI 設定不足，無法初始化轉錄服務 v2")
+        return None
+
+    _transcription_service_v2 = SimpleAudioTranscriptionService(client, deployment)
+    logger.info("✅ Transcription service v2 initialized")
     return _transcription_service_v2
 
 
 def cleanup_transcription_service_v2():
-    """清理轉錄服務"""
+    """清理全域轉錄服務實例。"""
     global _transcription_service_v2
-
-    if _transcription_service_v2:
-        # 取消所有進行中的任務
-        for task in _transcription_service_v2.processing_tasks.values():
-            if not task.done():
-                task.cancel()
-
-        _transcription_service_v2 = None
-        logger.info("✅ 轉錄服務 v2 清理完成")
-
-# 取得單例
-get_transcription_service_v2 = lambda: _transcription_service_v2
-
-# 公開單例介面，供 main.py 等外部模組直接 import
-transcription_service = _transcription_service_v2
+    _transcription_service_v2 = None
