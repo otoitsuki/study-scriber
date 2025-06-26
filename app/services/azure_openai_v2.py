@@ -112,9 +112,10 @@ class SimpleAudioTranscriptionService:
                     return
 
                 # 步驟 2: WebM → WAV 轉換
-                wav_data = await self._convert_webm_to_wav(webm_data, chunk_sequence)
+                wav_data = await self._convert_webm_to_wav(webm_data, chunk_sequence, session_id)
                 if not wav_data:
                     logger.error(f"Failed to convert WebM to WAV for chunk {chunk_sequence}")
+                    # 錯誤已在 _convert_webm_to_wav 中廣播，這裡只需要返回
                     return
 
                 # 步驟 3: Whisper 轉錄
@@ -141,11 +142,11 @@ class SimpleAudioTranscriptionService:
         # FFmpeg 會用 -fflags +genpts 處理不完整的流式資料
         return True
 
-    async def _convert_webm_to_wav(self, webm_data: bytes, chunk_sequence: int) -> Optional[bytes]:
-        """將 WebM / fMP4 轉換為 WAV，自動辨識來源格式"""
+    async def _convert_webm_to_wav(self, webm_data: bytes, chunk_sequence: int, session_id: UUID) -> Optional[bytes]:
+        """將 WebM / fMP4 轉換為 WAV，自動辨識來源格式，增強錯誤處理和回報機制"""
 
         def _detect_format(data: bytes) -> str:
-            """簡易檢測音訊封裝格式 (webm / mp4)"""
+            """簡易檢測音訊封裝格式 (webm / mp4 / ogg / wav)"""
             if len(data) < 12:
                 return 'unknown'
             # WebM (Matroska) 以 EBML header 開頭 0x1A45DFA3
@@ -154,10 +155,39 @@ class SimpleAudioTranscriptionService:
             # MP4/ISOBMFF 常在 4–8 byte 看到 'ftyp'
             if b'ftyp' in data[4:12]:
                 return 'mp4'
+            # OGG 格式檢測
+            if data[0:4] == b'OggS':
+                return 'ogg'
+            # WAV 格式檢測
+            if data[0:4] == b'RIFF' and data[8:12] == b'WAVE':
+                return 'wav'
             return 'unknown'
+
+        async def _broadcast_error(error_type: str, error_message: str, details: str = None):
+            """透過 WebSocket 廣播錯誤訊息到前端"""
+            try:
+                from app.ws.transcript_feed import manager as transcript_manager
+                error_data = {
+                    "type": "conversion_error",
+                    "error_type": error_type,
+                    "message": error_message,
+                    "details": details,
+                    "session_id": str(session_id),
+                    "chunk_sequence": chunk_sequence,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                await transcript_manager.broadcast(
+                    json.dumps(error_data),
+                    str(session_id)
+                )
+                logger.info(f"🚨 [錯誤廣播] 已通知前端轉換錯誤: {error_type}")
+            except Exception as e:
+                logger.error(f"Failed to broadcast error message: {e}")
 
         try:
             audio_format = _detect_format(webm_data)
+            logger.info(f"🎵 [格式檢測] 檢測到音檔格式: {audio_format} (chunk {chunk_sequence}, 大小: {len(webm_data)} bytes)")
+
             with PerformanceTimer(f"{audio_format.upper()} to WAV conversion for chunk {chunk_sequence}"):
 
                 # 基本 FFmpeg 參數
@@ -167,8 +197,17 @@ class SimpleAudioTranscriptionService:
                 if audio_format == 'mp4':
                     # Safari 產出的 fragmented MP4
                     cmd += ['-f', 'mp4']
+                elif audio_format == 'webm':
+                    cmd += ['-f', 'webm']
+                elif audio_format == 'ogg':
+                    cmd += ['-f', 'ogg']
+                elif audio_format == 'wav':
+                    cmd += ['-f', 'wav']
+
                 # 通用旗標：生成時間戳處理不完整流
                 cmd += ['-fflags', '+genpts', '-i', 'pipe:0', '-ac', '1', '-ar', '16000', '-f', 'wav', '-y', 'pipe:1']
+
+                logger.debug(f"🔧 [FFmpeg] 執行命令: {' '.join(cmd)}")
 
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -184,23 +223,43 @@ class SimpleAudioTranscriptionService:
 
                 if process.returncode != 0:
                     error_msg = stderr.decode('utf-8', errors='ignore') if stderr else "Unknown error"
-                    logger.error(f"FFmpeg conversion failed for chunk {chunk_sequence}: {error_msg}")
+                    logger.error(f"❌ [FFmpeg 錯誤] 轉換失敗 chunk {chunk_sequence}")
+                    logger.error(f"   - 格式: {audio_format}")
+                    logger.error(f"   - 返回碼: {process.returncode}")
+                    logger.error(f"   - 錯誤訊息: {error_msg}")
+                    logger.error(f"   - 輸入大小: {len(webm_data)} bytes")
+
+                    # 分析具體錯誤原因
+                    if "Invalid data found when processing input" in error_msg:
+                        error_reason = f"音檔格式 {audio_format} 與 FFmpeg 不兼容，可能是編碼問題"
+                    elif "No such file or directory" in error_msg:
+                        error_reason = "FFmpeg 程式未找到或配置錯誤"
+                    elif "Permission denied" in error_msg:
+                        error_reason = "FFmpeg 權限不足"
+                    else:
+                        error_reason = f"FFmpeg 處理 {audio_format} 格式時發生未知錯誤"
+
+                    await _broadcast_error("ffmpeg_conversion_failed", error_reason, error_msg)
                     return None
 
                 if not stdout or len(stdout) < 100:
-                    logger.error(
-                        f"FFmpeg produced insufficient WAV data for chunk {chunk_sequence}: {len(stdout) if stdout else 0} bytes")
+                    error_msg = f"FFmpeg 產生的 WAV 數據不足: {len(stdout) if stdout else 0} bytes"
+                    logger.error(f"❌ [FFmpeg 警告] {error_msg}")
+                    await _broadcast_error("insufficient_output", "轉換後的音檔數據不足，可能是靜音或損壞", error_msg)
                     return None
 
-                logger.debug(
-                    f"Successfully converted {audio_format.upper()} ({len(webm_data)} bytes) to WAV ({len(stdout)} bytes)")
+                logger.info(f"✅ [FFmpeg 成功] {audio_format.upper()} ({len(webm_data)} bytes) → WAV ({len(stdout)} bytes)")
                 return stdout
 
         except asyncio.TimeoutError:
-            logger.error(f"FFmpeg conversion timeout for chunk {chunk_sequence}")
+            error_msg = f"FFmpeg 轉換超時 (>{PROCESSING_TIMEOUT}秒)"
+            logger.error(f"⏰ [FFmpeg 超時] {error_msg}")
+            await _broadcast_error("conversion_timeout", "音檔轉換處理時間過長", error_msg)
             return None
         except Exception as e:
-            logger.error(f"FFmpeg conversion error for chunk {chunk_sequence}: {e}")
+            error_msg = f"FFmpeg 轉換異常: {str(e)}"
+            logger.error(f"💥 [FFmpeg 異常] {error_msg}")
+            await _broadcast_error("conversion_exception", "音檔轉換過程中發生異常錯誤", error_msg)
             return None
 
     async def _transcribe_audio(self, wav_data: bytes, session_id: UUID, chunk_sequence: int) -> Optional[Dict[str, Any]]:
@@ -244,6 +303,8 @@ class SimpleAudioTranscriptionService:
 
         except Exception as e:
             logger.error(f"Whisper transcription failed for chunk {chunk_sequence}: {e}")
+            # 廣播 Whisper API 錯誤到前端
+            await self._broadcast_transcription_error(session_id, chunk_sequence, "whisper_api_error", f"Azure OpenAI Whisper 轉錄失敗: {str(e)}")
             return None
 
     async def _save_and_push_result(self, session_id: UUID, chunk_sequence: int, transcript_result: Dict[str, Any]):
@@ -320,6 +381,28 @@ class SimpleAudioTranscriptionService:
 
         except Exception as e:
             logger.error(f"Failed to save/push transcript for chunk {chunk_sequence}: {e}")
+            # 廣播轉錄失敗錯誤到前端
+            await self._broadcast_transcription_error(session_id, chunk_sequence, "database_error", f"資料庫操作失敗: {str(e)}")
+
+    async def _broadcast_transcription_error(self, session_id: UUID, chunk_sequence: int, error_type: str, error_message: str):
+        """廣播轉錄錯誤到前端"""
+        try:
+            from app.ws.transcript_feed import manager as transcript_manager
+            error_data = {
+                "type": "transcription_error",
+                "error_type": error_type,
+                "message": error_message,
+                "session_id": str(session_id),
+                "chunk_sequence": chunk_sequence,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            await transcript_manager.broadcast(
+                json.dumps(error_data),
+                str(session_id)
+            )
+            logger.info(f"🚨 [轉錄錯誤廣播] 已通知前端轉錄錯誤: {error_type}")
+        except Exception as e:
+            logger.error(f"Failed to broadcast transcription error: {e}")
 
     # TODO: 在此處實現更優雅的關閉邏輯
     logger.info("Transcription service is shutting down...")
