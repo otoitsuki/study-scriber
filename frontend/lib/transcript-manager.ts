@@ -47,12 +47,12 @@ class TranscriptManager {
   async connect(sessionId: string): Promise<void> {
     // 如果已經有連接，直接返回
     if (this.connections.has(sessionId) && this.connectionStates.get(sessionId)) {
-      console.log(`📱 TranscriptManager: Session ${sessionId} 已連接，跳過重複連接`)
+      console.log(`📱 [TranscriptManager] Session ${sessionId} 已連接，跳過重複連接`)
       return
     }
 
     try {
-      console.log(`📱 TranscriptManager: 開始連接 session ${sessionId}`)
+      console.log(`📱 [TranscriptManager] 開始連接 session ${sessionId}`)
 
       // 清理舊連接（如果存在）
       await this.disconnect(sessionId)
@@ -63,14 +63,68 @@ class TranscriptManager {
       // 建立新連接
       await this.establishConnection(sessionId)
 
+      // 等待連線完全就緒
+      await this.waitForConnectionReady(sessionId)
+
+      console.log(`✅ [TranscriptManager] Session ${sessionId} 連接並就緒`)
+
     } catch (error) {
-      console.error(`❌ TranscriptManager: Session ${sessionId} 連接失敗:`, error)
+      console.error(`❌ [TranscriptManager] Session ${sessionId} 連接失敗:`, error)
       this.connectionStates.set(sessionId, false)
 
       // 嘗試重連
       this.scheduleReconnect(sessionId)
       throw error
     }
+  }
+
+  /**
+ * 等待連線完全就緒
+ */
+  private async waitForConnectionReady(sessionId: string, timeout: number = 5000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now()
+
+      const checkReady = () => {
+        const ws = this.connections.get(sessionId)
+        const isConnected = this.connectionStates.get(sessionId)
+
+        console.log(`🔍 [TranscriptManager] 檢查連線就緒狀態:`, {
+          sessionId,
+          hasWebSocket: !!ws,
+          isConnected: !!isConnected,
+          wsReadyState: ws?.readyState,
+          wsIsConnected: ws?.isConnected || false,
+          elapsedTime: Date.now() - startTime
+        })
+
+        // 修正：檢查 WebSocket 狀態更寬鬆，支援測試環境
+        const wsReady = ws && (
+          ws.isConnected ||
+          ws.readyState === WebSocket.OPEN ||
+          (typeof window !== 'undefined' && window.WebSocket && ws.readyState === 1) // 測試環境兼容
+        )
+
+        if (ws && isConnected && wsReady) {
+          console.log(`✅ [TranscriptManager] Session ${sessionId} 連線就緒`)
+          resolve()
+          return
+        }
+
+        // 檢查超時
+        if (Date.now() - startTime > timeout) {
+          console.error(`⏰ [TranscriptManager] Session ${sessionId} 連線就緒等待超時`)
+          console.error(`   最終狀態: ws=${!!ws}, isConnected=${!!isConnected}, wsReady=${!!wsReady}`)
+          reject(new Error(`連線就緒等待超時 (${timeout}ms)`))
+          return
+        }
+
+        // 繼續等待
+        setTimeout(checkReady, 100)
+      }
+
+      checkReady()
+    })
   }
 
   /**
@@ -126,21 +180,67 @@ class TranscriptManager {
    * 處理收到的訊息
    */
   private handleMessage(sessionId: string, message: any): void {
+    console.log('📨 [TranscriptManager] 收到訊息:', {
+      sessionId,
+      type: message.type,
+      message: message,
+      timestamp: new Date().toISOString(),
+      listenerCount: this.listeners.get(sessionId)?.size || 0
+    })
+
     // 處理不同類型的訊息
     if (message.type === 'transcript_segment') {
-      console.log('📝 TranscriptManager 收到逐字稿片段:', message.text?.substring(0, 50) + '...')
+      console.log('📝 [TranscriptManager] 逐字稿片段詳情:', {
+        sessionId,
+        text: message.text,
+        textLength: message.text?.length || 0,
+        textPreview: message.text?.substring(0, 50) + (message.text?.length > 50 ? '...' : ''),
+        start_time: message.start_time,
+        end_time: message.end_time,
+        confidence: message.confidence
+      })
       this.broadcastToListeners(sessionId, message)
     } else if (message.type === 'connection_established') {
-      console.log('✅ TranscriptManager 連接已建立:', message.message)
+      console.log('✅ [TranscriptManager] 連接已建立:', {
+        sessionId,
+        message: message.message,
+        timestamp: message.timestamp
+      })
     } else if (message.type === 'transcript_complete') {
-      console.log('🎯 TranscriptManager 轉錄完成:', message.message)
+      console.log('🎯 [TranscriptManager] 轉錄完成:', {
+        sessionId,
+        message: message.message,
+        timestamp: message.timestamp
+      })
       this.broadcastToListeners(sessionId, message)
     } else if (message.type === 'heartbeat_ack') {
-      console.log('💓 TranscriptManager 收到心跳回應')
+      console.log('💓 [TranscriptManager] 心跳回應:', {
+        sessionId,
+        timestamp: message.timestamp
+      })
     } else if (message.type === 'pong') {
-      console.log('🏓 TranscriptManager 收到 pong 回應')
+      console.log('🏓 [TranscriptManager] Pong 回應:', {
+        sessionId,
+        timestamp: message.timestamp
+      })
+    } else if (message.phase === 'waiting') {
+      console.log('⏳ [TranscriptManager] 收到 waiting phase:', {
+        sessionId,
+        phase: message.phase,
+        timestamp: new Date().toISOString()
+      })
+    } else if (message.phase === 'active') {
+      console.log('✅ [TranscriptManager] 收到 active phase，轉錄已開始:', {
+        sessionId,
+        phase: message.phase,
+        timestamp: new Date().toISOString()
+      })
     } else {
-      console.log('📨 TranscriptManager 收到其他訊息:', message)
+      console.log('📨 [TranscriptManager] 未知訊息類型:', {
+        sessionId,
+        type: message.type,
+        fullMessage: message
+      })
     }
   }
 
@@ -149,14 +249,31 @@ class TranscriptManager {
    */
   private broadcastToListeners(sessionId: string, message: TranscriptMessage): void {
     const sessionListeners = this.listeners.get(sessionId)
+    console.log('📡 [TranscriptManager] 廣播訊息給監聽器:', {
+      sessionId,
+      messageType: message.type,
+      listenerCount: sessionListeners?.size || 0,
+      hasListeners: !!sessionListeners
+    })
+
     if (sessionListeners) {
+      let successCount = 0
+      let errorCount = 0
+
       sessionListeners.forEach(callback => {
         try {
           callback(message)
+          successCount++
+          console.log(`✅ [TranscriptManager] 監聽器回調成功 (${successCount}/${sessionListeners.size})`)
         } catch (error) {
-          console.error(`❌ TranscriptManager: 監聽器回調錯誤:`, error)
+          errorCount++
+          console.error(`❌ [TranscriptManager] 監聽器回調錯誤 (${errorCount}/${sessionListeners.size}):`, error)
         }
       })
+
+      console.log(`📡 [TranscriptManager] 廣播完成: ${successCount} 成功, ${errorCount} 失敗`)
+    } else {
+      console.warn(`⚠️ [TranscriptManager] 沒有找到 session ${sessionId} 的監聽器`)
     }
   }
 
