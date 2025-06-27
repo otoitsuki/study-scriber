@@ -83,7 +83,7 @@ class TestOneChunkOneTranscription:
 
     @pytest.mark.asyncio
     async def test_transcription_service_full_process(self, mock_azure_client, session_id):
-        """測試轉錄服務的完整處理過程"""
+        """測試轉錄服務的完整處理過程 (WebM 直接轉錄架構 v2)"""
         service = SimpleAudioTranscriptionService(
             azure_client=mock_azure_client,
             deployment_name="whisper-test"
@@ -91,24 +91,28 @@ class TestOneChunkOneTranscription:
         # 準備測試資料
         webm_data = b'\x1a\x45\xdf\xa3' + b'\x00' * 1000
         chunk_sequence = 0
-        # 模擬 FFmpeg 轉換
-        mock_wav_data = b'RIFF' + (1000).to_bytes(4, 'little') + b'WAVE' + b'\x00' * 1000
         # Whisper API 回傳直接用字串
         mock_transcript = '  測試轉錄結果  '
 
-        with patch.object(service, '_convert_webm_to_wav', return_value=mock_wav_data) as mock_convert:
-            with patch.object(service.client.audio.transcriptions, 'create', return_value=mock_transcript) as mock_create:
-                with patch.object(service, '_save_and_push_result') as mock_save:
-                    # 處理切片
-                    await service._process_chunk_async(session_id, chunk_sequence, webm_data)
-                    # 驗證各步驟都被呼叫
-                    mock_convert.assert_called_once_with(webm_data, chunk_sequence, session_id)
-                    mock_create.assert_called_once()
-                    mock_save.assert_called_once()
+        # WebM 直接轉錄架構：跳過 _convert_webm_to_wav，直接呼叫 _transcribe_audio
+        with patch.object(service, '_transcribe_audio', return_value={
+            'text': '測試轉錄結果',
+            'chunk_sequence': chunk_sequence,
+            'session_id': str(session_id),
+            'timestamp': '2024-01-01T00:00:00.000000',
+            'language': 'zh-TW',
+            'duration': 1.0
+        }) as mock_transcribe:
+            with patch.object(service, '_save_and_push_result') as mock_save:
+                # 處理切片
+                await service._process_chunk_async(session_id, chunk_sequence, webm_data)
+                # 驗證 WebM 直接轉錄架構：應該直接呼叫 _transcribe_audio 而不是 _convert_webm_to_wav
+                mock_transcribe.assert_called_once_with(webm_data, session_id, chunk_sequence)
+                mock_save.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_ffmpeg_conversion_with_genpts(self, mock_azure_client, session_id):
-        """測試帶有 -fflags +genpts 的 FFmpeg 轉換"""
+        """測試帶有 -fflags +genpts 的 FFmpeg 轉換 (保留用於最終下載檔案)"""
         service = SimpleAudioTranscriptionService(
             azure_client=mock_azure_client,
             deployment_name="whisper-test"
@@ -124,6 +128,8 @@ class TestOneChunkOneTranscription:
 
         with patch('asyncio.create_subprocess_exec', return_value=mock_process) as mock_exec:
             with patch('asyncio.wait_for', return_value=(expected_wav, b'')):
+                # 注意：在 WebM 直接轉錄架構 v2 中，_convert_webm_to_wav 只用於最終下載檔案
+                # 不再用於即時轉錄流程，但功能仍需保持正常
                 result = await service._convert_webm_to_wav(webm_data, 0, session_id)
 
                 # 驗證 FFmpeg 命令包含 -fflags +genpts
@@ -182,7 +188,7 @@ class TestOneChunkOneTranscription:
 
     @pytest.mark.asyncio
     async def test_transcription_service_error_recovery(self, mock_azure_client, session_id):
-        """測試轉錄服務的錯誤恢復"""
+        """測試轉錄服務的錯誤恢復 (WebM 直接轉錄架構 v2)"""
         service = SimpleAudioTranscriptionService(
             azure_client=mock_azure_client,
             deployment_name="whisper-test"
@@ -190,14 +196,15 @@ class TestOneChunkOneTranscription:
 
         webm_data = b'\x1a\x45\xdf\xa3' + b'\x00' * 1000
 
-        # 模擬 FFmpeg 轉換失敗
-        with patch.object(service, '_convert_webm_to_wav', return_value=None):
-            with patch.object(service, '_transcribe_audio') as mock_transcribe:
+        # 在 WebM 直接轉錄架構中，模擬轉錄直接失敗
+        with patch.object(service, '_transcribe_audio', return_value=None) as mock_transcribe:
+            with patch.object(service, '_save_and_push_result') as mock_save:
                 # 處理切片
                 await service._process_chunk_async(session_id, 0, webm_data)
 
-                # 轉換失敗後不應該呼叫轉錄
-                mock_transcribe.assert_not_called()
+                # 驗證轉錄被呼叫但失敗，因此不應呼叫儲存
+                mock_transcribe.assert_called_once_with(webm_data, session_id, 0)
+                mock_save.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_performance_timing(self, mock_azure_client, session_id):
