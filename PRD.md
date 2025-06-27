@@ -227,19 +227,27 @@ default → finished                    // 純筆記模式直接完成（未來�
 | processing        | active              | recording           | 錄音結束，轉錄處理中           |
 | finished          | completed           | note_only/recording | 可匯出完整資料                 |
 
-### 6. Azure OpenAI 整合架構
+### 6. Azure OpenAI 整合架構 (WebM 優化版)
 
 **技術選擇理由**：
 - ✅ **企業級品質**：Azure OpenAI 提供穩定的 Whisper 模型服務
 - ✅ **多語言支援**：優秀的中文語音識別準確度
 - ✅ **API 整合**：標準 OpenAI SDK，開發簡單
 - ✅ **資料安全**：Microsoft 提供企業級資料保護
+- ✅ **格式原生支援**：Whisper API 原生支援 WebM 格式，無需轉換
 
-**工作流程**：
+**優化後工作流程**：
 ```
-前端錄音 → WebSocket 即時上傳音片段 → 儲存到 R2 → 
-累積一定數量後批次發送給 Azure OpenAI → WebSocket 推送轉錄結果
+前端錄音 (WebM) → WebSocket 即時上傳 WebM 片段 → 儲存到 R2 → 
+直接發送 WebM 到 Azure OpenAI Whisper API → WebSocket 推送轉錄結果
 ```
+
+**架構優化重點**：
+- 🚀 **消除轉換瓶頸**：移除每個 chunk 的 FFmpeg WebM→WAV 轉換步驟
+- 📈 **效能提升**：預期處理時間減少 60%，錯誤率降低 80%
+- 🔧 **簡化流程**：WebM 格式直接發送到 Whisper API，減少處理步驟
+- 💾 **資源節省**：降低 CPU 使用率和記憶體消耗
+- 🛡️ **錯誤減少**：消除 fragmented MP4 相關轉換錯誤
 
 **整合配置**：
 ```python
@@ -257,10 +265,16 @@ client = AzureOpenAI(
     azure_endpoint=AZURE_OPENAI_ENDPOINT
 )
 
-# 批次處理設定
-BATCH_SIZE = 3  # 每 3 個音檔切片進行一次轉錄
-BATCH_TIMEOUT = 10  # 最多等待 10 秒進行批次處理
+# 直接處理設定 (無需批次等待)
+CHUNK_PROCESSING = "immediate"  # 每個 WebM chunk 立即處理
+SUPPORTED_FORMATS = ["webm", "mp4", "wav"]  # Whisper API 支援格式
 ```
+
+**技術細節**：
+- **前端錄音格式**：優先使用 `audio/webm;codecs=opus`
+- **後端處理**：直接將 WebM 數據發送到 Whisper API
+- **備選方案**：保留 FFmpeg 轉換邏輯用於最終下載檔案
+- **錯誤處理**：簡化錯誤流程，移除 FFmpeg 相關錯誤檢測
 
 ---
 
@@ -302,12 +316,12 @@ BATCH_TIMEOUT = 10  # 最多等待 10 秒進行批次處理
      - 呼叫 `createRecordingSession(title)` 建立 `recording` 類型的 session。
      - 前端狀態立即轉為 `recording_waiting`。
   2. **錄音與上傳**：
-     - `MediaRecorder` 開始錄音，每 12 秒產生一個 `.mp4` 音檔切片。
-     - `ws_upload_audio` WebSocket 連線建立，音檔切片即時上傳。
+     - `MediaRecorder` 開始錄音，優先使用 WebM 格式，每 12 秒產生一個音檔切片。
+     - `ws_upload_audio` WebSocket 連線建立，WebM 音檔切片即時上傳。
      - 後端回傳 `ack/missing` 確認，前端處理重傳。
   3. **即時逐字稿**：
      - `ws_transcript_feed` WebSocket 連線建立。
-     - 發送給 Azure OpenAI Whisper API。
+     - 直接將 WebM 格式發送給 Azure OpenAI Whisper API，無需轉換。
      - Whisper API 返回轉錄結果，後端立即透過 WebSocket 推送給前端。
      - `TranscriptPane` 即時顯示收到的逐字稿片段。
   4. **同步筆記**：

@@ -396,24 +396,24 @@ Error opening input file pipe:0.
   - **依賴**: WEBM1
   - **驗證**: WebM 格式正確檢測和處理，FFmpeg 轉換命令最佳化，與 Whisper API 整合無誤
 
-- [ ] **WEBM3: 前端測試案例更新** `2c8d6d6f-226d-4038-8930-de4b457cf378`
-  - [ ] 修改 `tests/frontend/transcript-manager-phase.spec.ts` 中的 MediaRecorder polyfill
-  - [ ] 更新 `tests/frontend/state-transition.spec.ts` 中的格式設定
-  - [ ] 確保測試中的 mimeType 預設為 `'audio/webm;codecs=opus'`
-  - [ ] 驗證格式選擇邏輯的測試覆蓋
-  - [ ] 添加 WebM 格式特定的測試案例
-  - [ ] 所有前端測試正常通過，WebM 格式相關測試案例正常運作
+- [x] **WEBM3: 前端測試案例更新** `2c8d6d6f-226d-4038-8930-de4b457cf378` ✅
+  - [x] 修改 `tests/frontend/transcript-manager-phase.spec.ts` 中的 MediaRecorder polyfill
+  - [x] 更新 `tests/frontend/state-transition.spec.ts` 中的格式設定
+  - [x] 確保測試中的 mimeType 預設為 `'audio/webm;codecs=opus'`
+  - [x] 驗證格式選擇邏輯的測試覆蓋
+  - [x] 添加 WebM 格式特定的測試案例
+  - [x] 所有前端測試正常通過，WebM 格式相關測試案例正常運作
   - **檔案**: `tests/frontend/transcript-manager-phase.spec.ts` (行 70-85), `tests/frontend/state-transition.spec.ts` (行 65-80)
   - **依賴**: WEBM1
   - **驗證**: 所有前端測試正常通過，MediaRecorder polyfill 使用正確的 WebM 格式
 
-- [ ] **WEBM4: 後端測試案例更新** `9ff21636-f5b7-43e2-b2c5-f9772a691769`
-  - [ ] 修改 `tests/unit/test_azure_openai_v2.py` 中的測試資料格式
-  - [ ] 更新 `tests/integration/test_one_chunk_one_transcription.py` 的音檔格式
-  - [ ] 確保 `sample_webm_data` 使用正確的 WebM 標頭
-  - [ ] 驗證 WebM 格式的轉換和轉錄流程
-  - [ ] 添加 WebM 特定的效能和穩定性測試
-  - [ ] 所有後端測試正常通過，WebM 格式處理測試覆蓋完整
+- [x] **WEBM4: 後端測試案例更新** `9ff21636-f5b7-43e2-b2c5-f9772a691769` ✅
+  - [x] 修改 `tests/unit/test_azure_openai_v2.py` 中的測試資料格式
+  - [x] 更新 `tests/integration/test_one_chunk_one_transcription.py` 的音檔格式
+  - [x] 確保 `sample_webm_data` 使用正確的 WebM 標頭
+  - [x] 驗證 WebM 格式的轉換和轉錄流程
+  - [x] 添加 WebM 特定的效能和穩定性測試
+  - [x] 所有後端測試正常通過，WebM 格式處理測試覆蓋完整
   - **檔案**: `tests/unit/test_azure_openai_v2.py` (行 60-90), `tests/integration/test_one_chunk_one_transcription.py` (行 85-110)
   - **依賴**: WEBM2
   - **驗證**: 所有後端測試正常通過，WebM 格式處理測試覆蓋完整，轉錄服務整合測試正常
@@ -454,3 +454,110 @@ Error opening input file pipe:0.
 - ✅ **相容性風險**：極低（限制使用 Chrome）
 - ✅ **效能風險**：無（WebM 效能更佳）
 - ✅ **維護風險**：低（簡化錯誤處理邏輯）
+
+### Phase 13: 🚀 WebM 直接轉錄架構優化 (效能革命)
+
+**背景說明**：
+基於深度技術分析，實作 WebM 格式直接發送到 OpenAI Whisper API 的架構優化。消除每個 chunk 的 FFmpeg 轉換瓶頸，將「每個 chunk 即時轉換」改為「錄音結束後批次轉換」，大幅提升系統效能和穩定性。
+
+**核心洞察**：
+- 🎯 **OpenAI Whisper API 原生支援 WebM 格式**，無需轉換
+- 🎯 **WAV 檔應該是最後按下錄音結束才需要轉檔**，不是每個 chunk 都轉
+- 🎯 **消除 FFmpeg 轉換瓶頸**，預期效能提升 60%，錯誤率降低 80%
+
+**技術可行性**：
+- ✅ **OpenAI 官方確認**：Whisper API 支援格式包含 `['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']`
+- ✅ **前端已優化**：`audio/webm;codecs=opus` 為第一優先格式
+- ✅ **架構簡化**：移除每個 chunk 的 0.15 秒轉換時間
+- ✅ **向後相容**：保留 FFmpeg 邏輯用於最終下載檔案
+
+**新架構流程**：
+```
+前端錄音 (WebM) → 直接儲存 WebM chunks 到 R2 → 
+直接發送 WebM 到 Whisper API → 錄音結束後才轉換為 WAV 供下載
+```
+
+- [ ] **WEBM_OPT1: WebM 直接轉錄核心邏輯實作** `57dc41cd-d853-4e3d-b748-383f69556a13`
+  - [ ] 修改 `app/services/azure_openai_v2.py` 中的 `_transcribe_audio` 方法
+  - [ ] 將方法簽名從 `_transcribe_audio(wav_data: bytes)` 改為 `_transcribe_audio(webm_data: bytes)`
+  - [ ] 將 `tempfile.NamedTemporaryFile(suffix='.wav')` 改為 `suffix='.webm'`
+  - [ ] 直接寫入 webm_data 到臨時檔案，跳過 FFmpeg 轉換
+  - [ ] 保持相同的 Whisper API 調用邏輯和參數
+  - [ ] 更新相關日誌訊息反映 WebM 格式處理
+  - [ ] 保留 `_convert_webm_to_wav` 方法，標記為備選用途（最終下載使用）
+  - **檔案**: `app/services/azure_openai_v2.py` (行 315-350)
+  - **驗證**: _transcribe_audio 方法成功接受 WebM 格式，Whisper API 調用正常，轉錄結果格式不變，效能日誌顯示處理時間減少
+
+- [ ] **WEBM_OPT2: 音訊處理流程重構** `7ddb42bd-38aa-4b48-bc6e-f296d2f6f94f`
+  - [ ] 修改 `_process_chunk_async` 方法中的處理流程
+  - [ ] 跳過 `_convert_webm_to_wav` 調用，直接將 webm_data 傳遞給 `_transcribe_audio`
+  - [ ] 更新錯誤處理邏輯，移除 FFmpeg 轉換相關錯誤檢測和廣播
+  - [ ] 保留 WebM 數據驗證步驟（`_validate_webm_data`）
+  - [ ] 更新效能監控日誌，反映新的處理流程
+  - [ ] 確保 R2 儲存邏輯不受影響
+  - **檔案**: `app/services/azure_openai_v2.py` (行 105-135)
+  - **依賴**: WEBM_OPT1
+  - **驗證**: 處理流程成功跳過 FFmpeg 轉換，WebM 數據直接傳遞給轉錄方法，錯誤處理邏輯正確更新，R2 儲存功能正常，效能監控顯示處理時間改善
+
+- [ ] **WEBM_OPT3: 單元測試更新與驗證** `4d89a0d6-61a9-452d-b6d2-ad814700b89b`
+  - [ ] 更新 `tests/unit/test_azure_openai_v2.py` 中的相關測試案例
+  - [ ] 修改 `test_transcribe_audio` 相關測試，使用 WebM 格式的測試數據
+  - [ ] 更新 mock 物件以模擬 WebM 檔案處理（從 `.wav` 改為 `.webm`）
+  - [ ] 修改測試中的臨時檔案格式驗證
+  - [ ] 驗證 Whisper API 調用參數正確
+  - [ ] 測試錯誤處理邏輯的變更
+  - [ ] 確保所有現有測試案例通過
+  - **檔案**: `tests/unit/test_azure_openai_v2.py` (行 1-100)
+  - **依賴**: WEBM_OPT1, WEBM_OPT2
+  - **驗證**: 所有單元測試通過，測試覆蓋率保持或提升，WebM 格式相關測試案例正確，Mock 物件正確模擬新的處理流程，錯誤處理測試案例更新完成
+
+- [ ] **WEBM_OPT4: 整合測試驗證** `32bfa613-27a3-4614-be9d-2f274eeff36c`
+  - [ ] 更新 `tests/integration/test_one_chunk_one_transcription.py` 中的整合測試
+  - [ ] 使用真實的 WebM 格式測試數據驗證端到端流程
+  - [ ] 驗證 WebSocket 消息流程正確（從錄音到轉錄結果推送）
+  - [ ] 測試 R2 儲存和 Supabase 數據庫操作
+  - [ ] 確認前端能正確接收轉錄結果
+  - [ ] 測試錯誤情況下的處理流程
+  - **檔案**: `tests/integration/test_one_chunk_one_transcription.py` (行 1-200)
+  - **依賴**: WEBM_OPT1, WEBM_OPT2, WEBM_OPT3
+  - **驗證**: 端到端測試全部通過，WebSocket 消息流程正確，數據庫操作正常，R2 儲存功能驗證，錯誤處理整合測試通過
+
+- [ ] **WEBM_OPT5: 效能監控與對比分析** `42173e78-4047-4130-b4a5-c112441a2cad`
+  - [ ] 在 `PerformanceTimer` 中添加更詳細的效能指標
+  - [ ] 建立效能對比測試腳本，對比新舊架構
+  - [ ] 監控 CPU 使用率、記憶體使用和處理延遲
+  - [ ] 收集錯誤率統計數據
+  - [ ] 建立效能報告生成機制
+  - [ ] 驗證預期的 60% 處理時間減少和 80% 錯誤率降低
+  - **檔案**: `app/services/azure_openai_v2.py` (行 32-60), `test/performance_benchmark.py` (新建)
+  - **依賴**: WEBM_OPT1, WEBM_OPT2
+  - **驗證**: 效能監控機制正常運作，處理時間減少 60% 以上，錯誤率降低 80% 以上，CPU 使用率明顯降低，效能報告生成正確
+
+- [ ] **WEBM_OPT6: 文檔更新與部署準備** `d3077d14-4be9-442e-8101-070aa4857952`
+  - [ ] 更新 `PRD.md` 中的技術架構描述，反映 WebM 直接轉錄架構
+  - [ ] 修改 `README.md` 中的系統流程說明
+  - [ ] 更新 API 文檔反映新的處理邏輯
+  - [ ] 建立架構變更說明文件
+  - [ ] 更新部署指南和環境配置
+  - [ ] 建立回滾計劃文檔
+  - **檔案**: `PRD.md` (行 200-250), `README.md` (行 1-100), `docs/architecture_changes.md` (新建)
+  - **依賴**: WEBM_OPT1, WEBM_OPT2, WEBM_OPT5
+  - **驗證**: 技術文檔準確反映新架構，API 文檔更新完成，部署指南包含新的配置要求，回滾計劃文檔完整，團隊成員理解變更內容
+
+**預期效益**：
+- 🚀 **處理時間減少 60%**：消除每個 chunk 的 FFmpeg 轉換延遲
+- 🛡️ **錯誤率降低 80%**：消除 FFmpeg 相關轉換錯誤
+- 💾 **資源使用減少 60%**：降低 CPU 密集的轉換操作
+- 📈 **上傳速度提升**：WebM 檔案比 WAV 小 60-80%
+- 🔧 **架構簡化**：減少錯誤處理複雜度
+
+**技術風險評估**：
+- ✅ **技術風險**：極低（Whisper API 原生支援 WebM）
+- ✅ **相容性風險**：無（WebM 為當前主要格式）
+- ✅ **回滾風險**：極低（保留原有轉換邏輯）
+- ✅ **效能風險**：正面影響（減少處理步驟）
+
+**實作策略**：
+- 🎯 **最小變更原則**：只修改核心轉錄邏輯，保留其他功能
+- 🎯 **向後相容**：保留 FFmpeg 邏輯用於最終下載檔案
+- 🎯 **段階實作**：核心邏輯 → 測試驗證 → 效能監控 → 文檔更新
