@@ -210,34 +210,169 @@ def ffmpeg_spawn() -> subprocess.Popen:
 
 def detect_audio_format(audio_bytes: bytes) -> str:
     """
-    檢測音檔格式
+    檢測音檔格式，完整支援 fragmented MP4
 
     Args:
         audio_bytes: 音檔數據
 
     Returns:
-        str: 檢測到的格式 (webm, mp4, ogg, wav, unknown)
+        str: 檢測到的格式 (webm, mp4, fmp4, ogg, wav, unknown)
+        - mp4: 標準 MP4 格式
+        - fmp4: fragmented MP4 格式（需要特殊 FFmpeg 參數）
     """
-    if not audio_bytes or len(audio_bytes) < 12:
+    if not audio_bytes or len(audio_bytes) < 32:
         return 'unknown'
+
+    # 擴大檢測範圍到 128 bytes 以捕獲更多格式變體
+    search_range = min(len(audio_bytes), 128)
+    header_data = audio_bytes[:search_range]
 
     # WebM (Matroska) 以 EBML header 開頭 0x1A45DFA3
     if audio_bytes[0:4] == b'\x1A\x45\xDF\xA3':
         return 'webm'
 
-    # MP4/ISOBMFF 常在 4–8 byte 看到 'ftyp'
-    if b'ftyp' in audio_bytes[4:12]:
-        return 'mp4'
+    # Fragmented MP4 格式檢測（優先檢測，需要特殊處理）
+    fragmented_markers = [
+        b'styp',  # Segment Type Box - fragmented MP4 的片段類型盒
+        b'moof',  # Movie Fragment Box - movie fragment 盒
+        b'sidx',  # Segment Index Box - segment index 盒
+        b'tfhd',  # Track Fragment Header Box - track fragment header
+        b'trun',  # Track Fragment Run Box - track run
+    ]
+
+    # 檢查是否包含 fragmented MP4 標記
+    has_fragmented_marker = any(marker in header_data for marker in fragmented_markers)
+
+    if has_fragmented_marker:
+        # 進一步確認是否為 MP4 容器格式
+        mp4_markers = [b'ftyp', b'mdat', b'moov']
+        has_mp4_marker = any(marker in header_data for marker in mp4_markers)
+
+        if has_mp4_marker or b'mp4' in header_data[:16]:
+            return 'fmp4'  # 確認為 fragmented MP4
+
+    # 標準 MP4/ISOBMFF 檢測
+    # 標準 MP4 在 4-8 byte 有 'ftyp'
+    if b'ftyp' in header_data:
+        # 檢查是否不包含 fragmented 標記，以區分標準 MP4
+        if not has_fragmented_marker:
+            return 'mp4'
+        else:
+            return 'fmp4'  # 包含 ftyp 但也有 fragmented 標記
+
+    # 檢測其他 MP4 相關標記
+    if b'mdat' in header_data:
+        if has_fragmented_marker:
+            return 'fmp4'
+        else:
+            return 'mp4'
 
     # OGG 以 'OggS' 開頭
     if audio_bytes[0:4] == b'OggS':
         return 'ogg'
 
     # WAV 以 'RIFF' 開頭，並在 8-12 byte 有 'WAVE'
-    if audio_bytes[0:4] == b'RIFF' and audio_bytes[8:12] == b'WAVE':
+    if audio_bytes[0:4] == b'RIFF' and len(audio_bytes) >= 12 and audio_bytes[8:12] == b'WAVE':
         return 'wav'
 
     return 'unknown'
+
+
+def _generate_audio_diagnostics(audio_bytes: bytes, detected_format: str) -> str:
+    """
+    生成音檔診斷資訊，包含頭部十六進位和格式建議
+
+    Args:
+        audio_bytes: 音檔數據
+        detected_format: 檢測到的格式
+
+    Returns:
+        str: 診斷資訊字串
+    """
+    if not audio_bytes:
+        return "診斷: 音檔數據為空"
+
+    # 生成頭部十六進位輸出（前 64 bytes）
+    hex_header = audio_bytes[:64].hex(' ', 8).upper()
+
+    # 格式建議
+    format_suggestions = {
+        'fmp4': '建議: 這是 fragmented MP4 格式，需要特殊的 movflags 參數',
+        'mp4': '建議: 標準 MP4 格式，通常相容性良好',
+        'webm': '建議: WebM 格式，適合網頁播放',
+        'unknown': '建議: 無法識別格式，可能是損壞的音檔或不支援的格式'
+    }
+
+    suggestion = format_suggestions.get(detected_format, '建議: 檢查音檔是否為有效的音訊格式')
+
+    return (
+        f"音檔診斷資訊:\n"
+        f"- 檢測格式: {detected_format}\n"
+        f"- 檔案大小: {len(audio_bytes)} bytes\n"
+        f"- 頭部資料 (前64字節): {hex_header}\n"
+        f"- {suggestion}"
+    )
+
+
+def _get_error_solution_advice(error_msg: str, detected_format: str) -> str:
+    """
+    根據錯誤訊息提供具體的解決建議
+
+    Args:
+        error_msg: FFmpeg 錯誤訊息
+        detected_format: 檢測到的格式
+
+    Returns:
+        str: 解決建議
+    """
+    error_solutions = {
+        'could not find corresponding trex': (
+            "🔧 Fragmented MP4 錯誤解決方案:\n"
+            "1. 確認使用 'fmp4' 格式處理 fragmented MP4\n"
+            "2. 檢查是否使用了正確的 movflags 參數\n"
+            "3. 考慮使用 WebM 格式作為替代方案"
+        ),
+        'trun track id unknown': (
+            "🔧 Track ID 錯誤解決方案:\n"
+            "1. 使用 fflags='+genpts+igndts' 忽略錯誤時間戳\n"
+            "2. 增加 analyzeduration 和 probesize 參數\n"
+            "3. 嘗試使用 avoid_negative_ts='make_zero'"
+        ),
+        'Invalid data found when processing input': (
+            "🔧 資料格式錯誤解決方案:\n"
+            "1. 檢查音檔是否完整下載\n"
+            "2. 確認瀏覽器錄音格式設定\n"
+            "3. 嘗試不同的格式參數組合"
+        ),
+        'No such file or directory': (
+            "🔧 檔案讀取錯誤解決方案:\n"
+            "1. 確認 FFmpeg 正確安裝\n"
+            "2. 檢查音檔數據是否正確傳輸\n"
+            "3. 驗證 pipe 輸入是否正常"
+        )
+    }
+
+    # 尋找匹配的錯誤模式
+    for error_pattern, solution in error_solutions.items():
+        if error_pattern.lower() in error_msg.lower():
+            return solution
+
+    # 根據格式提供通用建議
+    format_advice = {
+        'fmp4': "建議嘗試標準 MP4 格式作為備用",
+        'mp4': "建議嘗試 WebM 格式作為備用",
+        'webm': "建議嘗試 MP4 格式作為備用",
+        'unknown': "建議檢查音檔格式是否受支援"
+    }
+
+    generic_advice = format_advice.get(detected_format, "建議嘗試其他音檔格式")
+
+    return (
+        f"🔧 通用解決方案:\n"
+        f"1. {generic_advice}\n"
+        f"2. 檢查音檔是否損壞或格式不正確\n"
+        f"3. 確認 FFmpeg 版本支援所需格式"
+    )
 
 
 def feed_ffmpeg(process: subprocess.Popen, webm_bytes: bytes) -> bytes:
@@ -305,7 +440,7 @@ def feed_ffmpeg(process: subprocess.Popen, webm_bytes: bytes) -> bytes:
 
 async def feed_ffmpeg_async(webm_bytes: bytes) -> bytes:
     """
-    非同步版本的 FFmpeg 轉換，支援多格式重試
+    非同步版本的 FFmpeg 轉換，支援智能格式重試策略
 
     Args:
         webm_bytes: 音檔數據 (可能是 WebM, MP4 或其他格式)
@@ -314,14 +449,40 @@ async def feed_ffmpeg_async(webm_bytes: bytes) -> bytes:
         bytes: 轉換後的 16k mono PCM 數據
     """
     detected_format = detect_audio_format(webm_bytes)
+
+    # 生成詳細的診斷資訊
+    diagnostics = _generate_audio_diagnostics(webm_bytes, detected_format)
     logger.info(f"非同步轉換開始 - 檢測到格式: {detected_format} (大小: {len(webm_bytes)} bytes)")
+    logger.debug(f"音檔診斷詳情:\n{diagnostics}")
 
     def _convert_with_format(input_format: str):
         """使用指定格式進行轉換"""
         try:
             # 根據檢測到的格式選擇 FFmpeg 參數
-            if input_format == 'mp4':
-                # Safari 產出的 fragmented MP4
+            if input_format == 'fmp4':
+                # Fragmented MP4 格式 - 需要特殊參數組合解決 trex/trun 錯誤
+                process = (
+                    ffmpeg
+                    .input('pipe:',
+                           format='mp4',
+                           # 處理 fragmented MP4 的關鍵參數
+                           movflags='+faststart+frag_keyframe',
+                           fflags='+genpts+igndts+discardcorrupt',
+                           # 增加格式探測時間和大小
+                           analyzeduration='10M',
+                           probesize='10M',
+                           # 處理時間戳問題
+                           avoid_negative_ts='make_zero')
+                    .output('pipe:',
+                           format='s16le',
+                           acodec='pcm_s16le',
+                           ac=1,
+                           ar=16000)
+                    .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True, quiet=True)
+                )
+                logger.debug(f"使用 fragmented MP4 專用參數進行轉換")
+            elif input_format == 'mp4':
+                # 標準 MP4 格式
                 process = (
                     ffmpeg
                     .input('pipe:', format='mp4', fflags='+genpts')
@@ -349,7 +510,16 @@ async def feed_ffmpeg_async(webm_bytes: bytes) -> bytes:
 
             if process.returncode != 0:
                 error_msg = error_output.decode('utf-8', errors='ignore') if error_output else "未知錯誤"
-                logger.error(f"FFmpeg 轉換失敗 (格式: {input_format}): {error_msg}")
+
+                # 生成詳細的錯誤診斷和解決建議
+                solution_advice = _get_error_solution_advice(error_msg, input_format)
+                full_error_info = (
+                    f"FFmpeg 轉換失敗 (格式: {input_format}):\n"
+                    f"錯誤訊息: {error_msg}\n"
+                    f"{solution_advice}"
+                )
+
+                logger.error(full_error_info)
                 raise RuntimeError(f"FFmpeg 轉換失敗 (格式: {input_format}): {error_msg}")
 
             logger.debug(f"成功轉換 {input_format.upper()} → PCM ({len(pcm_data)} bytes)")
@@ -365,33 +535,124 @@ async def feed_ffmpeg_async(webm_bytes: bytes) -> bytes:
                 pass
 
     def _convert():
-        """同步轉換函式，包含重試邏輯"""
-        # 首先嘗試使用檢測到的格式
+        """同步轉換函式，智能重試策略"""
+        max_retries = 3
+        retry_attempts = []
+
+        # 第一階段：嘗試檢測到的精確格式
         try:
-            return _convert_with_format(detected_format)
+            logger.info(f"階段1: 使用檢測格式 '{detected_format}' 進行轉換")
+            result = _convert_with_format(detected_format)
+            logger.info(f"檢測格式 '{detected_format}' 轉換成功")
+            return result
         except RuntimeError as e:
-            logger.warning(f"使用檢測格式 '{detected_format}' 失敗: {e}")
+            retry_attempts.append({
+                'format': detected_format,
+                'error': str(e),
+                'stage': '精確格式'
+            })
+            logger.warning(f"檢測格式 '{detected_format}' 失敗: {e}")
 
-            # 如果檢測格式失敗，嘗試其他常見格式
-            fallback_formats = ['mp4', 'webm', 'auto']
-            if detected_format in fallback_formats:
-                fallback_formats.remove(detected_format)
+        # 第二階段：智能格式選擇 - 根據檢測格式選擇相關的備用格式
+        backup_strategies = {
+            'fmp4': ['mp4', 'auto'],  # fragmented MP4 優先嘗試標準 MP4
+            'mp4': ['fmp4', 'auto'],  # 標準 MP4 優先嘗試 fragmented MP4
+            'webm': ['auto', 'mp4'],  # WebM 先自動檢測，再嘗試 MP4
+            'unknown': ['auto', 'fmp4', 'mp4', 'webm']  # 未知格式嘗試所有選項
+        }
 
-            for fallback_format in fallback_formats:
-                try:
-                    logger.info(f"嘗試備用格式: {fallback_format}")
-                    return _convert_with_format(fallback_format)
-                except RuntimeError as fallback_error:
-                    logger.warning(f"備用格式 '{fallback_format}' 也失敗: {fallback_error}")
-                    continue
+        backup_formats = backup_strategies.get(detected_format, ['auto', 'fmp4', 'mp4', 'webm'])
 
-            # 所有格式都失敗
-            raise RuntimeError(f"所有格式轉換都失敗，原始錯誤: {e}")
+        for backup_format in backup_formats:
+            if len(retry_attempts) >= max_retries:
+                logger.warning(f"已達到最大重試次數 {max_retries}，停止嘗試")
+                break
+
+            try:
+                logger.info(f"階段2: 嘗試智能備用格式 '{backup_format}'")
+                result = _convert_with_format(backup_format)
+                logger.info(f"備用格式 '{backup_format}' 轉換成功")
+                return result
+            except RuntimeError as e:
+                retry_attempts.append({
+                    'format': backup_format,
+                    'error': str(e),
+                    'stage': '智能備用'
+                })
+                logger.warning(f"備用格式 '{backup_format}' 失敗: {e}")
+
+        # 第三階段：通用格式嘗試（如果尚未嘗試過）
+        remaining_formats = ['ogg', 'wav']  # 其他可能的格式
+
+        for fallback_format in remaining_formats:
+            if len(retry_attempts) >= max_retries:
+                break
+
+            try:
+                logger.info(f"階段3: 嘗試通用格式 '{fallback_format}'")
+                result = _convert_with_format(fallback_format)
+                logger.info(f"通用格式 '{fallback_format}' 轉換成功")
+                return result
+            except RuntimeError as e:
+                retry_attempts.append({
+                    'format': fallback_format,
+                    'error': str(e),
+                    'stage': '通用格式'
+                })
+                logger.warning(f"通用格式 '{fallback_format}' 失敗: {e}")
+
+        # 所有重試都失敗 - 生成詳細的失敗報告
+        failure_report = _generate_retry_failure_report(detected_format, retry_attempts, diagnostics)
+        logger.error(failure_report)
+
+        # 拋出包含所有重試資訊的錯誤
+        primary_error = retry_attempts[0]['error'] if retry_attempts else "未知錯誤"
+        raise RuntimeError(f"智能重試策略失敗，共嘗試 {len(retry_attempts)} 種格式。主要錯誤: {primary_error}")
 
     # 在執行緒池中執行轉換
     loop = asyncio.get_event_loop()
     pool = get_process_pool()
     return await loop.run_in_executor(pool.executor, _convert)
+
+
+def _generate_retry_failure_report(detected_format: str, retry_attempts: list, diagnostics: str) -> str:
+    """
+    生成詳細的重試失敗報告
+
+    Args:
+        detected_format: 原始檢測到的格式
+        retry_attempts: 重試嘗試記錄
+        diagnostics: 音檔診斷資訊
+
+    Returns:
+        str: 格式化的失敗報告
+    """
+    report_lines = [
+        "=== 智能重試策略失敗報告 ===",
+        f"檢測格式: {detected_format}",
+        f"總重試次數: {len(retry_attempts)}",
+        "",
+        "詳細重試記錄:"
+    ]
+
+    for i, attempt in enumerate(retry_attempts, 1):
+        report_lines.extend([
+            f"{i}. 階段: {attempt['stage']} | 格式: {attempt['format']}",
+            f"   錯誤: {attempt['error'][:100]}{'...' if len(attempt['error']) > 100 else ''}",
+            ""
+        ])
+
+    report_lines.extend([
+        "音檔診斷資訊:",
+        diagnostics,
+        "",
+        "建議解決方案:",
+        "1. 檢查音檔是否損壞或格式不支援",
+        "2. 確認 FFmpeg 安裝完整並支援相關編解碼器",
+        "3. 如果問題持續，請聯繫技術支援並提供此報告"
+    ])
+
+    return "\n".join(report_lines)
 
 
 def cleanup_ffmpeg_resources():

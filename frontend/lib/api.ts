@@ -68,18 +68,34 @@ export const sessionAPI = {
     return response.data
   },
 
-  // 獲取活躍會話
+  // 獲取活躍會話 - 增加重試機制
   async getActiveSession(): Promise<SessionResponse | null> {
-    try {
-      const response = await apiClient.get('/api/session/active')
-      return response.data
-    } catch (error) {
-      // 如果沒有活躍會話，返回 null 而不是拋出錯誤
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return null
+    const maxRetries = 3
+    const retryDelay = 1000 // 1 秒
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await apiClient.get('/api/session/active')
+        return response.data
+      } catch (error) {
+        // 如果沒有活躍會話，返回 null 而不是拋出錯誤
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          return null
+        }
+
+        // 如果是網路錯誤且不是最後一次嘗試，則重試
+        if (axios.isAxiosError(error) && error.code === 'ERR_NETWORK' && attempt < maxRetries) {
+          console.warn(`⚠️ 網路連線失敗 (嘗試 ${attempt}/${maxRetries})，${retryDelay}ms 後重試...`)
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          continue
+        }
+
+        throw error
       }
-      throw error
     }
+
+    // 這裡不會被執行到，但為了 TypeScript 類型安全
+    return null
   },
 
   // 完成會話

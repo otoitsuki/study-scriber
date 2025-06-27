@@ -146,8 +146,21 @@ export function useAppState() {
         }
       } catch (error) {
         if (!isMounted) return // 組件已卸載，停止執行
-        console.error('❌ 初始化失敗:', error)
-        setError(error instanceof Error ? error.message : '初始化失敗')
+
+        // 如果是網路錯誤，不要拋出錯誤，讓用戶正常使用應用
+        if (error instanceof Error && error.message.includes('Network Error')) {
+          console.warn('⚠️ 初始化時 Backend 連線失敗，使用離線模式:', error.message)
+
+          // 檢查是否有本地草稿
+          const draftContent = localStorage.getItem('draft_note')
+          if (draftContent) {
+            setAppData(prev => ({ ...prev, editorContent: draftContent }))
+            console.log('📝 離線模式：載入本地草稿')
+          }
+        } else {
+          console.error('❌ 初始化失敗:', error)
+          setError(error instanceof Error ? error.message : '初始化失敗')
+        }
       } finally {
         if (isMounted) {
           setIsLoading(false)

@@ -86,19 +86,19 @@ class TestSimpleAudioTranscriptionService:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_convert_webm_to_wav_success(self, service, sample_webm_data, mock_ffmpeg_process):
+    async def test_convert_webm_to_wav_success(self, service, sample_webm_data, mock_ffmpeg_process, session_id):
         """測試成功的 WebM 到 WAV 轉換"""
         mock_wav_data = b'RIFF' + b'\x00' * 1000
         mock_ffmpeg_process.communicate.return_value = (mock_wav_data, b'')
 
         with patch('asyncio.create_subprocess_exec', return_value=mock_ffmpeg_process):
             with patch('asyncio.wait_for', return_value=(mock_wav_data, b'')):
-                result = await service._convert_webm_to_wav(sample_webm_data, 0)
+                result = await service._convert_webm_to_wav(sample_webm_data, 0, session_id)
 
                 assert result == mock_wav_data
 
     @pytest.mark.asyncio
-    async def test_convert_webm_to_wav_ffmpeg_error(self, service, sample_webm_data):
+    async def test_convert_webm_to_wav_ffmpeg_error(self, service, sample_webm_data, session_id):
         """測試 FFmpeg 轉換錯誤"""
         mock_process = AsyncMock()
         mock_process.returncode = 1
@@ -106,21 +106,21 @@ class TestSimpleAudioTranscriptionService:
 
         with patch('asyncio.create_subprocess_exec', return_value=mock_process):
             with patch('asyncio.wait_for', return_value=(b'', b'FFmpeg error')):
-                result = await service._convert_webm_to_wav(sample_webm_data, 0)
+                result = await service._convert_webm_to_wav(sample_webm_data, 0, session_id)
 
                 assert result is None
 
     @pytest.mark.asyncio
-    async def test_convert_webm_to_wav_timeout(self, service, sample_webm_data):
+    async def test_convert_webm_to_wav_timeout(self, service, sample_webm_data, session_id):
         """測試 FFmpeg 轉換超時"""
         with patch('asyncio.create_subprocess_exec'):
             with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError):
-                result = await service._convert_webm_to_wav(sample_webm_data, 0)
+                result = await service._convert_webm_to_wav(sample_webm_data, 0, session_id)
 
                 assert result is None
 
     @pytest.mark.asyncio
-    async def test_convert_webm_to_wav_insufficient_output(self, service, sample_webm_data):
+    async def test_convert_webm_to_wav_insufficient_output(self, service, sample_webm_data, session_id):
         """測試 FFmpeg 輸出不足"""
         mock_process = AsyncMock()
         mock_process.returncode = 0
@@ -128,7 +128,7 @@ class TestSimpleAudioTranscriptionService:
 
         with patch('asyncio.create_subprocess_exec', return_value=mock_process):
             with patch('asyncio.wait_for', return_value=(b'small', b'')):
-                result = await service._convert_webm_to_wav(sample_webm_data, 0)
+                result = await service._convert_webm_to_wav(sample_webm_data, 0, session_id)
 
                 assert result is None
 

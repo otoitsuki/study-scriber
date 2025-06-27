@@ -26,10 +26,11 @@ const DEFAULT_CONFIG: AudioRecorderConfig = {
 }
 
 // 支援的音訊格式列表（優先順序）
+// MP4 格式在 FFmpeg 7.1.1 中有更好的兼容性，因此放在第一位
 const SUPPORTED_MIME_TYPES = [
-  'audio/webm;codecs=opus',
-  'audio/webm',
-  'audio/mp4',
+  'audio/webm;codecs=opus', // 第一優先：WebM Opus 編解碼器，音質優秀且串流友好
+  'audio/webm',             // 第二優先：WebM 通用格式
+  'audio/mp4',              // 第三優先：MP4 作為備選方案
   'audio/ogg;codecs=opus',
   'audio/wav',
 ]

@@ -139,12 +139,20 @@ NODE_ENV=development
 
 ### 7. 啟動開發伺服器
 
-#### 後端 (Terminal 1)
+**重要：請按順序啟動，避免初始化競速問題**
+
+#### 後端 (Terminal 1) - 先啟動
 ```bash
 uv run python main.py
 ```
+等待看到以下訊息表示 Backend 完全啟動：
+```
+🚀 StudyScriber 正在啟動...
+✅ Transcription service initialized and registered.
+INFO:     Application startup complete.
+```
 
-#### 前端 (Terminal 2)
+#### 前端 (Terminal 2) - 後啟動
 ```bash
 cd frontend
 pnpm install  # 首次運行
@@ -153,6 +161,8 @@ pnpm dev
 
 - 後端 API 服務：`http://localhost:8000`
 - 前端應用程式：`http://localhost:3000`
+
+> **注意**: 如果前端啟動時出現網路錯誤，這通常是因為 Backend 還在啟動中。新版本已加入重試機制，會自動處理這個問題。
 
 ## 📁 專案結構
 

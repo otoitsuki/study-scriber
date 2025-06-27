@@ -40,6 +40,12 @@ export function useSession(): UseSessionReturn {
                 return null
             }
         } catch (err) {
+            // 如果是網路錯誤，且是初始化階段，則靜默處理
+            if (err instanceof Error && err.message.includes('Network Error')) {
+                console.warn('⚠️ Backend API 連線暫時失敗，將在後續重試:', err.message)
+                return null // 靜默失敗，不設置錯誤狀態
+            }
+
             const errorMessage = err instanceof Error ? err.message : '檢查活躍會話失敗'
             setError(errorMessage)
             console.error('❌ 檢查活躍會話失敗:', err)

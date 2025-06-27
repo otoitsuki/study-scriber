@@ -20,15 +20,15 @@
 
 ## 3. MVP 功能列表
 
-| 類別         | 功能                                                                    | 說明                                        |
-| ------------ | ----------------------------------------------------------------------- | ------------------------------------------- |
-| 會話管理     | 建立純筆記或錄音會話                                                    | 支援兩種模式：note_only / recording         |
-| 錄音         | 桌面瀏覽器錄音、5 s 切片重傳                                            | 支援 Chrome / Edge / Firefox / macOS Safari |
-| 逐字稿       | Azure OpenAI Whisper API，平均延遲 ≤ 12 s                               | 中文 85 %+ 準確                             |
-| 筆記         | SimpleMDE Markdown 編輯、10 s Auto-save                                 | 可獨立使用或錄音中同步輸入                  |
-| 匯出         | 依會話類型匯出：純筆記(.md) 或 完整包(.webm + transcript.txt + note.md) | 離線備份、分享                              |
-| 隨時可寫草稿 | 會話建立前的標題／筆記暫存在 localStorage                               | 不怕誤關分頁                                |
-| 重傳機制     | Chunk 遺失自動補傳，單片最多 5 次                                       | 網路抖動不掉稿                              |
+| 類別         | 功能                                                                   | 說明                                        |
+| ------------ | ---------------------------------------------------------------------- | ------------------------------------------- |
+| 會話管理     | 建立純筆記或錄音會話                                                   | 支援兩種模式：note_only / recording         |
+| 錄音         | 桌面瀏覽器錄音、5 s 切片重傳                                           | 支援 Chrome / Edge / Firefox / macOS Safari |
+| 逐字稿       | Azure OpenAI Whisper API，平均延遲 ≤ 12 s                              | 中文 85 %+ 準確                             |
+| 筆記         | SimpleMDE Markdown 編輯、10 s Auto-save                                | 可獨立使用或錄音中同步輸入                  |
+| 匯出         | 依會話類型匯出：純筆記(.md) 或 完整包(.mp4 + transcript.txt + note.md) | 離線備份、分享                              |
+| 隨時可寫草稿 | 會話建立前的標題／筆記暫存在 localStorage                              | 不怕誤關分頁                                |
+| 重傳機制     | Chunk 遺失自動補傳，單片最多 5 次                                      | 網路抖動不掉稿                              |
 
 
 ---
@@ -48,7 +48,7 @@
 | B-006 | `ws_transcript_feed(ws:WebSocket, sid:UUID)`           | ws.transcript_feed    | 推送 Azure OpenAI 逐字稿結果                                 | ↓ {"text","timestamp",...}                         |
 | B-007 | `store_chunk_blob(sid, seq, blob)`                     | services.storage      | 上傳到 Cloudflare R2 + 更新 DB `audio_files`                 | —                                                  |
 | B-008 | `ffmpeg_spawn() -> Popen`                              | core.ffmpeg           | 建立共用轉碼子行程                                           | return proc                                        |
-| B-009 | `feed_ffmpeg(proc, webm_bytes) -> bytes`               | core.ffmpeg           | webm→16k mono PCM                                            | in: WebM blob                                      |
+| B-009 | `feed_ffmpeg(proc, mp4_bytes) -> bytes`                | core.ffmpeg           | mp4→16k mono PCM                                             | in: mp4 blob                                       |
 | B-010 | `azure_openai_client() -> OpenAI`                      | services.azure_openai | 建立 Azure OpenAI 客戶端                                     | return client                                      |
 | B-011 | `transcribe_audio_batch(client, audio_chunks, sid)`    | services.azure_openai | 批次處理音檔到 Azure OpenAI Whisper；透過 WebSocket 推送結果 | —                                                  |
 | B-012 | `handle_ack_missing(received:set,int)->dict`           | ws.upload_audio       | 產生 ack/missing JSON                                        | return {"ack":n,"missing":[..]}                    |
@@ -302,7 +302,7 @@ BATCH_TIMEOUT = 10  # 最多等待 10 秒進行批次處理
      - 呼叫 `createRecordingSession(title)` 建立 `recording` 類型的 session。
      - 前端狀態立即轉為 `recording_waiting`。
   2. **錄音與上傳**：
-     - `MediaRecorder` 開始錄音，每 12 秒產生一個 `.webm` 音檔切片。
+     - `MediaRecorder` 開始錄音，每 12 秒產生一個 `.mp4` 音檔切片。
      - `ws_upload_audio` WebSocket 連線建立，音檔切片即時上傳。
      - 後端回傳 `ack/missing` 確認，前端處理重傳。
   3. **即時逐字稿**：
@@ -323,5 +323,5 @@ BATCH_TIMEOUT = 10  # 最多等待 10 秒進行批次處理
      - 當後端推送 `transcript_complete` 訊息時，前端狀態轉為 `finished`。
      - `ProcessingOverlay` 消失，使用者可以檢視完整逐字稿、編輯筆記、並匯出。
   8. **匯出與新筆記**：
-     - `ExportButton` 可用，點擊下載包含 `.webm`、`transcript.txt` 和 `note.md` 的 ZIP 檔。
+     - `ExportButton` 可用，點擊下載包含 `.mp4`、`transcript.txt` 和 `note.md` 的 ZIP 檔。
      - `NewNoteButton` 可用，點擊清空當前畫面，回到 `default` 狀態，開始新的筆記。

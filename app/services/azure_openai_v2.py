@@ -20,6 +20,7 @@ from openai import AzureOpenAI
 
 from ..db.database import get_supabase_client
 from app.core.config import settings
+from app.core.ffmpeg import detect_audio_format
 from app.ws.transcript_feed import manager as transcript_manager
 from app.services.r2_client import R2Client
 
@@ -145,28 +146,25 @@ class SimpleAudioTranscriptionService:
     async def _convert_webm_to_wav(self, webm_data: bytes, chunk_sequence: int, session_id: UUID) -> Optional[bytes]:
         """將 WebM / fMP4 轉換為 WAV，自動辨識來源格式，增強錯誤處理和回報機制"""
 
-        def _detect_format(data: bytes) -> str:
-            """簡易檢測音訊封裝格式 (webm / mp4 / ogg / wav)"""
-            if len(data) < 12:
-                return 'unknown'
-            # WebM (Matroska) 以 EBML header 開頭 0x1A45DFA3
-            if data[0:4] == b'\x1A\x45\xDF\xA3':
-                return 'webm'
-            # MP4/ISOBMFF 常在 4–8 byte 看到 'ftyp'
-            if b'ftyp' in data[4:12]:
-                return 'mp4'
-            # OGG 格式檢測
-            if data[0:4] == b'OggS':
-                return 'ogg'
-            # WAV 格式檢測
-            if data[0:4] == b'RIFF' and data[8:12] == b'WAVE':
-                return 'wav'
-            return 'unknown'
-
         async def _broadcast_error(error_type: str, error_message: str, details: str = None):
             """透過 WebSocket 廣播錯誤訊息到前端"""
             try:
                 from app.ws.transcript_feed import manager as transcript_manager
+
+                # 生成音檔診斷資訊
+                hex_header = webm_data[:32].hex(' ', 8).upper() if webm_data else "無數據"
+                audio_format = detect_audio_format(webm_data)
+
+                # 根據檢測到的格式提供建議
+                def get_format_suggestion(audio_format: str) -> str:
+                    suggestions = {
+                        'fmp4': '建議檢查瀏覽器錄音設定，或嘗試使用 WebM 格式',
+                        'mp4': '建議確認音檔完整性，或嘗試使用 WebM 格式',
+                        'webm': '建議檢查 WebM 編碼器設定',
+                        'unknown': '建議檢查瀏覽器是否支援音訊錄製，或嘗試重新整理頁面'
+                    }
+                    return suggestions.get(audio_format, '建議檢查音檔格式是否支援')
+
                 error_data = {
                     "type": "conversion_error",
                     "error_type": error_type,
@@ -174,18 +172,26 @@ class SimpleAudioTranscriptionService:
                     "details": details,
                     "session_id": str(session_id),
                     "chunk_sequence": chunk_sequence,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "diagnostics": {
+                        "detected_format": audio_format,
+                        "file_size": len(webm_data) if webm_data else 0,
+                        "header_hex": hex_header,
+                        "suggestion": get_format_suggestion(audio_format)
+                    }
                 }
                 await transcript_manager.broadcast(
                     json.dumps(error_data),
                     str(session_id)
                 )
                 logger.info(f"🚨 [錯誤廣播] 已通知前端轉換錯誤: {error_type}")
+                logger.debug(f"   - 格式診斷: {audio_format}, 大小: {len(webm_data) if webm_data else 0} bytes")
+                logger.debug(f"   - 頭部數據: {hex_header}")
             except Exception as e:
                 logger.error(f"Failed to broadcast error message: {e}")
 
         try:
-            audio_format = _detect_format(webm_data)
+            audio_format = detect_audio_format(webm_data)
             logger.info(f"🎵 [格式檢測] 檢測到音檔格式: {audio_format} (chunk {chunk_sequence}, 大小: {len(webm_data)} bytes)")
 
             with PerformanceTimer(f"{audio_format.upper()} to WAV conversion for chunk {chunk_sequence}"):
@@ -195,8 +201,9 @@ class SimpleAudioTranscriptionService:
 
                 # 依來源格式決定輸入參數
                 if audio_format == 'mp4':
-                    # Safari 產出的 fragmented MP4
-                    cmd += ['-f', 'mp4']
+                    # Safari 產出的 fragmented MP4 - 讓 FFmpeg 自動檢測格式
+                    # 不指定 -f 參數，能更好處理各種 MP4 變體
+                    pass
                 elif audio_format == 'webm':
                     cmd += ['-f', 'webm']
                 elif audio_format == 'ogg':
@@ -229,17 +236,59 @@ class SimpleAudioTranscriptionService:
                     logger.error(f"   - 錯誤訊息: {error_msg}")
                     logger.error(f"   - 輸入大小: {len(webm_data)} bytes")
 
-                    # 分析具體錯誤原因
-                    if "Invalid data found when processing input" in error_msg:
+                    # 增強錯誤分析，特別針對 fragmented MP4 錯誤
+                    if "could not find corresponding trex" in error_msg.lower():
+                        error_reason = "Fragmented MP4 格式錯誤：缺少 Track Extends (trex) 盒，需要使用特殊的 movflags 參數"
+                        detailed_suggestion = (
+                            "🔧 解決方案：\n"
+                            "1. 檢測到 fragmented MP4 格式，建議重新整理頁面\n"
+                            "2. 如果問題持續，請嘗試使用不同瀏覽器\n"
+                            "3. Safari 用戶建議切換至 Chrome 或 Firefox"
+                        )
+                    elif "trun track id unknown" in error_msg.lower():
+                        error_reason = "Fragmented MP4 追蹤 ID 錯誤：Track Run (trun) 盒中的軌道 ID 無法識別"
+                        detailed_suggestion = (
+                            "🔧 解決方案：\n"
+                            "1. 這是 fragmented MP4 特有錯誤\n"
+                            "2. 建議重新錄音或重啟瀏覽器\n"
+                            "3. 考慮降低錄音品質設定"
+                        )
+                    elif "Invalid data found when processing input" in error_msg:
                         error_reason = f"音檔格式 {audio_format} 與 FFmpeg 不兼容，可能是編碼問題"
+                        detailed_suggestion = (
+                            "🔧 解決方案：\n"
+                            "1. 檢查音檔是否完整下載\n"
+                            "2. 確認瀏覽器錄音格式設定\n"
+                            "3. 嘗試重新開始錄音"
+                        )
                     elif "No such file or directory" in error_msg:
                         error_reason = "FFmpeg 程式未找到或配置錯誤"
+                        detailed_suggestion = (
+                            "🔧 解決方案：\n"
+                            "1. 請聯繫技術支援\n"
+                            "2. 這是伺服器配置問題"
+                        )
                     elif "Permission denied" in error_msg:
                         error_reason = "FFmpeg 權限不足"
+                        detailed_suggestion = (
+                            "🔧 解決方案：\n"
+                            "1. 請聯繫技術支援\n"
+                            "2. 這是伺服器權限問題"
+                        )
                     else:
                         error_reason = f"FFmpeg 處理 {audio_format} 格式時發生未知錯誤"
+                        detailed_suggestion = (
+                            "🔧 解決方案：\n"
+                            "1. 嘗試重新錄音\n"
+                            "2. 檢查網路連線是否穩定\n"
+                            "3. 如果問題持續，請聯繫技術支援"
+                        )
 
-                    await _broadcast_error("ffmpeg_conversion_failed", error_reason, error_msg)
+                    # 記錄詳細診斷資訊
+                    logger.error(f"   - 診斷結果: {error_reason}")
+                    logger.error(f"   - 建議方案: {detailed_suggestion}")
+
+                    await _broadcast_error("ffmpeg_conversion_failed", error_reason, detailed_suggestion)
                     return None
 
                 if not stdout or len(stdout) < 100:

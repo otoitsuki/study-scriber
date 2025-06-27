@@ -102,7 +102,7 @@ class TestOneChunkOneTranscription:
                     # 處理切片
                     await service._process_chunk_async(session_id, chunk_sequence, webm_data)
                     # 驗證各步驟都被呼叫
-                    mock_convert.assert_called_once_with(webm_data, chunk_sequence)
+                    mock_convert.assert_called_once_with(webm_data, chunk_sequence, session_id)
                     mock_create.assert_called_once()
                     mock_save.assert_called_once()
 
@@ -124,7 +124,7 @@ class TestOneChunkOneTranscription:
 
         with patch('asyncio.create_subprocess_exec', return_value=mock_process) as mock_exec:
             with patch('asyncio.wait_for', return_value=(expected_wav, b'')):
-                result = await service._convert_webm_to_wav(webm_data, 0)
+                result = await service._convert_webm_to_wav(webm_data, 0, session_id)
 
                 # 驗證 FFmpeg 命令包含 -fflags +genpts
                 mock_exec.assert_called_once()

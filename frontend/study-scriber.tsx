@@ -114,7 +114,7 @@ export default function Component() {
   }
 
   return (
-    <div className="h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col" suppressHydrationWarning={true}>
       {/* Full Width Header - Fixed height of 80px */}
       <div className="bg-background border-b border-border px-6 flex-shrink-0 w-full h-20 flex justify-between items-center">
         <h1 className="text-2xl font-semibold text-foreground">Study Scriber</h1>
@@ -143,7 +143,7 @@ export default function Component() {
       </div>
 
       {/* Main Content - Two Panel Layout - Adjusted for fixed header height */}
-      <div className="flex h-[calc(100vh-80px)]">
+      <div className="flex h-[calc(100vh-80px)]" suppressHydrationWarning={true}>
         {/* Left Panel - SimpleMDE Editor */}
         <div className="flex-1 bg-background border-r border-border h-full">
           <div className="h-full p-6 flex flex-col gap-4">
