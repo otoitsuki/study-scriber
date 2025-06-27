@@ -373,25 +373,25 @@ Error opening input file pipe:0.
 - ✅ **轉錄相容性**：OpenAI Whisper API 對 WebM 格式支援良好
 - ✅ **FFmpeg 處理能力**：WebM 到 WAV 轉換速度快且穩定
 
-- [ ] **WEBM1: 前端錄音格式優先順序調整** `3ebd8c75-9176-4d10-a66e-db3ebfdcf060`
-  - [ ] 修改 `frontend/lib/audio-recorder.ts` 中的 `SUPPORTED_MIME_TYPES` 常數
-  - [ ] 將 `'audio/webm;codecs=opus'` 移到陣列第一位
-  - [ ] 將 `'audio/webm'` 移到第二位
-  - [ ] 將 `'audio/mp4'` 降為第三位作為備選方案
-  - [ ] 更新相關註解說明格式優先順序調整原因
-  - [ ] 確保 `getSupportedMimeType()` 方法正常運作
-  - [ ] Chrome 瀏覽器錄音時優先選擇 WebM 格式
+- [x] **WEBM1: 前端錄音格式優先順序調整** `3ebd8c75-9176-4d10-a66e-db3ebfdcf060` ✅
+  - [x] 修改 `frontend/lib/audio-recorder.ts` 中的 `SUPPORTED_MIME_TYPES` 常數
+  - [x] 將 `'audio/webm;codecs=opus'` 移到陣列第一位
+  - [x] 將 `'audio/webm'` 移到第二位
+  - [x] 將 `'audio/mp4'` 降為第三位作為備選方案
+  - [x] 更新相關註解說明格式優先順序調整原因
+  - [x] 確保 `getSupportedMimeType()` 方法正常運作
+  - [x] Chrome 瀏覽器錄音時優先選擇 WebM 格式
   - **檔案**: `frontend/lib/audio-recorder.ts` (行 28-34)
   - **驗證**: Chrome 瀏覽器錄音自動選擇 WebM 格式，現有錄音功能正常運作
 
-- [ ] **WEBM2: 後端 WebM 處理邏輯驗證與優化** `7a491015-102f-48d8-8f6f-4c35ab40d4c1`
-  - [ ] 檢查並優化 `app/services/azure_openai_v2.py` 中的 `_convert_webm_to_wav` 方法
-  - [ ] 驗證 WebM 格式檢測邏輯正確性
-  - [ ] 確認 FFmpeg 命令參數最佳化（已有 `-f webm` 參數）
-  - [ ] 檢查錯誤處理機制完整性
-  - [ ] 優化 WebM 格式的處理效率
-  - [ ] 確保與 OpenAI Whisper API 的無縫整合
-  - [ ] WebM 格式正確檢測和處理，轉換效率提升
+- [x] **WEBM2: 後端 WebM 處理邏輯驗證與優化** `7a491015-102f-48d8-8f6f-4c35ab40d4c1` ✅
+  - [x] 檢查並優化 `app/services/azure_openai_v2.py` 中的 `_convert_webm_to_wav` 方法
+  - [x] 驗證 WebM 格式檢測邏輯正確性
+  - [x] 確認 FFmpeg 命令參數最佳化（已有 `-f webm` 參數）
+  - [x] 檢查錯誤處理機制完整性
+  - [x] 優化 WebM 格式的處理效率
+  - [x] 確保與 OpenAI Whisper API 的無縫整合
+  - [x] WebM 格式正確檢測和處理，轉換效率提升
   - **檔案**: `app/services/azure_openai_v2.py` (行 190-220), `app/core/ffmpeg.py` (行 208-278)
   - **依賴**: WEBM1
   - **驗證**: WebM 格式正確檢測和處理，FFmpeg 轉換命令最佳化，與 Whisper API 整合無誤

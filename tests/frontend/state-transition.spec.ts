@@ -69,7 +69,7 @@ test('錄音開始後應先顯示 waiting 再顯示 transcript', async ({ page }
     window.MediaRecorder = class {
       constructor(stream, options) {
         this.stream = stream
-        this.mimeType = options?.mimeType || 'audio/webm'
+        this.mimeType = options?.mimeType || 'audio/webm;codecs=opus'
         this.state = 'inactive'
         this._listeners = {}
       }

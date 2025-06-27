@@ -79,7 +79,7 @@ test.describe('TranscriptManager phase 訊息處理', () => {
       window.MediaRecorder = class {
         constructor(stream, options) {
           this.stream = stream
-          this.mimeType = options?.mimeType || 'audio/webm'
+          this.mimeType = options?.mimeType || 'audio/webm;codecs=opus'
           this.state = 'inactive'
           this._listeners = {}
         }
