@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useMemo } from 'react'
+import axios from 'axios'
 import { sessionAPI, type SessionCreateRequest, type SessionResponse } from '../lib/api'
 
 interface UseSessionReturn {
@@ -54,7 +55,6 @@ export function useSession(): UseSessionReturn {
             setIsLoading(false)
         }
     }, [clearError])
-
     const createNoteSession = useCallback(async (title: string, content?: string): Promise<SessionResponse | null> => {
         setIsLoading(true)
         clearError()
@@ -71,6 +71,14 @@ export function useSession(): UseSessionReturn {
             console.log('✅ 純筆記會話建立成功:', session)
             return session
         } catch (err) {
+            // 特別處理 409 衝突錯誤
+            if (axios.isAxiosError(err) && err.response?.status === 409) {
+                const conflictMessage = '檢測到活躍會話衝突，請重新整理頁面後再試'
+                setError(conflictMessage)
+                console.error('❌ 會話衝突錯誤 (409):', err.response?.data?.detail || err.message)
+                return null
+            }
+            
             const errorMessage = err instanceof Error ? err.message : '建立會話失敗'
             setError(errorMessage)
             console.error('❌ 建立純筆記會話失敗:', err)
@@ -96,6 +104,14 @@ export function useSession(): UseSessionReturn {
             console.log('✅ 錄音會話建立成功:', session)
             return session
         } catch (err) {
+            // 特別處理 409 衝突錯誤
+            if (axios.isAxiosError(err) && err.response?.status === 409) {
+                const conflictMessage = '檢測到活躍會話衝突，請重新整理頁面後再試'
+                setError(conflictMessage)
+                console.error('❌ 會話衝突錯誤 (409):', err.response?.data?.detail || err.message)
+                return null
+            }
+            
             const errorMessage = err instanceof Error ? err.message : '建立錄音會話失敗'
             setError(errorMessage)
             console.error('❌ 建立錄音會話失敗:', err)

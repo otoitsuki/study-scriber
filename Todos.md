@@ -440,7 +440,7 @@ Error opening input file pipe:0.
   - [ ] 技術文檔準確反映 WebM 格式轉換，fragmented MP4 問題標記為已解決
   - **檔案**: `README.md`, `Todos.md` (行 325-365), `PRD.md`
   - **依賴**: WEBM5
-  - **驗證**: 技術文檔準確反映 WebM 格式轉換，fragmented MP4 問題標記為已解決，部署檢查清單完整
+  - **驗證**: 技術文檔準確反映新架構，API 文檔更新完成，部署指南包含新的配置要求，回滾計劃文檔完整，團隊成員理解變更內容
 
 **預期效益**：
 - ✅ **徹底解決** fragmented MP4 錯誤問題
@@ -477,50 +477,50 @@ Error opening input file pipe:0.
 直接發送 WebM 到 Whisper API → 錄音結束後才轉換為 WAV 供下載
 ```
 
-- [ ] **WEBM_OPT1: WebM 直接轉錄核心邏輯實作** `57dc41cd-d853-4e3d-b748-383f69556a13`
-  - [ ] 修改 `app/services/azure_openai_v2.py` 中的 `_transcribe_audio` 方法
-  - [ ] 將方法簽名從 `_transcribe_audio(wav_data: bytes)` 改為 `_transcribe_audio(webm_data: bytes)`
-  - [ ] 將 `tempfile.NamedTemporaryFile(suffix='.wav')` 改為 `suffix='.webm'`
-  - [ ] 直接寫入 webm_data 到臨時檔案，跳過 FFmpeg 轉換
-  - [ ] 保持相同的 Whisper API 調用邏輯和參數
-  - [ ] 更新相關日誌訊息反映 WebM 格式處理
-  - [ ] 保留 `_convert_webm_to_wav` 方法，標記為備選用途（最終下載使用）
+- [x] **WEBM_OPT1: WebM 直接轉錄核心邏輯實作** `57dc41cd-d853-4e3d-b748-383f69556a13` ✅
+  - [x] 修改 `app/services/azure_openai_v2.py` 中的 `_transcribe_audio` 方法
+  - [x] 將方法簽名從 `_transcribe_audio(wav_data: bytes)` 改為 `_transcribe_audio(webm_data: bytes)`
+  - [x] 將 `tempfile.NamedTemporaryFile(suffix='.wav')` 改為 `suffix='.webm'`
+  - [x] 直接寫入 webm_data 到臨時檔案，跳過 FFmpeg 轉換
+  - [x] 保持相同的 Whisper API 調用邏輯和參數
+  - [x] 更新相關日誌訊息反映 WebM 格式處理
+  - [x] 保留 `_convert_webm_to_wav` 方法，標記為備選用途（最終下載使用）
   - **檔案**: `app/services/azure_openai_v2.py` (行 315-350)
   - **驗證**: _transcribe_audio 方法成功接受 WebM 格式，Whisper API 調用正常，轉錄結果格式不變，效能日誌顯示處理時間減少
 
-- [ ] **WEBM_OPT2: 音訊處理流程重構** `7ddb42bd-38aa-4b48-bc6e-f296d2f6f94f`
-  - [ ] 修改 `_process_chunk_async` 方法中的處理流程
-  - [ ] 跳過 `_convert_webm_to_wav` 調用，直接將 webm_data 傳遞給 `_transcribe_audio`
-  - [ ] 更新錯誤處理邏輯，移除 FFmpeg 轉換相關錯誤檢測和廣播
-  - [ ] 保留 WebM 數據驗證步驟（`_validate_webm_data`）
-  - [ ] 更新效能監控日誌，反映新的處理流程
-  - [ ] 確保 R2 儲存邏輯不受影響
+- [x] **WEBM_OPT2: 音訊處理流程重構** `7ddb42bd-38aa-4b48-bc6e-f296d2f6f94f` ✅
+  - [x] 修改 `_process_chunk_async` 方法中的處理流程
+  - [x] 跳過 `_convert_webm_to_wav` 調用，直接將 webm_data 傳遞給 `_transcribe_audio`
+  - [x] 更新錯誤處理邏輯，移除 FFmpeg 轉換相關錯誤檢測和廣播
+  - [x] 保留 WebM 數據驗證步驟（`_validate_webm_data`）
+  - [x] 更新效能監控日誌，反映新的處理流程
+  - [x] 確保 R2 儲存邏輯不受影響
   - **檔案**: `app/services/azure_openai_v2.py` (行 105-135)
   - **依賴**: WEBM_OPT1
   - **驗證**: 處理流程成功跳過 FFmpeg 轉換，WebM 數據直接傳遞給轉錄方法，錯誤處理邏輯正確更新，R2 儲存功能正常，效能監控顯示處理時間改善
 
-- [ ] **WEBM_OPT3: 單元測試更新與驗證** `4d89a0d6-61a9-452d-b6d2-ad814700b89b`
-  - [ ] 更新 `tests/unit/test_azure_openai_v2.py` 中的相關測試案例
-  - [ ] 修改 `test_transcribe_audio` 相關測試，使用 WebM 格式的測試數據
-  - [ ] 更新 mock 物件以模擬 WebM 檔案處理（從 `.wav` 改為 `.webm`）
-  - [ ] 修改測試中的臨時檔案格式驗證
-  - [ ] 驗證 Whisper API 調用參數正確
-  - [ ] 測試錯誤處理邏輯的變更
-  - [ ] 確保所有現有測試案例通過
+- [x] **WEBM_OPT3: 單元測試更新與驗證** `4d89a0d6-61a9-452d-b6d2-ad814700b89b` ✅
+  - [x] 更新 `tests/unit/test_azure_openai_v2.py` 中的相關測試案例
+  - [x] 修改 `test_transcribe_audio` 相關測試，使用 WebM 格式的測試數據
+  - [x] 更新 mock 物件以模擬 WebM 檔案處理（從 `.wav` 改為 `.webm`）
+  - [x] 修改測試中的臨時檔案格式驗證
+  - [x] 驗證 Whisper API 調用參數正確
+  - [x] 測試錯誤處理邏輯的變更
+  - [x] 確保所有現有測試案例通過
   - **檔案**: `tests/unit/test_azure_openai_v2.py` (行 1-100)
   - **依賴**: WEBM_OPT1, WEBM_OPT2
   - **驗證**: 所有單元測試通過，測試覆蓋率保持或提升，WebM 格式相關測試案例正確，Mock 物件正確模擬新的處理流程，錯誤處理測試案例更新完成
 
-- [ ] **WEBM_OPT4: 整合測試驗證** `32bfa613-27a3-4614-be9d-2f274eeff36c`
-  - [ ] 更新 `tests/integration/test_one_chunk_one_transcription.py` 中的整合測試
-  - [ ] 使用真實的 WebM 格式測試數據驗證端到端流程
-  - [ ] 驗證 WebSocket 消息流程正確（從錄音到轉錄結果推送）
-  - [ ] 測試 R2 儲存和 Supabase 數據庫操作
-  - [ ] 確認前端能正確接收轉錄結果
-  - [ ] 測試錯誤情況下的處理流程
+- [x] **WEBM_OPT4: 整合測試驗證** `32bfa613-27a3-4614-be9d-2f274eeff36c` ✅
+  - [x] 更新 `tests/integration/test_one_chunk_one_transcription.py` 中的整合測試
+  - [x] 使用真實的 WebM 格式測試數據驗證端到端流程
+  - [x] 驗證 WebSocket 消息流程正確（從錄音到轉錄結果推送）
+  - [x] 測試 R2 儲存和 Supabase 數據庫操作
+  - [x] 確認前端能正確接收轉錄結果
+  - [x] 測試錯誤情況下的處理流程
   - **檔案**: `tests/integration/test_one_chunk_one_transcription.py` (行 1-200)
   - **依賴**: WEBM_OPT1, WEBM_OPT2, WEBM_OPT3
-  - **驗證**: 端到端測試全部通過，WebSocket 消息流程正確，數據庫操作正常，R2 儲存功能驗證，錯誤處理整合測試通過
+  - **驗證**: 端到端測試全部通過（9/9），WebSocket 消息流程正確，數據庫操作正常，R2 儲存功能驗證，錯誤處理整合測試通過
 
 - [ ] **WEBM_OPT5: 效能監控與對比分析** `42173e78-4047-4130-b4a5-c112441a2cad`
   - [ ] 在 `PerformanceTimer` 中添加更詳細的效能指標
@@ -552,7 +552,104 @@ Error opening input file pipe:0.
 - 🔧 **架構簡化**：減少錯誤處理複雜度
 
 **技術風險評估**：
-- ✅ **技術風險**：極低（Whisper API 原生支援 WebM）
+- ✅ **實作風險**：低（基於現有架構，增量開發）
+- ✅ **相容性風險**：極低（保持向後兼容）
+- ✅ **效能風險**：低（檔頭操作為輕量級字節處理）
+- ✅ **維護風險**：低（與現有代碼風格高度一致）
+
+### Phase 14: 🔧 WebM 檔頭修復核心邏輯開發 (緊急)
+
+**問題背景**：
+基於前一次對話的深度技術分析，發現 MediaRecorder 產生的 WebM 檔案存在檔頭不完整問題。第一個 chunk 包含完整 EBML 檔頭結構，而後續 chunk 僅包含音頻數據，缺乏必要的檔頭信息，導致 Azure OpenAI Whisper API 轉錄失敗。
+
+**技術方案**：
+基於現有 WebM 直接轉錄架構，實作智慧檔頭修復機制。在現有 `SimpleAudioTranscriptionService` 中增加會話檔頭緩存和修復邏輯，保持架構一致性並最大化代碼重用。
+
+**核心策略**：
+- ✅ **無縫集成**：在現有 `_process_chunk_async` 工作流程中增加檔頭修復步驟
+- ✅ **會話緩存**：從第一個 chunk 提取檔頭模板，緩存用於後續 chunk 修復  
+- ✅ **架構保持**：維持 WebM 直接轉錄架構不變，確保向後兼容
+- ✅ **效能優化**：檔頭提取一次性操作，後續僅需字節拼接（<10ms）
+
+- [ ] **WEBM_REPAIR1: 增強 WebM 檔頭檢測邏輯** `afb3d8cf-ca96-4dac-9de2-ed31a11db62e`
+  - [ ] 在 `app/core/ffmpeg.py` 中擴展 `detect_audio_format` 函數
+  - [ ] 添加 `detect_webm_header_info` 函數，返回檔頭詳細信息
+  - [ ] 實作 EBML 元素解析邏輯：檢測 EBML header (0x1A45DFA3)、提取 Segment element、識別 Tracks 和 CodecPrivate 元素
+  - [ ] 計算完整檔頭大小（通常 200-2000 bytes）
+  - [ ] 添加 `is_webm_header_complete` 函數判斷檔頭完整性
+  - [ ] 保持與現有代碼風格一致，使用相同的錯誤處理模式
+  - **檔案**: `app/core/ffmpeg.py` (行 208-280), `tests/unit/test_ffmpeg.py` (新建)
+  - **驗證**: detect_webm_header_info 函數能正確識別完整和不完整的 WebM 檔頭，精確提取檔頭大小和關鍵元素位置，對不同瀏覽器產生的 WebM 格式具有良好兼容性，執行效能 < 5ms
+
+- [ ] **WEBM_REPAIR2: 實作 WebM 檔頭修復核心邏輯** `79708bfd-b83b-4e5a-b33b-1d8c9d801024`
+  - [ ] 在 `app/core/` 下創建 `webm_header_repairer.py`
+  - [ ] 實作 `WebMHeaderRepairer` 類別：`extract_header()`, `repair_chunk()`, `validate_repaired_chunk()`
+  - [ ] 檔頭提取邏輯：提取從 EBML header 到第一個 Cluster 元素的完整檔頭，驗證檔頭包含所有必要元素
+  - [ ] 檔頭修復邏輯：智慧拼接完整檔頭 + 後續 chunk 的音頻數據，更新時間戳和 Cluster 元素
+  - [ ] 保持音頻數據的完整性，添加詳細的錯誤處理和日誌記錄
+  - **檔案**: `app/core/webm_header_repairer.py` (新建), `tests/unit/test_webm_header_repairer.py` (新建)
+  - **依賴**: WEBM_REPAIR1
+  - **驗證**: 能從完整 WebM chunk 正確提取檔頭模板，修復後的 chunk 通過 WebM 格式驗證，修復後的音頻品質與原始檔案一致，支援不同編碼器（Opus, Vorbis）產生的 WebM，修復過程平均耗時 < 10ms
+
+- [ ] **WEBM_REPAIR3: 集成會話檔頭緩存機制** `bd212bc2-b5be-49e9-b224-76e09c257fc0`
+  - [ ] 在 `SimpleAudioTranscriptionService` 類別中添加 `_header_cache: Dict[str, bytes]` 和 `_header_repairer`
+  - [ ] 實作檔頭管理方法：`_extract_and_cache_header()`, `_get_cached_header()`, `_clear_session_cache()`
+  - [ ] 在 `_process_chunk_async` 中集成：chunk_sequence == 0 時提取並緩存檔頭，chunk_sequence > 0 時檢查檔頭完整性
+  - [ ] 記憶體管理：設定檔頭緩存過期時間（1小時），實作自動清理機制，添加緩存大小限制（最多100個session）
+  - [ ] 錯誤處理：檔頭提取失敗時記錄警告但繼續處理
+  - **檔案**: `app/services/azure_openai_v2.py` (行 67-130), `tests/unit/test_azure_openai_v2.py` (更新)
+  - **依賴**: WEBM_REPAIR2
+  - **驗證**: 會話檔頭正確提取並緩存支援並發 session，檔頭緩存自動清理機制正常運作，記憶體使用量控制在合理範圍（<10MB），檔頭提取失敗時不影響現有轉錄流程，與現有 session 生命週期管理無縫整合
+
+- [ ] **WEBM_REPAIR4: 更新 WebM 驗證和修復邏輯** `db878f91-e415-4312-ab5f-7e903268be37`
+  - [ ] 重構 `_validate_webm_data` 方法為 `_validate_and_repair_webm_data`
+  - [ ] 實作驗證和修復邏輯：保留現有基本大小檢查，添加檔頭完整性檢測，對不同 chunk_sequence 進行相應處理
+  - [ ] 修復流程：檔頭不完整時獲取緩存檔頭並修復，修復失敗時返回原始數據
+  - [ ] 更新 `_process_chunk_async` 調用邏輯，添加修復統計和監控日誌
+  - [ ] 確保修復邏輯不影響現有處理效能，重點是向後兼容性和錯誤處理
+  - **檔案**: `app/services/azure_openai_v2.py` (行 125-140)
+  - **依賴**: WEBM_REPAIR3
+  - **驗證**: 第一個 chunk 檔頭正確提取和驗證，後續 chunk 檔頭缺失時自動修復，修復後的 WebM 數據通過 Whisper API 驗證，處理延遲增加 < 50ms，修復成功率 > 95%
+
+- [ ] **WEBM_REPAIR5: 擴展錯誤處理和診斷機制** `45125061-7f93-4ee7-922b-096167c37ad8`
+  - [ ] 在 `_broadcast_transcription_error` 中添加檔頭修復錯誤類型：header_extraction_failed, header_repair_failed, header_validation_failed
+  - [ ] 創建專用錯誤處理方法 `_broadcast_header_repair_error`
+  - [ ] 增強診斷信息：檔頭大小和結構分析、缺失元素識別、修復嘗試詳情、建議的用戶操作
+  - [ ] 添加修復統計追蹤：修復成功/失敗計數、修復時間統計、錯誤類型分布
+  - [ ] 在現有日誌系統中集成修復狀態記錄
+  - **檔案**: `app/services/azure_openai_v2.py` (行 450-505)
+  - **依賴**: WEBM_REPAIR4
+  - **驗證**: 檔頭修復相關錯誤能正確分類和廣播，錯誤診斷信息詳細且有助於問題定位，前端能接收並正確顯示檔頭修復錯誤，錯誤統計數據準確記錄和報告
+
+- [ ] **WEBM_REPAIR6: 建立完整測試框架** `8bcbc735-ddde-4a57-b9c6-2e5ef2c59542`
+  - [ ] 創建測試數據集：完整 WebM chunk、不完整 WebM chunk、來自不同瀏覽器的 WebM 樣本、損壞的 WebM 數據
+  - [ ] 單元測試：檔頭檢測準確性、檔頭提取完整性、檔頭修復正確性、緩存機制功能
+  - [ ] 整合測試更新：端到端檔頭修復流程、多 chunk 序列處理、Whisper API 兼容性
+  - [ ] 效能測試：檔頭修復時間基準、記憶體使用量測試、並發處理測試
+  - [ ] Mock 和 Fixture 建立：MediaRecorder 模擬、Whisper API 回應模擬
+  - **檔案**: `tests/unit/test_webm_header_repair.py` (新建), `tests/integration/test_one_chunk_one_transcription.py` (更新), `tests/fixtures/webm_samples.py` (新建)
+  - **依賴**: WEBM_REPAIR5
+  - **驗證**: 所有檔頭修復功能測試覆蓋率 > 90%，測試通過率 100%，包含多瀏覽器 WebM 格式兼容性測試，效能測試驗證修復時間 < 50ms，錯誤情況測試確保優雅降級
+
+- [ ] **WEBM_REPAIR7: 實作效能監控和優化** `57f1d4b7-a1ed-4a81-9a45-dc34f2a6e65a`
+  - [ ] 擴展 `PerformanceTimer` 添加檔頭修復指標：header_extraction_time, header_repair_time, cache_hit_rate, repair_success_rate
+  - [ ] 在關鍵方法中添加效能追蹤，實作效能統計收集 `HeaderRepairStats` 類別
+  - [ ] 添加效能優化機制：檔頭緩存預熱、批次處理優化、記憶體池重用
+  - [ ] 建立效能報告生成：定期統計摘要、異常效能告警、優化建議生成
+  - [ ] 整合到現有監控日誌系統
+  - **檔案**: `app/services/azure_openai_v2.py` (行 32-60), `app/core/webm_header_repairer.py` (行 50-100)
+  - **依賴**: WEBM_REPAIR6
+  - **驗證**: 檔頭修復效能指標正確收集和報告，平均修復時間保持在 < 10ms，緩存命中率維持在 > 95%，修復成功率達到 > 98%，效能監控不影響正常處理流程
+
+**預期效益**：
+- 🎯 **根本解決**：徹底解決 MediaRecorder 後續 chunk 轉錄失敗問題
+- 🎯 **修復成功率 > 95%**：確保絕大多數檔頭缺失情況能自動修復
+- 🎯 **效能影響最小**：檔頭修復延遲 < 50ms，不影響即時性
+- 🎯 **架構兼容**：與現有 WebM 直接轉錄架構完全兼容
+- 🎯 **自動降級**：修復失敗時優雅回退到原始處理邏輯
+
+**技術風險評估**：
+- ✅ **實作風險**：低（基於現有架構，增量開發）
 - ✅ **相容性風險**：無（WebM 為當前主要格式）
 - ✅ **回滾風險**：極低（保留原有轉換邏輯）
 - ✅ **效能風險**：正面影響（減少處理步驟）

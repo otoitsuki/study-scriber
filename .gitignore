@@ -9,3 +9,6 @@ env/
 ENV/
 .DS_Store
 node_modules
+test/
+tests/
+test-results/

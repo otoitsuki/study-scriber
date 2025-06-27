@@ -835,3 +835,297 @@ def _generate_health_recommendations(format_support: Dict[str, bool], codec_supp
         recommendations.append("✅ FFmpeg 配置良好，支援所有必要的格式和編解碼器")
 
     return recommendations
+
+
+@dataclass
+class WebMHeaderInfo:
+    """WebM EBML 檔頭資訊"""
+    has_ebml_header: bool = False
+    has_segment: bool = False
+    has_tracks: bool = False
+    has_cluster: bool = False
+    header_size: int = 0
+    segment_size: Optional[int] = None
+    track_count: int = 0
+    codec_type: Optional[str] = None
+    is_complete: bool = False
+    error_message: Optional[str] = None
+
+
+def detect_webm_header_info(webm_bytes: bytes) -> WebMHeaderInfo:
+    """
+    詳細分析 WebM EBML 檔頭結構
+
+    Args:
+        webm_bytes: WebM 檔案數據
+
+    Returns:
+        WebMHeaderInfo: 檔頭分析結果
+    """
+    info = WebMHeaderInfo()
+
+    if not webm_bytes or len(webm_bytes) < 4:
+        info.error_message = "數據長度不足"
+        return info
+
+    try:
+        offset = 0
+        data_len = len(webm_bytes)
+
+        # 1. 檢測 EBML Header (0x1A45DFA3)
+        if webm_bytes[0:4] != b'\x1A\x45\xDF\xA3':
+            info.error_message = "缺少 EBML Header 標記"
+            return info
+
+        info.has_ebml_header = True
+        offset = 4
+
+        # 2. 解析 EBML Header 長度
+        header_length, header_len_bytes = _parse_ebml_element_size(webm_bytes, offset)
+        if header_length is None:
+            info.error_message = "無法解析 EBML Header 長度"
+            return info
+
+        offset += header_len_bytes + header_length
+
+        # 3. 尋找 Segment 元素 (0x18538067)
+        segment_offset = _find_ebml_element(webm_bytes, b'\x18\x53\x80\x67', offset)
+        if segment_offset == -1:
+            info.error_message = "缺少 Segment 元素"
+            return info
+
+        info.has_segment = True
+        offset = segment_offset + 4
+
+        # 4. 解析 Segment 長度
+        segment_length, segment_len_bytes = _parse_ebml_element_size(webm_bytes, offset)
+        if segment_length is not None:
+            info.segment_size = segment_length
+
+        offset += segment_len_bytes
+        segment_data_start = offset
+
+        # 5. 在 Segment 內尋找 Tracks 元素 (0x1654AE6B)
+        tracks_offset = _find_ebml_element(webm_bytes, b'\x16\x54\xAE\x6B', segment_data_start)
+        if tracks_offset != -1:
+            info.has_tracks = True
+
+            # 分析 track 數量和編解碼器類型
+            tracks_info = _analyze_tracks_element(webm_bytes, tracks_offset)
+            info.track_count = tracks_info.get('track_count', 0)
+            info.codec_type = tracks_info.get('codec_type')
+
+        # 6. 尋找第一個 Cluster 元素 (0x1F43B675)
+        cluster_offset = _find_ebml_element(webm_bytes, b'\x1F\x43\xB6\x75', segment_data_start)
+        if cluster_offset != -1:
+            info.has_cluster = True
+            # 檔頭大小計算到第一個 Cluster 為止
+            info.header_size = cluster_offset
+        else:
+            # 如果沒有 Cluster，至少計算到目前位置
+            info.header_size = offset
+
+        # 7. 判斷檔頭是否完整
+        info.is_complete = (
+            info.has_ebml_header and
+            info.has_segment and
+            info.has_tracks and
+            info.track_count > 0 and
+            info.header_size > 0
+        )
+
+        logger.debug(f"WebM 檔頭分析結果: EBML={info.has_ebml_header}, Segment={info.has_segment}, "
+                    f"Tracks={info.has_tracks}, Cluster={info.has_cluster}, "
+                    f"檔頭大小={info.header_size}, 完整性={info.is_complete}")
+
+    except Exception as e:
+        info.error_message = f"檔頭解析錯誤: {str(e)}"
+        logger.error(f"WebM 檔頭分析異常: {e}")
+
+    return info
+
+
+def is_webm_header_complete(webm_bytes: bytes) -> bool:
+    """
+    判斷 WebM 檔頭是否完整
+
+    Args:
+        webm_bytes: WebM 檔案數據
+
+    Returns:
+        bool: True 表示檔頭完整，False 表示檔頭不完整或缺失
+    """
+    if not webm_bytes or len(webm_bytes) < 32:
+        return False
+
+    header_info = detect_webm_header_info(webm_bytes)
+    return header_info.is_complete
+
+
+def _parse_ebml_element_size(data: bytes, offset: int) -> tuple[Optional[int], int]:
+    """
+    解析 EBML 變長整數編碼的元素大小
+
+    Args:
+        data: 字節數據
+        offset: 起始偏移量
+
+    Returns:
+        tuple: (size, consumed_bytes) - 元素大小和消耗的字節數
+    """
+    if offset >= len(data):
+        return None, 0
+
+    first_byte = data[offset]
+    if first_byte == 0:
+        return None, 0
+
+    # 計算長度編碼的字節數（根據第一個字節的前導零位數）
+    width = 1
+    mask = 0x80
+
+    while width <= 8 and (first_byte & mask) == 0:
+        width += 1
+        mask >>= 1
+
+    if width > 8 or offset + width > len(data):
+        return None, 0
+
+    # 移除長度標記位並計算實際值
+    size = first_byte & (mask - 1)
+
+    for i in range(1, width):
+        size = (size << 8) | data[offset + i]
+
+    return size, width
+
+
+def _find_ebml_element(data: bytes, element_id: bytes, start_offset: int = 0) -> int:
+    """
+    在 EBML 數據中尋找指定的元素 ID
+
+    Args:
+        data: 字節數據
+        element_id: 要尋找的元素 ID
+        start_offset: 搜尋起始位置
+
+    Returns:
+        int: 元素位置，-1 表示未找到
+    """
+    search_end = min(len(data) - len(element_id) + 1, start_offset + 2048)  # 限制搜尋範圍
+
+    for i in range(start_offset, search_end):
+        if data[i:i + len(element_id)] == element_id:
+            return i
+
+    return -1
+
+
+def _analyze_tracks_element(data: bytes, tracks_offset: int) -> dict:
+    """
+    分析 Tracks 元素，提取音軌資訊
+
+    Args:
+        data: 字節數據
+        tracks_offset: Tracks 元素的偏移量
+
+    Returns:
+        dict: 包含 track_count 和 codec_type 的字典
+    """
+    result = {'track_count': 0, 'codec_type': None}
+
+    try:
+        offset = tracks_offset + 4  # 跳過 Tracks ID
+
+        # 解析 Tracks 長度
+        tracks_length, len_bytes = _parse_ebml_element_size(data, offset)
+        if tracks_length is None:
+            return result
+
+        offset += len_bytes
+        tracks_end = min(offset + tracks_length, len(data))
+
+        # 統計 TrackEntry 元素 (0xAE)
+        track_entry_count = 0
+        current_offset = offset
+
+        logger.debug(f"開始分析 Tracks 元素，範圍: {current_offset}-{tracks_end}")
+
+        while current_offset < tracks_end - 1:  # 確保有足夠的字節
+            # 尋找 TrackEntry (0xAE) - 單字節 ID
+            if data[current_offset] == 0xAE:
+                track_entry_count += 1
+                logger.debug(f"找到 TrackEntry at offset {current_offset}")
+
+                # 分析 Codec ID (在 TrackEntry 內)
+                if result['codec_type'] is None:
+                    # 解析 TrackEntry 長度
+                    entry_length, entry_len_bytes = _parse_ebml_element_size(data, current_offset + 1)
+                    if entry_length is not None:
+                        entry_end = min(current_offset + 1 + entry_len_bytes + entry_length, tracks_end)
+                        codec_info = _extract_codec_type(data, current_offset, entry_end)
+                        if codec_info:
+                            result['codec_type'] = codec_info
+                            logger.debug(f"找到 codec 類型: {codec_info}")
+
+                # 跳過當前 TrackEntry
+                current_offset += 1
+            else:
+                current_offset += 1
+
+        result['track_count'] = track_entry_count
+        logger.debug(f"Tracks 分析結果: track_count={track_entry_count}, codec_type={result['codec_type']}")
+
+    except Exception as e:
+        logger.debug(f"分析 Tracks 元素時發生錯誤: {e}")
+
+    return result
+
+
+def _extract_codec_type(data: bytes, track_entry_offset: int, max_offset: int) -> Optional[str]:
+    """
+    從 TrackEntry 中提取編解碼器類型
+
+    Args:
+        data: 字節數據
+        track_entry_offset: TrackEntry 的偏移量
+        max_offset: 最大搜尋偏移量
+
+    Returns:
+        Optional[str]: 編解碼器類型（如 'opus', 'vorbis'）
+    """
+    try:
+        # 尋找 CodecID 元素 (0x86)
+        codec_id_offset = _find_ebml_element(data, b'\x86', track_entry_offset)
+        if codec_id_offset == -1 or codec_id_offset >= max_offset:
+            return None
+
+        offset = codec_id_offset + 1
+
+        # 解析 CodecID 字串長度
+        codec_id_length, len_bytes = _parse_ebml_element_size(data, offset)
+        if codec_id_length is None or offset + len_bytes + codec_id_length > len(data):
+            return None
+
+        offset += len_bytes
+
+        # 提取 CodecID 字串，去除空字節
+        codec_id_bytes = data[offset:offset + codec_id_length]
+        # 過濾掉空字節並解碼
+        codec_id_str = codec_id_bytes.rstrip(b'\x00').decode('utf-8', errors='ignore')
+
+        logger.debug(f"提取到 CodecID: '{codec_id_str}'")
+
+        # 根據 CodecID 字串判斷編解碼器類型
+        if 'opus' in codec_id_str.lower():
+            return 'opus'
+        elif 'vorbis' in codec_id_str.lower():
+            return 'vorbis'
+        elif 'pcm' in codec_id_str.lower():
+            return 'pcm'
+        else:
+            return codec_id_str.lower()
+
+    except Exception as e:
+        logger.debug(f"提取編解碼器類型時發生錯誤: {e}")
+        return None

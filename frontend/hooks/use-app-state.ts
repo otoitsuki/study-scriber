@@ -313,127 +313,19 @@ export function useAppState() {
         })
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '建立純筆記會話失敗'
-      setError(errorMessage)
-      console.error('❌ 建立純筆記會話失敗:', err)
-
-      toast({
-        title: '建立失敗',
-        description: errorMessage,
-        variant: 'destructive',
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [session, notes, toast])
-
-  // 建立錄音會話
-  const createRecordingSession = useCallback(async (title: string) => {
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const newSession = await session.createRecordingSession(title)
-      if (newSession) {
-        // 載入筆記內容
-        await notes.loadNote(newSession.id)
-
-        // 清除本地草稿
-        localStorage.removeItem('draft_note')
-
-        console.log('✅ 錄音會話建立成功')
-
-        toast({
-          title: '錄音會話已建立',
-          description: `會話 "${title}" 建立成功`,
+      // 特別處理會話衝突錯誤
+      if (err instanceof Error && err.message.includes('檢測到活躍會話衝突')) {
+        const conflictMsg = '偵測到會話衝突，請重新整理頁面後再試'
+        console.error("🎤 startRecording: 會話衝突錯誤:", err.message)
+        setError(conflictMsg)
+        toast({ 
+          title: '會話衝突', 
+          description: '目前已有活躍會話，請重新整理頁面後再試，或等待當前會話結束', 
+          variant: 'destructive' 
         })
+        return
       }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '建立錄音會話失敗'
-      setError(errorMessage)
-      console.error('❌ 建立錄音會話失敗:', err)
-
-      toast({
-        title: '建立失敗',
-        description: errorMessage,
-        variant: 'destructive',
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [session, notes, toast])
-
-  // 升級會話為錄音模式
-  const upgradeToRecording = useCallback(async () => {
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const updatedSession = await session.upgradeToRecording()
-      if (updatedSession) {
-        console.log('✅ 會話升級為錄音模式成功')
-
-        toast({
-          title: '升級成功',
-          description: '會話已升級為錄音模式',
-        })
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '升級會話失敗'
-      setError(errorMessage)
-      console.error('❌ 升級會話失敗:', err)
-
-      toast({
-        title: '升級失敗',
-        description: errorMessage,
-        variant: 'destructive',
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [session, toast])
-
-  // 開始錄音 - 支援四狀態流程
-  const startRecording = useCallback(async (title: string) => {
-    console.log("🎤 startRecording: 流程開始")
-    setIsLoading(true)
-    try {
-      let sessionToRecord = session.currentSession
-      console.log("🎤 startRecording: 目前 session:", sessionToRecord)
-
-      if (!sessionToRecord) {
-        console.log("🎤 startRecording: 沒有 session，建立新的錄音 session")
-        const newSession = await session.createRecordingSession(title, appData.editorContent)
-        if (!newSession) {
-          console.error("🎤 startRecording: 建立 session 失敗，回傳值為 null")
-          throw new Error('無法建立新的錄音會話')
-        }
-        console.log("🎤 startRecording: Session 建立成功:", newSession)
-        sessionToRecord = newSession
-        localStorage.removeItem('draft_note')
-      } else if (sessionToRecord.type === 'note_only') {
-        console.log("🎤 startRecording: 偵測到 note_only session，進行升級")
-        const upgradedSession = await session.upgradeToRecording()
-        if (!upgradedSession) {
-          console.error("🎤 startRecording: 升級 session 失敗，回傳值為 null")
-          throw new Error('無法升級會話')
-        }
-        console.log("🎤 startRecording: Session 升級成功:", upgradedSession)
-        sessionToRecord = upgradedSession
-      }
-
-      console.log("🎤 startRecording: 準備呼叫 recording.startRecording")
-      // recording.startRecording 使用 TranscriptManager，統一管理逐字稿連接
-      await recording.startRecording(sessionToRecord.id)
-      console.log("🎤 startRecording: recording.startRecording 呼叫完畢")
-
-      console.log("🎤 startRecording: 跳過 transcript.connect，避免雙重監聽器")
-      // 移除重複連接：useRecording 已經透過 TranscriptManager 連接逐字稿
-      // 避免 useTranscript 和 useRecording 同時添加監聽器導致競爭條件
-      console.log("🎤 startRecording: 逐字稿將由 useRecording hook 統一管理")
-
-      toast({ title: '錄音開始' })
-    } catch (err) {
+      
       const msg = err instanceof Error ? err.message : '開始錄音失敗'
       console.error("🎤 startRecording: 流程中發生錯誤:", msg)
       setError(msg)
