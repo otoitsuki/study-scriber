@@ -57,9 +57,12 @@ async def lifespan(app: FastAPI):
 
     # 關閉時執行
     logger.info("🔄 StudyScriber 正在關閉...")
-    service_instance = container.resolve(SimpleAudioTranscriptionService)
-    if service_instance:
-        await service_instance.shutdown()
+    try:
+        service_instance = container.resolve(SimpleAudioTranscriptionService)
+        if service_instance:
+            logger.info("✅ 轉錄服務已清理")
+    except Exception as e:
+        logger.warning(f"⚠️ 轉錄服務清理時發生錯誤: {e}")
 
 # 建立 FastAPI 應用程式
 app = FastAPI(
@@ -96,6 +99,33 @@ async def root():
     }
 
 
+@app.get("/debug/container")
+async def debug_container():
+    """除錯端點 - 檢查容器狀態"""
+    try:
+        # 檢查容器中的轉錄服務
+        service = container.resolve(SimpleAudioTranscriptionService)
+        return {
+            "status": "success",
+            "transcription_service": {
+                "registered": True,
+                "class_name": type(service).__name__,
+                "client_type": type(service.client).__name__,
+                "deployment_name": service.deployment_name,
+                "processing_tasks_count": len(service.processing_tasks),
+                "instance_id": id(service)
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "transcription_service": {
+                "registered": False,
+                "error": str(e)
+            }
+        }
+
+
 @app.get("/health")
 async def health_check():
     """健康檢查端點"""
@@ -116,8 +146,12 @@ async def health_check():
         ffmpeg_health = check_ffmpeg_health()
 
         # 檢查轉錄服務狀態
-        transcription_service = container.resolve(SimpleAudioTranscriptionService)
-        transcription_available = transcription_service is not None
+        try:
+            transcription_service = container.resolve(SimpleAudioTranscriptionService)
+            transcription_available = transcription_service is not None
+        except Exception as e:
+            logger.warning(f"轉錄服務解析失敗: {e}")
+            transcription_available = False
 
         return {
             "status": "healthy",
@@ -183,16 +217,24 @@ async def performance_stats():
     """效能統計端點"""
     try:
         # 取得轉錄服務效能統計
-        transcription_service = container.resolve(SimpleAudioTranscriptionService)
-
-        if not transcription_service:
+        try:
+            transcription_service = container.resolve(SimpleAudioTranscriptionService)
+            if not transcription_service:
+                return {
+                    "status": "service_unavailable",
+                    "message": "轉錄服務未啟用"
+                }
+            # 取得效能報告 (如果方法存在)
+            if hasattr(transcription_service, 'get_performance_report'):
+                performance_report = transcription_service.get_performance_report()
+            else:
+                performance_report = {"status": "no_stats_available"}
+        except Exception as e:
+            logger.warning(f"轉錄服務解析失敗: {e}")
             return {
                 "status": "service_unavailable",
-                "message": "轉錄服務未啟用"
+                "message": f"轉錄服務不可用: {str(e)}"
             }
-
-        # 取得效能報告
-        performance_report = transcription_service.get_performance_report()
 
         # 取得 FFmpeg 狀態
         ffmpeg_health = check_ffmpeg_health()

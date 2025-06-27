@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic"
 import "easymde/dist/easymde.min.css"
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { RotateCcw, Download } from "lucide-react"
@@ -19,7 +19,18 @@ import { WaitingState } from "./components/waiting-state"
 import { FinishState } from "./components/finish-state"
 
 export default function Component() {
-  const { appData, isLoading, error, startRecording, stopRecording, newNote, saveLocalDraft, session } = useAppState()
+  const {
+    appData,
+    isLoading,
+    error,
+    startRecording,
+    stopRecording,
+    newNote,
+    saveLocalDraft,
+    session,
+    recordingError,
+    transcriptError
+  } = useAppState()
   const [draftTitle, setDraftTitle] = useState("")
 
   // 追蹤狀態流轉
@@ -30,6 +41,14 @@ export default function Component() {
   } else {
     console.log("[DEBUG] session: null")
   }
+
+  // 暴露 appData 到 window 對象用於調試
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).appData = appData;
+      (window as any).session = session;
+    }
+  }, [appData, session])
 
   const editorOptions = useMemo(() => {
     return {
@@ -63,6 +82,9 @@ export default function Component() {
   }, [])
 
   const renderRightPanel = () => {
+    // 組合錯誤訊息
+    const combinedError = recordingError || transcriptError || null
+
     switch (appData.state) {
       case "default":
         return <DefaultState
@@ -77,14 +99,16 @@ export default function Component() {
             transcriptEntries={appData.transcriptEntries}
             recordingTime={appData.recordingTime}
             onStopRecording={stopRecording}
+            error={combinedError}
           />
         )
       case "recording_waiting":
         return (
           <RecordingState
-            transcriptEntries={[]}
+            transcriptEntries={appData.transcriptEntries}
             recordingTime={appData.recordingTime}
             onStopRecording={stopRecording}
+            error={combinedError}
           />
         )
       case "processing":

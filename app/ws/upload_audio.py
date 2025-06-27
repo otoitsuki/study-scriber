@@ -224,17 +224,25 @@ class AudioUploadManager:
                 await self._send_ack(chunk_sequence)
                 logger.debug(f"切片上傳成功: seq={chunk_sequence}, size={len(audio_data)}")
 
-                # 從容器解析服務
-                transcription_service = container.resolve(SimpleAudioTranscriptionService)
-                if transcription_service:
-                    await transcription_service.process_audio_chunk(
-                        session_id=self.session_id,
-                        chunk_sequence=chunk_sequence,
-                        webm_data=audio_data
-                    )
-                    logger.debug(f"已啟動轉錄服務處理切片 {chunk_sequence}")
-                else:
-                    logger.warning("轉錄服務不可用，跳過轉錄")
+                # 從容器解析服務並啟動轉錄
+                try:
+                    transcription_service = container.resolve(SimpleAudioTranscriptionService)
+                    if transcription_service:
+                        logger.info(f"🎯 [轉錄觸發] 開始處理切片 {chunk_sequence} (session: {self.session_id})")
+                        success = await transcription_service.process_audio_chunk(
+                            session_id=self.session_id,
+                            chunk_sequence=chunk_sequence,
+                            webm_data=audio_data
+                        )
+                        if success:
+                            logger.info(f"✅ [轉錄觸發] 切片 {chunk_sequence} 轉錄任務啟動成功")
+                        else:
+                            logger.warning(f"⚠️ [轉錄觸發] 切片 {chunk_sequence} 轉錄任務啟動失敗")
+                    else:
+                        logger.error("❌ [轉錄觸發] 轉錄服務不可用，跳過轉錄")
+                except Exception as e:
+                    logger.error(f"❌ [轉錄觸發] 解析轉錄服務失敗 (chunk {chunk_sequence}): {e}")
+                    # 即使轉錄失敗，也不影響音檔上傳流程
             else:
                 # 上傳失敗
                 error_message = result.get('error', 'Unknown R2 upload error')
