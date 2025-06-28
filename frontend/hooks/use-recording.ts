@@ -85,13 +85,21 @@ export function useRecording(): UseRecordingReturn {
       start_sequence: transcript.start_sequence,
       confidence: transcript.confidence,
       sessionId: currentSessionIdRef.current,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      fullMessage: transcript
     })
 
     // 處理轉錄完成通知
     if (transcript.type === 'transcript_complete' || transcript.message === 'transcription_complete') {
       console.log('✅ [useRecording] 逐字稿轉錄完成，設定 transcriptCompleted=true')
       setTranscriptCompleted(true)
+      return
+    }
+
+    // 處理 active phase 訊息（重要：這會觸發狀態轉換）
+    if (transcript.type === 'active' || transcript.phase === 'active') {
+      console.log('🚀 [useRecording] 收到 active phase 訊息，轉錄開始')
+      // 這裡可以設置一個標記，表示轉錄已開始
       return
     }
 
@@ -106,7 +114,13 @@ export function useRecording(): UseRecordingReturn {
       return
     }
 
-    console.log('🔄 [useRecording] 開始處理逐字稿片段...')
+    console.log('🔄 [useRecording] 開始處理逐字稿片段...', {
+      text: transcript.text,
+      textPreview: transcript.text.substring(0, 50) + '...',
+      sequence: transcript.start_sequence,
+      startTime: transcript.start_time,
+      endTime: transcript.end_time
+    })
 
     setTranscripts((prev) => {
       console.log('📊 [useRecording] 合併前狀態:', {

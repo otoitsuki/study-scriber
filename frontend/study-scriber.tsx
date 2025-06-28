@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { RotateCcw, Download } from "lucide-react"
 import { useRecording } from "./hooks/use-recording"
-import { useSession } from "./hooks/use-session"
 
 // 動態匯入 SimpleMDE 以避免 SSR 問題
 const SimpleMDE = dynamic(() => import("react-simplemde-editor"), {
@@ -57,10 +56,13 @@ export default function Component() {
     (window as any).recordingHook = recording
   }
 
-  // 暴露 session hook 到 window 以便調試
-  const sessionHook = useSession()
+  // 暴露 session 到 window 以便調試（使用 useAppState 返回的 session）
   if (typeof window !== 'undefined') {
-    (window as any).sessionHook = sessionHook
+    (window as any).sessionHook = {
+      currentSession: session,
+      isLoading: sessionLoading,
+      error: null // useAppState 沒有直接暴露 session error
+    }
   }
 
   useEffect(() => {

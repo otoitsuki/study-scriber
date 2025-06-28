@@ -249,6 +249,8 @@ class TranscriptManager {
         phase: message.phase,
         timestamp: new Date().toISOString()
       })
+      // 廣播 active phase 訊息給監聽器
+      this.broadcastToListeners(sessionId, message)
     } else if (message.type === 'error' || message.type === 'transcription_error') {
       console.error('🚨 [TranscriptManager] 收到轉錄錯誤:', {
         sessionId,

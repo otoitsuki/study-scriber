@@ -7,7 +7,7 @@ export type WebSocketState = 'connecting' | 'connected' | 'disconnected' | 'erro
 
 // 逐字稿接收介面 (與後端推送格式一致)
 export interface TranscriptMessage {
-  type: 'transcript_segment' | 'transcript_complete' | 'connection_established' | 'heartbeat_ack' | 'pong'
+  type: 'transcript_segment' | 'transcript_complete' | 'connection_established' | 'heartbeat_ack' | 'pong' | 'active' | 'error' | 'transcription_error'
   session_id?: string
   segment_id?: string
   text?: string
@@ -19,6 +19,10 @@ export interface TranscriptMessage {
   language?: string
   confidence?: number
   timestamp?: number
+  phase?: 'waiting' | 'active'  // 新增 phase 欄位
+  error_type?: string
+  error_message?: string
+  details?: any
 }
 
 // ACK/Missing 訊息介面
