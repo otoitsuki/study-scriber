@@ -112,6 +112,7 @@ export function useAppState() {
     editorContent: "",
     isRecording: false,
     recordingTime: 0,
+    session: null,
   })
 
   const [isLoading, setIsLoading] = useState(false)
@@ -186,22 +187,24 @@ export function useAppState() {
     return result
   }, [])
 
-  // 狀態同步：前端狀態與後端 session status 對應
+  // 狀態同步：前端狀態與後端 session status 對應 - 強化一致性
   useEffect(() => {
     const activeSession = session.currentSession
     const effectExecutionTime = Date.now()
 
-    console.log('🔄 [狀態同步] useEffect 觸發 (時序優化版):', {
+    console.log('🔄 [狀態同步] useEffect 觸發 (強化一致性版):', {
       hasActiveSession: !!activeSession,
       sessionId: activeSession?.id,
       sessionStatus: activeSession?.status,
       sessionType: activeSession?.type,
-      isRecording: recording.isRecording,
+      recordingIsRecording: recording.isRecording,
+      appDataIsRecording: appData.isRecording,
+      isRecordingConsistent: recording.isRecording === appData.isRecording,
       transcriptCount: transcript.transcripts.length,
       recordingTranscriptCount: recording.transcripts.length,
       currentAppState: prevStateRef.current,
       effectExecutionTime,
-      note: '使用最新的時序檢查機制'
+      note: '強化錄音狀態一致性檢查'
     })
 
     if (activeSession) {
@@ -218,31 +221,42 @@ export function useAppState() {
         note: '已確保時序同步'
       })
 
+      // 關鍵修復：強制使用 recording.isRecording 而不是 appData.isRecording
+      // 這確保狀態映射邏輯使用最新的錄音狀態
       const frontendState = mapStateFromSession(
         activeSession,
-        recording.isRecording,
+        recording.isRecording, // 直接使用 recording hook 的狀態
         latestTranscripts
       )
 
-      // 只有在狀態真正改變時才更新
-      if (frontendState !== prevStateRef.current) {
-        console.log(`🔄 [狀態同步] 狀態變化 (時序驗證): ${prevStateRef.current} → ${frontendState}`, {
+      // 檢查是否需要同時更新 isRecording 和 state
+      const needsIsRecordingUpdate = appData.isRecording !== recording.isRecording
+      const needsStateUpdate = frontendState !== prevStateRef.current
+
+      if (needsIsRecordingUpdate || needsStateUpdate) {
+        console.log(`🔄 [狀態同步] 執行狀態更新:`, {
+          needsIsRecordingUpdate,
+          needsStateUpdate,
+          appDataIsRecording: appData.isRecording,
+          recordingIsRecording: recording.isRecording,
           previousState: prevStateRef.current,
           newState: frontendState,
           stateChangeTimestamp: Date.now(),
           executionDuration: Date.now() - effectExecutionTime,
-          triggerSource: 'session_or_recording_change'
+          triggerSource: 'comprehensive_state_sync'
         })
 
         setAppData(prev => ({
           ...prev,
-          state: frontendState
+          state: frontendState,
+          isRecording: recording.isRecording, // 同時強制同步 isRecording
         }))
 
         prevStateRef.current = frontendState
       } else {
-        console.log('🔄 [狀態同步] 狀態無變化，跳過更新', {
+        console.log('🔄 [狀態同步] 所有狀態一致，跳過更新', {
           currentState: frontendState,
+          isRecording: recording.isRecording,
           executionTime: Date.now() - effectExecutionTime
         })
       }
@@ -305,14 +319,38 @@ export function useAppState() {
     }
   }, []) // 空依賴項，只在組件掛載時執行一次
 
-  // 同步錄音狀態
+  // 同步錄音狀態 - 強化一致性檢查
   useEffect(() => {
-    setAppData(prev => ({
-      ...prev,
-      isRecording: recording.isRecording,
+    console.log('🔄 [錄音狀態同步] 更新 appData.isRecording:', {
+      from: appData.isRecording,
+      to: recording.isRecording,
       recordingTime: recording.recordingTime,
-    }))
+      timestamp: Date.now(),
+      needsUpdate: appData.isRecording !== recording.isRecording
+    })
+
+    // 強制同步錄音狀態，確保一致性
+    setAppData(prev => {
+      const needsUpdate = prev.isRecording !== recording.isRecording || prev.recordingTime !== recording.recordingTime
+
+      if (needsUpdate) {
+        console.log('🔄 [錄音狀態同步] 執行狀態更新:', {
+          prevIsRecording: prev.isRecording,
+          newIsRecording: recording.isRecording,
+          prevRecordingTime: prev.recordingTime,
+          newRecordingTime: recording.recordingTime
+        })
+      }
+
+      return {
+        ...prev,
+        isRecording: recording.isRecording,
+        recordingTime: recording.recordingTime,
+      }
+    })
   }, [recording.isRecording, recording.recordingTime])
+
+  // 移除重複的狀態一致性檢查，已整合到主要狀態同步邏輯中
 
   // 同步筆記內容
   useEffect(() => {

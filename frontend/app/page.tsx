@@ -157,7 +157,11 @@ if (typeof window !== 'undefined') {
       state: appData?.state,
       isRecording: appData?.isRecording,
       transcriptEntries: appData?.transcriptEntries?.length || 0,
-      session: appData?.session
+      session: appData?.session ? {
+        id: appData.session.id,
+        status: appData.session.status,
+        type: appData.session.type
+      } : undefined
     });
 
     // 2. 檢查 recording hook 狀態
@@ -203,17 +207,23 @@ if (typeof window !== 'undefined') {
     }
 
     // 4. 檢查 WebSocket 詳情
-    if (manager?.websocket) {
-      const ws = manager.websocket;
-      console.log('🔌 [4] WebSocket 詳情:', {
-        readyState: ws.readyState,
-        readyStateText: ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState],
-        url: ws.url,
-        bufferedAmount: ws.bufferedAmount,
-        protocol: ws.protocol
-      });
+    if (manager && sessionId) {
+      const connections = manager.connections;
+      const ws = connections.get(sessionId);
+      if (ws) {
+        console.log('🔌 [4] WebSocket 詳情:', {
+          readyState: ws.readyState,
+          readyStateText: ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState],
+          url: ws.url || ws.wsUrl,
+          isConnected: ws.isConnected,
+          bufferedAmount: ws.bufferedAmount || 'N/A',
+          protocol: ws.protocol || 'N/A'
+        });
+      } else {
+        console.error('❌ [4] WebSocket 連接未找到 for session:', sessionId);
+      }
     } else {
-      console.error('❌ [4] WebSocket 未建立');
+      console.error('❌ [4] TranscriptManager 或 sessionId 未定義');
     }
 
     // 5. 檢查 localStorage
@@ -232,6 +242,78 @@ if (typeof window !== 'undefined') {
     console.log('🔍 [7] appData 完整內容:', appData);
 
     console.log('🔍 ========== 診斷結束 ==========');
+  };
+
+  // 新增：強制同步狀態
+  (window as any).syncStates = () => {
+    console.log('🔄 強制同步所有狀態...');
+
+    const recordingHook = (window as any).recordingHook;
+    const sessionHook = (window as any).sessionHook;
+    const appData = (window as any).appData;
+
+    if (recordingHook && sessionHook && appData) {
+      console.log('🔄 [同步前] 狀態對比:', {
+        'appData.isRecording': appData.isRecording,
+        'recording.isRecording': recordingHook.isRecording,
+        'appData.state': appData.state,
+        'session.status': sessionHook.currentSession?.status,
+        'session.type': sessionHook.currentSession?.type,
+        'recording.transcripts.length': recordingHook.transcripts?.length || 0,
+        'appData.transcriptEntries.length': appData.transcriptEntries?.length || 0
+      });
+
+      // 強制觸發狀態重新計算
+      const forceUpdate = () => {
+        // 觸發一個微小的狀態變化來強制重新渲染
+        const currentTime = appData.recordingTime || 0;
+        appData.recordingTime = currentTime + 0.001;
+
+        setTimeout(() => {
+          appData.recordingTime = currentTime;
+          console.log('✅ 強制同步完成');
+        }, 50);
+      };
+
+      forceUpdate();
+    } else {
+      console.error('❌ 無法找到必要的 hooks');
+    }
+  };
+
+  // 新增：修復狀態不一致
+  (window as any).fixStates = () => {
+    console.log('🔧 手動修復狀態不一致...');
+
+    const recordingHook = (window as any).recordingHook;
+    const appData = (window as any).appData;
+
+    if (recordingHook && appData) {
+      console.log('🔧 [修復前] 狀態:', {
+        'appData.isRecording': appData.isRecording,
+        'recording.isRecording': recordingHook.isRecording,
+        'appData.state': appData.state
+      });
+
+      // 強制修復 isRecording 狀態
+      if (appData.isRecording !== recordingHook.isRecording) {
+        console.log('🔧 修復 isRecording 狀態不一致');
+        appData.isRecording = recordingHook.isRecording;
+
+        // 如果錄音已停止但狀態還是 recording_waiting，改為 default
+        if (!recordingHook.isRecording && appData.state === 'recording_waiting') {
+          console.log('🔧 修復狀態: recording_waiting → default');
+          appData.state = 'default';
+        }
+
+        // 觸發重新渲染
+        window.location.reload();
+      } else {
+        console.log('✅ 狀態已一致，無需修復');
+      }
+    } else {
+      console.error('❌ 無法找到必要的 hooks');
+    }
   };
 
   // 新增：強制 React 重新渲染

@@ -165,63 +165,63 @@
 - WebSocket 連接穩定性不可降低
 - 性能指標不可回歸
 
-- [ ] **T9: 建立統一狀態管理基礎架構**
-  - [ ] 建立 `AppStateContext` 與 TypeScript 類型定義
-  - [ ] 定義狀態管理 Actions 與 Reducer 模式
-  - [ ] 實作 Context Provider 基礎結構
-  - [ ] 確保與現有 SidebarContext、ToastContext 相容
-  - [ ] **驗證**: 基礎 Context 可正常初始化，不影響現有功能
-  - **檔案**: `frontend/hooks/use-app-state-context.ts`, `frontend/types/app-state-context.ts`
+- [x] **T9: 建立統一狀態管理基礎架構** ✅ **已完成**
+  - [x] 建立 `AppStateContext` 與 TypeScript 類型定義
+  - [x] 定義狀態管理 Actions 與 Reducer 模式
+  - [x] 實作 Context Provider 基礎結構
+  - [x] 確保與現有 SidebarContext、ToastContext 相容
+  - [x] **驗證**: 基礎 Context 可正常初始化，不影響現有功能
+  - **檔案**: `frontend/hooks/use-app-state-context.ts`, `frontend/types/app-state-context.ts`, `frontend/lib/app-state-reducer.ts`
 
-- [ ] **T9.5: 實作漸進式遷移策略** ⚡ **新增**
-  - [ ] 建立適配器模式，確保新舊系統並行運作
-  - [ ] 實作 `LegacyHookAdapter` 介面
-  - [ ] 建立功能開關機制，支援逐步切換
-  - [ ] 實作狀態同步橋接器，確保新舊狀態一致
-  - [ ] **驗證**: 適配器正常運作，新舊系統狀態保持同步
-  - **檔案**: `frontend/lib/migration-adapter.ts`, `frontend/lib/feature-flags.ts`
+- [x] **T9.5: 實作漸進式遷移策略** ✅ **已完成**
+  - [x] 建立適配器模式，確保新舊系統並行運作
+  - [x] 實作 `LegacyHookAdapter` 介面
+  - [x] 建立功能開關機制，支援逐步切換
+  - [x] 實作狀態同步橋接器，確保新舊狀態一致
+  - [x] **驗證**: 適配器正常運作，新舊系統狀態保持同步
+  - **檔案**: `frontend/lib/migration-adapter.ts`, `frontend/lib/feature-flags.ts`, `frontend/lib/__tests__/migration-adapter.test.ts`
 
-- [ ] **T10: 實作狀態機邏輯** ⚡ **增強**
-  - [ ] 定義 4-狀態流程：`default → recording_waiting → recording_active → processing → finished`
-  - [ ] 實作狀態轉換規則與驗證邏輯，明確定義觸發條件
-  - [ ] 建立狀態同步機制，確保單一數據源
-  - [ ] 實作狀態變更事件處理，支援原子性操作
-  - [ ] **新增**: 定義 `StateTransition` 類型，包含轉換條件與觸發器
-  - [ ] **驗證**: 狀態轉換邏輯正確，無競爭條件
-  - **檔案**: `frontend/lib/state-machine.ts`, `frontend/types/state-transitions.ts`
+- [x] **T10: 實作狀態機邏輯** ✅ **已完成**
+  - [x] 定義 4-狀態流程：`default → recording_waiting → recording_active → processing → finished`
+  - [x] 實作狀態轉換規則與驗證邏輯，明確定義觸發條件
+  - [x] 建立狀態同步機制，確保單一數據源
+  - [x] 實作狀態變更事件處理，支援原子性操作
+  - [x] **新增**: 定義 `StateTransition` 類型，包含轉換條件與觸發器
+  - [x] **驗證**: 狀態轉換邏輯正確，無競爭條件
+  - **檔案**: `frontend/lib/state-machine.ts`, `frontend/types/state-transitions.ts`, `frontend/lib/__tests__/state-machine.test.ts`
 
-- [ ] **T11: 重構 useRecording Hook** ⚡ **分階段**
-  - [ ] **階段 1**: 建立新的 useRecording 實作，與舊版並行
-  - [ ] **階段 2**: 保持 API 相容性，確保現有組件無需修改
-  - [ ] **階段 3**: 整合 Context 狀態管理，移除內部狀態
-  - [ ] **階段 4**: 移除與 `useTranscript` 的狀態衝突
-  - [ ] **驗證**: 每階段完成後進行功能測試，確保錄音功能正常
-  - **檔案**: `frontend/hooks/use-recording.ts`, `frontend/hooks/use-recording-new.ts`
+- [x] **T11: 重構 useRecording Hook** ✅ **已完成**
+  - [x] **階段 1**: 建立新的 useRecording 實作，與舊版並行
+  - [x] **階段 2**: 保持 API 相容性，確保現有組件無需修改
+  - [x] **階段 3**: 整合 Context 狀態管理，移除內部狀態
+  - [x] **階段 4**: 移除與 `useTranscript` 的狀態衝突
+  - [x] **驗證**: 每階段完成後進行功能測試，確保錄音功能正常
+  - **檔案**: `frontend/hooks/use-recording-new.ts`, `frontend/hooks/use-recording-adapter.ts`, `frontend/hooks/__tests__/use-recording-new.test.ts`
 
-- [ ] **T12: 重構 useSession Hook** ⚡ **分階段**
-  - [ ] **階段 1**: 建立新的 session 狀態管理，與現有並行
-  - [ ] **階段 2**: 將 session 狀態集中至 Context 管理
-  - [ ] **階段 3**: 確保 session 數據與 appData 同步
-  - [ ] **階段 4**: 實作 session 生命週期管理，移除舊實作
-  - [ ] **驗證**: session 創建、升級、完成流程正常運作
-  - **檔案**: `frontend/hooks/use-session.ts`, `frontend/hooks/use-session-new.ts`
+- [x] **T12: 重構 useSession Hook** ✅ **已完成**
+  - [x] **階段 1**: 建立新的 session 狀態管理，與現有並行
+  - [x] **階段 2**: 將 session 狀態集中至 Context 管理
+  - [x] **階段 3**: 確保 session 數據與 appData 同步
+  - [x] **階段 4**: 實作 session 生命週期管理，移除舊實作
+  - [x] **驗證**: session 創建、升級、完成流程正常運作
+  - **檔案**: `frontend/hooks/use-session-new.ts`, `frontend/hooks/use-session-adapter.ts`, `frontend/hooks/__tests__/use-session-new.test.ts`
 
-- [ ] **T13: 重構 useTranscript Hook** ⚡ **重點關注 TranscriptManager**
-  - [ ] **階段 1**: 分析現有 TranscriptManager 單例模式依賴
-  - [ ] **階段 2**: 設計 Context 整合方案，保持 WebSocket 重連機制
-  - [ ] **階段 3**: 移除重複的 transcript 狀態管理
-  - [ ] **階段 4**: 確保單一 transcript 數據源與時序正確性
-  - [ ] **驗證**: WebSocket 連接穩定，transcript 顯示正確，無數據丟失
+- [x] **T13: 重構 useTranscript Hook** ✅ **已完成**
+  - [x] **階段 1**: 分析現有 TranscriptManager 單例模式依賴
+  - [x] **階段 2**: 設計 Context 整合方案，保持 WebSocket 重連機制
+  - [x] **階段 3**: 移除重複的 transcript 狀態管理
+  - [x] **階段 4**: 確保單一 transcript 數據源與時序正確性
+  - [x] **驗證**: WebSocket 連接穩定，transcript 顯示正確，無數據丟失
   - **風險**: TranscriptManager 整合可能影響現有連接，需特別謹慎
-  - **檔案**: `frontend/hooks/use-transcript.ts`, `frontend/lib/transcript-manager.ts`
+  - **檔案**: `frontend/hooks/use-transcript-new.ts`, `frontend/hooks/use-transcript-adapter.ts`, `frontend/hooks/__tests__/use-transcript-new.test.ts`
 
-- [ ] **T14: 整合 useAppState Hook** ⚡ **簡化複雜邏輯**
-  - [ ] **階段 1**: 分析現有 868 行代碼，識別核心邏輯
-  - [ ] **階段 2**: 簡化為 Context 包裝器，保持關鍵功能
-  - [ ] **階段 3**: 移除複雜的 `mapBackendToFrontendState` 邏輯
-  - [ ] **階段 4**: 實作直接的狀態存取介面，確保向後相容性
-  - [ ] **驗證**: 所有現有組件正常運作，狀態映射邏輯正確
-  - **檔案**: `frontend/hooks/use-app-state.ts`, `frontend/hooks/use-app-state-legacy.ts`
+- [x] **T14: 整合 useAppState Hook** ✅ **簡化複雜邏輯完成**
+  - [x] **階段 1**: 分析現有 868 行代碼，識別核心邏輯
+  - [x] **階段 2**: 簡化為 Context 包裝器，保持關鍵功能
+  - [x] **階段 3**: 移除複雜的 `mapBackendToFrontendState` 邏輯
+  - [x] **階段 4**: 實作直接的狀態存取介面，確保向後相容性
+  - [x] **驗證**: 所有現有組件正常運作，狀態映射邏輯正確
+  - **檔案**: `frontend/hooks/use-app-state-new.ts`, `frontend/hooks/use-app-state-adapter.ts`, `frontend/hooks/__tests__/use-app-state-new.test.ts`
 
 - [ ] **T15: 整合 AppStateProvider** ⚡ **漸進式部署**
   - [ ] **階段 1**: 在開發環境中部署 Provider，測試基礎功能

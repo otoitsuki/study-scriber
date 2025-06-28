@@ -17,6 +17,11 @@ export interface AppData {
   transcriptEntries: TranscriptEntry[]
   isRecording: boolean
   recordingTime: number
+  session?: {
+    id: string
+    status: SessionStatus
+    type: SessionType
+  } | null
 }
 
 // 後端 Session 狀態對應前端狀態
