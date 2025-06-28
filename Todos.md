@@ -257,18 +257,23 @@
 
 ### Hotfix 2024-06-28
 
-- [x] **HF1: 修復錄音按鈕無法錄音 (空音訊切片 bug)**
+- [x] **HF1: 修復錄音按鈕無法錄音 (空音訊切片 bug)** ⚡ **狀態轉換問題修復中**
   - [x] 移除 `MediaRecorder.start(timeSlice)` 方式，改為 `MediaRecorder.start()` + `requestData()` 定時切片
   - [x] 新增 `chunkTimer` 定時器並在 `stopRecording/cleanup` 清除
   - [x] 測試瀏覽器相容性（Chrome / Edge / Safari for iOS & macOS）
   - [x] 移除 `sampleRate` 硬性設定，改由瀏覽器預設；後端轉 16 kHz
   - [x] **根本原因發現**：React StrictMode 導致組件重新渲染，計時器被 useEffect cleanup 清除
   - [x] **解決方案**：實作計時器保護機制 (`timerProtectionRef`) 防止錄音中的計時器被意外清除
+  - [x] **新問題發現 (2024-06-28)**：狀態轉換無法觸發
+    - [x] **原因**: 狀態卡在 `recording_waiting`，缺少從 `recording_waiting` 觸發 `USER_START_RECORDING` 的轉換規則
+    - [x] **解決**: 添加 `recording_waiting->recording_waiting->USER_START_RECORDING` 轉換規則
+    - [x] **解決**: 在 `startRecording` 中檢查當前狀態，非 `default` 時先重置狀態
+    - [x] **解決**: 確保狀態機上下文始終從 `default` 狀態開始轉換
   - [ ] **剩餘問題**：
-    - [ ] WebSocket 連接立即關閉 (1005 錯誤) - 需檢查後端
-    - [ ] 後端 upload_audio WebSocket 出現 RuntimeError - 需檢查後端處理
-    - [ ] 測試計時器保護機制是否生效
-  - [x] **檔案**: `frontend/lib/audio-recorder.ts`
+    - [ ] WebSocket 連接立即關閉 (1005 錯誤) - 需檢查後端 upload_audio 處理
+    - [ ] 後端 upload_audio WebSocket 出現 RuntimeError - 可能是前端重複連接導致
+    - [ ] 測試修復後的狀態轉換是否正常觸發副作用
+  - [x] **檔案**: `frontend/lib/audio-recorder.ts`, `frontend/hooks/use-recording-new.ts`, `frontend/types/state-transitions.ts`, `frontend/hooks/use-app-state-new.ts`
 
 #### 🔗 **任務依賴關係**
 

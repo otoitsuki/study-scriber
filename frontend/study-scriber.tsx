@@ -114,11 +114,24 @@ export default function Component() {
     // 組合錯誤訊息
     const combinedError = recordingError || transcriptError || null
 
+    // 狀態異常檢查：如果是 recording_waiting 但沒有 session，應該顯示 default 狀態
+    if (appData.state === "recording_waiting" && !session) {
+      console.log("⚠️ [StudyScriber] 檢測到狀態異常: recording_waiting 但沒有 session，顯示 DefaultState")
+      return <DefaultState
+        onStartRecording={() => {
+          console.log("📱 StudyScriber: 準備調用 startRecording（狀態修復），標題:", draftTitle)
+          startRecording(draftTitle)
+        }}
+      />
+    }
+
     switch (appData.state) {
       case "default":
+        console.log("🔄 [StudyScriber] 渲染 DefaultState，startRecording 函數:", typeof startRecording)
         return <DefaultState
           onStartRecording={() => {
             console.log("📱 StudyScriber: 準備調用 startRecording，標題:", draftTitle)
+            console.log("📱 StudyScriber: startRecording 函數類型:", typeof startRecording)
             startRecording(draftTitle)
           }}
         />

@@ -212,6 +212,14 @@ export function useAppStateNew() {
   // 開始錄音 - 完全委託給狀態機
   const startRecording = useCallback(async (title: string) => {
     console.log("🎤 [useAppStateNew] startRecording: 觸發狀態機")
+
+    // 檢查狀態機是否已初始化
+    if (!stateMachineManager) {
+      console.error("🎤 [useAppStateNew] 狀態機尚未初始化")
+      toast({ title: '系統初始化中', description: '請稍後再試', variant: 'destructive' })
+      return
+    }
+
     dispatch({ type: 'SET_LOADING', payload: true })
 
     try {
@@ -265,7 +273,9 @@ export function useAppStateNew() {
       }
 
       // 觸發狀態轉換 - 讓狀態機處理所有邏輯
+      console.log("🎤 [useAppStateNew] 準備觸發狀態轉換 USER_START_RECORDING")
       const result = transition('USER_START_RECORDING');
+      console.log("🎤 [useAppStateNew] 狀態轉換結果:", result)
 
       if (!result?.success) {
         throw new Error(result?.error || '狀態轉換失敗');

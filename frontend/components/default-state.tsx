@@ -8,9 +8,27 @@ interface DefaultStateProps {
 }
 
 export function DefaultState({ onStartRecording }: DefaultStateProps) {
+  const handleClick = () => {
+    console.log("🔘 [DefaultState] 按鈕被點擊")
+    console.log("🔘 [DefaultState] onStartRecording 函數:", typeof onStartRecording)
+    try {
+      onStartRecording()
+      console.log("🔘 [DefaultState] onStartRecording 調用成功")
+    } catch (error) {
+      console.error("🔘 [DefaultState] onStartRecording 調用失敗:", error)
+    }
+  }
+
+  console.log("🔄 [DefaultState] 組件渲染，onStartRecording:", typeof onStartRecording)
+
   return (
     <div className="h-full flex flex-col items-center justify-center p-6 space-y-6">
-      <Button onClick={onStartRecording} size="lg" className="flex items-center gap-3 px-8 py-4 text-base">
+      <Button
+        onClick={handleClick}
+        size="lg"
+        className="flex items-center gap-3 px-8 py-4 text-base"
+        data-testid="start-recording-button"
+      >
         <Upload className="w-5 h-5" />
         Start Recording
       </Button>
