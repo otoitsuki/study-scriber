@@ -223,13 +223,13 @@
   - [x] **驗證**: 所有現有組件正常運作，狀態映射邏輯正確
   - **檔案**: `frontend/hooks/use-app-state-new.ts`, `frontend/hooks/use-app-state-adapter.ts`, `frontend/hooks/__tests__/use-app-state-new.test.ts`
 
-- [ ] **T15: 整合 AppStateProvider** ⚡ **漸進式部署**
-  - [ ] **階段 1**: 在開發環境中部署 Provider，測試基礎功能
-  - [ ] **階段 2**: 實作功能開關，支援新舊系統切換
-  - [ ] **階段 3**: 確保所有子組件能存取統一狀態
-  - [ ] **階段 4**: 實作初始狀態載入邏輯與持久化機制
-  - [ ] **驗證**: Provider 正常運作，所有功能可正常切換
-  - **檔案**: `frontend/app/layout.tsx`, `frontend/providers/app-state-provider.tsx`
+- [x] **T15: 整合 AppStateProvider** ✅ **漸進式部署完成**
+  - [x] **階段 1**: 在開發環境中部署 Provider，測試基礎功能 ✅
+  - [x] **階段 2**: 實作功能開關，支援新舊系統切換 ✅
+  - [x] **階段 3**: 確保所有子組件能存取統一狀態 ✅
+  - [x] **階段 4**: 實作初始狀態載入邏輯與持久化機制 ✅
+  - [x] **驗證**: Provider 正常運作，所有功能可正常切換 ✅
+  - **檔案**: `frontend/app/layout.tsx`, `frontend/providers/app-state-provider-wrapper.tsx`, `frontend/__tests__/integration/app-state-provider.test.tsx`, `frontend/lib/initial-state-loader.ts`, `frontend/lib/__tests__/initial-state-loader.test.ts`
 
 - [ ] **T16: 測試與驗證** ⚡ **強化測試覆蓋率**
   - [ ] **基礎測試**: 建立狀態管理整合測試

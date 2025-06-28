@@ -6,14 +6,14 @@ import { useMemo, useState, useEffect } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { RotateCcw, Download } from "lucide-react"
-import { useRecording } from "./hooks/use-recording"
+import { useRecording } from "./hooks/use-recording-adapter"
 
 // 動態匯入 SimpleMDE 以避免 SSR 問題
 const SimpleMDE = dynamic(() => import("react-simplemde-editor"), {
   ssr: false,
   loading: () => <div className="h-full flex items-center justify-center text-muted-foreground">載入編輯器中...</div>
 })
-import { useAppState } from "./hooks/use-app-state"
+import { useAppState } from "./hooks/use-app-state-adapter"
 import { DefaultState } from "./components/default-state"
 import { RecordingState } from "./components/recording-state"
 import { WaitingState } from "./components/waiting-state"

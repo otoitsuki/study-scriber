@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import { AppStateProviderWrapper } from '../providers/app-state-provider-wrapper'
 
 export const metadata: Metadata = {
   title: 'study-scriber',
@@ -15,7 +16,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        {children}
+        <AppStateProviderWrapper>
+          {children}
+        </AppStateProviderWrapper>
       </body>
     </html>
   )

@@ -1,14 +1,62 @@
 "use client"
 
-import React, { createContext, useContext, useReducer, useCallback } from "react"
+import React, { createContext, useContext, useReducer, useCallback, useEffect } from "react"
 import { AppStateContextValue, initialContextState } from "../types/app-state-context"
 import { appStateReducer, AppStateReducerState } from "../lib/app-state-reducer"
+import { InitialStateLoader } from "../lib/initial-state-loader"
 import { AppState, SessionStatus, SessionType, TranscriptEntry } from "../types/app-state"
 
 const AppStateContext = createContext<AppStateContextValue | null>(null)
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appStateReducer, initialContextState as AppStateReducerState)
+
+  // 載入初始狀態
+  useEffect(() => {
+    console.log('🔄 [AppStateProvider] 載入初始狀態...')
+
+    // 檢查是否在瀏覽器環境
+    if (typeof window !== 'undefined') {
+      try {
+        const initialAppData = InitialStateLoader.loadInitialAppData()
+
+        // 更新 Context 狀態
+        dispatch({ type: "SET_APP_STATE", payload: initialAppData.state })
+        dispatch({ type: "SET_EDITOR_CONTENT", payload: initialAppData.editorContent })
+        dispatch({ type: "SET_TRANSCRIPT_ENTRIES", payload: initialAppData.transcriptEntries })
+
+        if (initialAppData.session) {
+          dispatch({ type: "SET_SESSION", payload: initialAppData.session })
+        }
+
+        console.log('✅ [AppStateProvider] 初始狀態載入完成:', {
+          state: initialAppData.state,
+          hasSession: !!initialAppData.session,
+          transcriptCount: initialAppData.transcriptEntries.length,
+          contentLength: initialAppData.editorContent.length
+        })
+      } catch (error) {
+        console.error('❌ [AppStateProvider] 載入初始狀態失敗:', error)
+      }
+    }
+  }, [])
+
+  // 狀態持久化
+  useEffect(() => {
+    // 檢查是否在瀏覽器環境且狀態已初始化
+    if (typeof window !== 'undefined' && state.appData) {
+      try {
+        // 延遲儲存，避免在初始載入時立即儲存
+        const timeoutId = setTimeout(() => {
+          InitialStateLoader.saveAppState(state.appData)
+        }, 1000) // 1秒延遲
+
+        return () => clearTimeout(timeoutId)
+      } catch (error) {
+        console.error('❌ [AppStateProvider] 狀態持久化失敗:', error)
+      }
+    }
+  }, [state.appData])
 
   const setState = useCallback((newState: AppState) => {
     dispatch({ type: "SET_STATE", payload: newState })
