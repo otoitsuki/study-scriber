@@ -30,8 +30,15 @@ export class InitialStateLoader {
             // 3. 載入完整應用狀態（如果有的話）
             const savedAppState = this.loadSavedAppState()
 
+            // 修正：如果儲存的狀態是暫時性或已完成的，則重置為預設狀態
+            const validInitialState =
+                savedAppState?.state &&
+                    !['recording_waiting', 'recording_active', 'processing', 'finished'].includes(savedAppState.state)
+                    ? savedAppState.state
+                    : 'default'
+
             const initialAppData: AppData = {
-                state: savedAppState?.state || 'default',
+                state: validInitialState,
                 transcriptEntries: savedAppState?.transcriptEntries || [],
                 editorContent: draftContent || '',
                 isRecording: false, // 重啟後永遠不應該是錄音狀態

@@ -1,4 +1,5 @@
 import { AppData, AppState, SessionStatus, SessionType, TranscriptEntry } from "./app-state"
+import { StateTransitionTrigger, StateTransitionResult } from './state-transitions';
 
 // 狀態管理 Actions
 export type AppStateAction =
@@ -38,6 +39,7 @@ export interface AppStateContextValue {
     resetState: () => void
     setLoading: (loading: boolean) => void
     setError: (error: string | null) => void
+    transition: (trigger: StateTransitionTrigger) => StateTransitionResult | null
 }
 
 // 初始狀態

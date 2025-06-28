@@ -34,6 +34,7 @@ export function appStateReducer(
       }
 
     case "SET_RECORDING_TIME":
+      console.log('⏰ [AppStateReducer] 更新錄音時間:', action.payload)
       return {
         ...state,
         appData: {

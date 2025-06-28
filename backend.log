@@ -1,0 +1,7 @@
+INFO:     Will watch for changes in these directories: ['/Users/itsuki/Documents/Git/study-scriber']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [38135] using WatchFiles
+2025-06-28 18:17:01,652 - watchfiles.main - INFO - 2 changes detected
+INFO:     Started server process [38150]
+INFO:     Waiting for application startup.
+2025-06-28 18:17:01,789 - main - INFO - 🚀 StudyScriber 正在啟動...

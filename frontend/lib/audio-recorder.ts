@@ -42,6 +42,8 @@ export class AudioRecorder {
   private state: AudioRecorderState = 'idle'
   private sequence = 0
   private startTime = 0
+  // 片段定時器，用於定時呼叫 requestData()
+  private chunkTimer: ReturnType<typeof setInterval> | null = null
 
   // 事件回調
   private onChunkCallback?: (chunk: AudioChunk) => void
@@ -91,7 +93,7 @@ export class AudioRecorder {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          sampleRate: 16000, // 16kHz 適合語音辨識
+          // sampleRate: 16000 // 移除硬性約束，避免部分瀏覽器立即終止錄音
         }
       })
 
@@ -127,9 +129,21 @@ export class AudioRecorder {
       // 設定事件處理器
       this.setupMediaRecorderEvents()
 
-      // 開始錄音，使用 MediaRecorder 的自動切片功能
-      // 這比手動 requestData() 更可靠且簡潔
-      this.mediaRecorder.start(this.config.chunkInterval)
+      // Safari 在使用 timeSlice 參數時，可能導致 MediaRecorder 立即產生空片段並停止。
+      // 因此改為不傳入 timeSlice，改由手動定時呼叫 requestData() 保持跨瀏覽器穩定性。
+      this.mediaRecorder.start() // 不給 timeSlice，啟動後每 chunkInterval 主動 requestData
+
+      // 啟動定時器，定時要求資料切片
+      this.chunkTimer = setInterval(() => {
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+          try {
+            this.mediaRecorder.requestData()
+          } catch (err) {
+            console.warn('⚠️ requestData 失敗:', err)
+          }
+        }
+      }, this.config.chunkInterval)
+
       this.startTime = Date.now()
       this.sequence = 0
 
@@ -147,6 +161,11 @@ export class AudioRecorder {
   stopRecording(): void {
     if (this.state !== 'recording') {
       return
+    }
+
+    if (this.chunkTimer) {
+      clearInterval(this.chunkTimer)
+      this.chunkTimer = null
     }
 
     if (this.mediaRecorder) {
@@ -186,6 +205,11 @@ export class AudioRecorder {
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach(track => track.stop())
       this.mediaStream = null
+    }
+
+    if (this.chunkTimer) {
+      clearInterval(this.chunkTimer)
+      this.chunkTimer = null
     }
 
     this.mediaRecorder = null
@@ -235,6 +259,13 @@ export class AudioRecorder {
 
     this.mediaRecorder.onstop = () => {
       console.log('🛑 MediaRecorder 已停止')
+
+      // 如果並非由 stopRecording 呼叫導致，視為異常停止
+      if (this.state === 'recording') {
+        this.handleError(new Error('MediaRecorder 未預期停止'))
+        // 額外清理，確保資源釋放
+        this.cleanup()
+      }
     }
   }
 

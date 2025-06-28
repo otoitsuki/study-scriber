@@ -1,4 +1,8 @@
 {
+  "app/page.tsx -> ../lib/transcript-manager": {
+    "id": "app/page.tsx -> ../lib/transcript-manager",
+    "files": []
+  },
   "study-scriber.tsx -> react-simplemde-editor": {
     "id": "study-scriber.tsx -> react-simplemde-editor",
     "files": [

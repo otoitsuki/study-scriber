@@ -44,6 +44,8 @@ export function useTranscriptNew(): UseTranscriptNewReturn {
     const handleTranscript = useCallback((transcript: TranscriptMessage) => {
         if (transcript.type === 'transcript_complete') {
             setIsCompleted(true)
+            // 觸發狀態轉換
+            context.transition('PROCESSING_COMPLETED')
             return
         }
 

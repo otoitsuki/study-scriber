@@ -207,11 +207,24 @@ export default function Component() {
               onChange={(e) => setDraftTitle(e.target.value)}
               disabled={appData.state === 'processing' || appData.state === 'finished' || appData.isRecording}
             />
-            <div className="h-full editor-container flex-grow">
+            <div className="h-full editor-container flex-grow" data-testid="editor-container">
               <SimpleMDE
                 options={editorOptions}
                 value={appData.editorContent}
                 onChange={saveLocalDraft}
+                getMdeInstance={(instance) => {
+                  if (process.env.NODE_ENV !== 'production') {
+                    (window as any).theEditor = instance;
+                  }
+                }}
+              />
+              {/* 降級的 textarea 用於測試環境 */}
+              <textarea
+                data-testid="fallback-editor"
+                className="hidden"
+                value={appData.editorContent}
+                onChange={(e) => saveLocalDraft(e.target.value)}
+                placeholder="Start writing your notes..."
               />
             </div>
           </div>

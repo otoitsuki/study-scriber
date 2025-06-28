@@ -41,6 +41,7 @@ export interface StateTransitionContext {
         type: SessionType
     } | null
     error: string | null
+    pendingSessionTitle?: string  // 待建立會話的標題
 }
 
 // 狀態轉換結果
@@ -53,7 +54,7 @@ export interface StateTransitionResult {
 
 // 副作用類型
 export type StateTransitionSideEffect =
-    | { type: "CREATE_SESSION"; sessionType: SessionType }
+    | { type: "CREATE_SESSION"; sessionType: SessionType; title?: string }
     | { type: "UPGRADE_SESSION" }
     | { type: "FINISH_SESSION" }
     | { type: "START_RECORDING" }
@@ -160,7 +161,7 @@ export const STATE_TRANSITION_RULES: StateTransitionCondition[] = [
 
 // 狀態轉換副作用映射
 export const STATE_TRANSITION_SIDE_EFFECTS: Record<string, StateTransitionSideEffect[]> = {
-    // default -> recording_waiting: 建立 session 並開始錄音
+    // default -> recording_waiting: 建立會話、開始錄音並連接 WebSocket
     "default->recording_waiting->USER_START_RECORDING": [
         { type: "CREATE_SESSION", sessionType: "recording" },
         { type: "START_RECORDING" },

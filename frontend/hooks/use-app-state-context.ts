@@ -1,17 +1,20 @@
 "use client"
 
-import React, { createContext, useContext, useReducer, useCallback, useEffect } from "react"
+import React, { createContext, useContext, useReducer, useCallback, useEffect, useState } from "react"
 import { AppStateContextValue, initialContextState } from "../types/app-state-context"
 import { appStateReducer, AppStateReducerState } from "../lib/app-state-reducer"
 import { InitialStateLoader } from "../lib/initial-state-loader"
 import { AppState, SessionStatus, SessionType, TranscriptEntry } from "../types/app-state"
+import { StateMachineManager } from '../lib/state-machine';
+import { StateTransitionTrigger } from "../types/state-transitions";
 
 const AppStateContext = createContext<AppStateContextValue | null>(null)
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appStateReducer, initialContextState as AppStateReducerState)
+  const [stateMachineManager, setStateMachineManager] = useState<StateMachineManager | null>(null);
 
-  // 載入初始狀態
+  // 載入初始狀態並初始化狀態機
   useEffect(() => {
     console.log('🔄 [AppStateProvider] 載入初始狀態...')
 
@@ -28,6 +31,16 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         if (initialAppData.session) {
           dispatch({ type: "SET_SESSION", payload: initialAppData.session })
         }
+
+        // 初始化狀態機
+        const smManager = new StateMachineManager({
+          currentState: initialAppData.state,
+          isRecording: initialAppData.isRecording,
+          transcriptCount: initialAppData.transcriptEntries.length,
+          session: initialAppData.session || null,
+          error: null
+        });
+        setStateMachineManager(smManager);
 
         console.log('✅ [AppStateProvider] 初始狀態載入完成:', {
           state: initialAppData.state,
@@ -57,6 +70,31 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }, [state.appData])
+
+  // 將狀態變更同步到狀態機
+  useEffect(() => {
+    if (stateMachineManager) {
+      stateMachineManager.getStateMachine().updateContext({
+        currentState: state.appData.state,
+        isRecording: state.appData.isRecording,
+        transcriptCount: state.appData.transcriptEntries.length,
+        session: state.appData.session,
+        error: state.error
+      });
+    }
+  }, [state, stateMachineManager]);
+
+  const transition = useCallback((trigger: StateTransitionTrigger) => {
+    if (!stateMachineManager) {
+      console.error("狀態機尚未初始化");
+      return null;
+    }
+    const result = stateMachineManager.getStateMachine().transition(trigger);
+    if (result.success) {
+      dispatch({ type: 'SET_APP_STATE', payload: result.newState });
+    }
+    return result;
+  }, [stateMachineManager]);
 
   const setState = useCallback((newState: AppState) => {
     dispatch({ type: "SET_STATE", payload: newState })
@@ -118,6 +156,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     resetState,
     setLoading,
     setError,
+    transition,
   }
 
   return React.createElement(

@@ -97,12 +97,12 @@ async function withRetry<T>(
       if (axios.isAxiosError(error)) {
         // 不可重試的錯誤，立即失敗
         if (!isRetriableError(error)) {
-          console.log(`❌ [API重試] ${context} 遇到不可重試錯誤:`, {
+          console.log(`❌ [API重試] ${context} 遇到不可重試錯誤，立即終止:`, {
             status: error.response?.status,
             code: error.code,
-            message: error.message
-          })
-          throw error
+            message: error.message,
+          });
+          throw error;
         }
 
         // 最後一次嘗試失敗

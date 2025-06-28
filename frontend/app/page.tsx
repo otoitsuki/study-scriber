@@ -5,6 +5,13 @@ import Component from "../study-scriber"
 
 // 添加全局除錯功能
 if (typeof window !== 'undefined') {
+  // 立即初始化 TranscriptManager，確保在測試環境中可用
+  import('../lib/transcript-manager').then(({ transcriptManager }) => {
+    // 確保 TranscriptManager 已暴露到 window
+    ; (window as any).transcriptManager = transcriptManager
+    console.log('✅ TranscriptManager 已初始化並暴露到 window')
+  });
+
   (window as any).debugTranscript = () => {
     const testMessage = {
       type: 'transcript_segment',
