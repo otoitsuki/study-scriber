@@ -147,18 +147,79 @@ if (typeof window !== 'undefined') {
     window.location.reload();
   };
 
+  // 新增：診斷 WebSocket 和狀態
+  (window as any).diagnose = () => {
+    console.log('🔍 ========== 診斷開始 ==========');
+
+    // 1. 檢查 appData 狀態
+    const appData = (window as any).appData;
+    console.log('📊 [1] appData 狀態:', {
+      state: appData?.state,
+      isRecording: appData?.isRecording,
+      transcriptEntries: appData?.transcriptEntries?.length || 0,
+      session: appData?.session
+    });
+
+    // 2. 檢查 recording hook 狀態
+    const recordingHook = (window as any).recordingHook;
+    if (recordingHook) {
+      console.log('🎤 [2] recording hook 狀態:', {
+        isRecording: recordingHook.isRecording,
+        transcriptsCount: recordingHook.transcripts?.length || 0,
+        transcripts: recordingHook.transcripts
+      });
+    } else {
+      console.error('❌ [2] recording hook 未找到');
+    }
+
+    // 3. 檢查 TranscriptManager 狀態
+    const manager = (window as any).transcriptManager;
+    if (manager) {
+      const sessionId = appData?.session?.id;
+      if (sessionId) {
+        console.log('📡 [3] TranscriptManager 狀態:', {
+          sessionId,
+          isConnected: manager.isConnected(sessionId),
+          connectionCount: manager.getConnectionCount(),
+          listeners: manager.listeners.get(sessionId)?.size || 0
+        });
+
+        // 檢查 WebSocket 詳情
+        const ws = manager.connections.get(sessionId);
+        if (ws) {
+          console.log('🔌 [4] WebSocket 詳情:', {
+            readyState: ws.readyState,
+            isConnected: ws.isConnected,
+            url: ws.url
+          });
+        } else {
+          console.error('❌ [4] WebSocket 未找到');
+        }
+      } else {
+        console.error('❌ [3] session ID 未定義');
+      }
+    } else {
+      console.error('❌ [3] TranscriptManager 未找到');
+    }
+
+    console.log('🔍 ========== 診斷結束 ==========');
+  };
+
   // 新增：強制 React 重新渲染
   (window as any).forceUpdate = () => {
     console.log('🔄 強制 React 重新渲染...');
 
     // 方法 1：創建一個微小的狀態變化來觸發重新渲染
-    const originalRecordingTime = window.appData.recordingTime;
-    window.appData.recordingTime = originalRecordingTime + 0.1;
+    const appData = (window as any).appData;
+    if (appData) {
+      const originalRecordingTime = appData.recordingTime;
+      appData.recordingTime = originalRecordingTime + 0.1;
 
-    setTimeout(() => {
-      window.appData.recordingTime = originalRecordingTime;
-      console.log('✅ 強制更新完成');
-    }, 100);
+      setTimeout(() => {
+        appData.recordingTime = originalRecordingTime;
+        console.log('✅ 強制更新完成');
+      }, 100);
+    }
 
     // 方法 2：如果上面不工作，重新載入頁面
     console.log('如果UI還是沒有更新，將在3秒後重新載入頁面...');

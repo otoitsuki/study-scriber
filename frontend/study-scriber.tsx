@@ -6,6 +6,7 @@ import { useMemo, useState, useEffect } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { RotateCcw, Download } from "lucide-react"
+import { useRecording } from "./hooks/use-recording"
 
 // 動態匯入 SimpleMDE 以避免 SSR 問題
 const SimpleMDE = dynamic(() => import("react-simplemde-editor"), {
@@ -29,7 +30,9 @@ export default function Component() {
     saveLocalDraft,
     session,
     recordingError,
-    transcriptError
+    transcriptError,
+    createNoteSession,
+    sessionLoading,
   } = useAppState()
   const [draftTitle, setDraftTitle] = useState("")
 
@@ -49,6 +52,12 @@ export default function Component() {
       (window as any).session = session;
     }
   }, [appData, session])
+
+  // 暴露 recording hook 到 window 以便調試
+  const recording = useRecording()
+  if (typeof window !== 'undefined') {
+    (window as any).recordingHook = recording
+  }
 
   const editorOptions = useMemo(() => {
     return {
