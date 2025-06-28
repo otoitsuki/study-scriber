@@ -36,6 +36,33 @@ export default function Component() {
   } = useAppState()
   const [draftTitle, setDraftTitle] = useState("")
 
+  // 檢查並清理異常的 localStorage 狀態
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const appStateData = localStorage.getItem('app_state_v1')
+      if (appStateData) {
+        try {
+          const parsedState = JSON.parse(appStateData)
+          console.log("🔍 [StudyScriber] 檢查 localStorage 狀態:", parsedState)
+
+          // 如果狀態是異常的錄音狀態，清除它
+          if (parsedState.state && ['recording_waiting', 'recording_active', 'processing'].includes(parsedState.state)) {
+            console.log("🧹 [StudyScriber] 清除異常的 localStorage 狀態")
+            localStorage.removeItem('app_state_v1')
+            localStorage.removeItem('last_session')
+            // 刷新頁面以重新初始化
+            window.location.reload()
+            return
+          }
+        } catch (error) {
+          console.error("❌ [StudyScriber] 解析 localStorage 失敗:", error)
+          localStorage.removeItem('app_state_v1')
+          localStorage.removeItem('last_session')
+        }
+      }
+    }
+  }, [])
+
   // 追蹤狀態流轉
   console.log("[DEBUG] appData.state:", appData.state)
   console.log("[DEBUG] appData.isRecording:", appData.isRecording)

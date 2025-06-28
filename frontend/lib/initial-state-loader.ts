@@ -31,11 +31,18 @@ export class InitialStateLoader {
             const savedAppState = this.loadSavedAppState()
 
             // 修正：如果儲存的狀態是暫時性或已完成的，則重置為預設狀態
+            console.log('🔍 [InitialStateLoader] 檢查儲存的狀態:', {
+                savedState: savedAppState?.state,
+                shouldReset: savedAppState?.state && ['recording_waiting', 'recording_active', 'processing', 'finished'].includes(savedAppState.state)
+            })
+
             const validInitialState =
                 savedAppState?.state &&
                     !['recording_waiting', 'recording_active', 'processing', 'finished'].includes(savedAppState.state)
                     ? savedAppState.state
                     : 'default'
+
+            console.log('🔍 [InitialStateLoader] 最終初始狀態:', validInitialState)
 
             const initialAppData: AppData = {
                 state: validInitialState,
