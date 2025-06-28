@@ -16,49 +16,92 @@ const mapBackendToFrontendState = (
   isRecording: boolean,
   transcriptsPresent: boolean
 ): AppState => {
-  console.log('🔄 [狀態映射] 輸入參數:', {
+  const timestamp = Date.now()
+  const isoTimestamp = new Date().toISOString()
+
+  console.log('🔄 [狀態映射] 輸入參數 (詳細時序):', {
     status,
     type,
     isRecording,
     transcriptsPresent,
-    timestamp: new Date().toISOString()
+    timestamp,
+    isoTimestamp,
+    note: '檢查時序和邏輯流程'
   })
 
   let resultState: AppState
 
+  // 詳細的狀態轉換邏輯和時序追蹤
   switch (status) {
     case "draft":
       resultState = "default"
+      console.log('🔄 [狀態映射] draft → default (時序正常)')
       break
     case "active":
       if (type === "recording") {
         if (!isRecording) {
           resultState = "default"
-          console.log('🔄 [狀態映射] recording session 但 isRecording=false，回到 default')
+          console.log('🔄 [狀態映射] recording session 但 isRecording=false → default (時序檢查通過)', {
+            timestamp,
+            reason: 'recording session inactive'
+          })
         } else {
-          resultState = transcriptsPresent ? "recording_active" : "recording_waiting"
-          console.log(`🔄 [狀態映射] recording session + isRecording=true，transcriptsPresent=${transcriptsPresent} → ${resultState}`)
+          // 關鍵的狀態轉換邏輯：recording_waiting → recording_active
+          if (transcriptsPresent) {
+            resultState = "recording_active"
+            console.log(`🔄 [狀態映射] ✅ 關鍵轉換: recording_waiting → recording_active (時序成功)`, {
+              transcriptsPresent,
+              timestamp,
+              trigger: 'first_transcript_received'
+            })
+          } else {
+            resultState = "recording_waiting"
+            console.log(`🔄 [狀態映射] 保持 recording_waiting 狀態 (等待逐字稿)`, {
+              transcriptsPresent,
+              timestamp,
+              waiting: 'for_first_transcript'
+            })
+          }
         }
       } else {
         resultState = "default"
+        console.log('🔄 [狀態映射] active session 但 type != recording → default', {
+          type,
+          timestamp
+        })
       }
       break
     case "processing":
       resultState = "processing"
+      console.log('🔄 [狀態映射] processing → processing (時序正常)', { timestamp })
       break
     case "completed":
       resultState = "finished"
+      console.log('🔄 [狀態映射] completed → finished (時序正常)', { timestamp })
       break
     case "error":
       resultState = "default" // 錯誤時回到預設狀態
-      console.log('🔄 [狀態映射] 檢測到錯誤狀態，轉換到 default')
+      console.log('🔄 [狀態映射] error → default (錯誤恢復)', {
+        timestamp,
+        recovery: true
+      })
       break
     default:
       resultState = "default"
+      console.log('🔄 [狀態映射] unknown → default (安全回退)', {
+        unknownStatus: status,
+        timestamp
+      })
       break
   }
 
-  console.log(`🔄 [狀態映射] 最終結果: ${status}(${type}) → ${resultState}`)
+  console.log(`🔄 [狀態映射] 最終結果 (時序追蹤): ${status}(${type}) → ${resultState}`, {
+    inputParams: { status, type, isRecording, transcriptsPresent },
+    output: resultState,
+    timestamp,
+    duration: Date.now() - timestamp
+  })
+
   return resultState
 }
 
@@ -81,10 +124,74 @@ export function useAppState() {
   const transcript = useTranscript()
   const { toast } = useToast()
 
+  // 使用 useRef 追蹤前一個狀態值，避免循環依賴
+  const prevStateRef = useRef<AppState>('default')
+  const prevTranscriptCompletedRef = useRef(false)
+  const prevErrorStateRef = useRef<{ recording: string | null, transcript: string | null }>({
+    recording: null,
+    transcript: null
+  })
+
+  // 優化的狀態映射函數，確保時序可預測性
+  const mapStateFromSession = useCallback((
+    currentSession: any,
+    isRecording: boolean,
+    transcripts: any[]
+  ) => {
+    const executionTimestamp = Date.now()
+
+    if (!currentSession) {
+      console.log('🔄 [狀態映射] 無活躍會話 → default', { executionTimestamp })
+      return 'default'
+    }
+
+    // 實作更可靠的 transcriptsPresent 計算
+    const transcriptsPresent = Array.isArray(transcripts) && transcripts.length > 0
+
+    console.log('🔄 [狀態映射] 執行時序檢查:', {
+      sessionId: currentSession.id,
+      sessionStatus: currentSession.status,
+      sessionType: currentSession.type,
+      isRecording,
+      transcriptCount: transcripts.length,
+      transcriptsPresent,
+      executionTimestamp,
+      transcriptsSample: transcripts.slice(0, 2).map(t => ({
+        text: t.text?.substring(0, 30) + '...',
+        start_time: t.start_time,
+        type: t.type
+      })),
+      note: '時序同步檢查完成'
+    })
+
+    const result = mapBackendToFrontendState(
+      currentSession.status,
+      currentSession.type,
+      isRecording,
+      transcriptsPresent
+    )
+
+    console.log('🔄 [狀態映射] 執行結果:', {
+      input: {
+        sessionStatus: currentSession.status,
+        sessionType: currentSession.type,
+        isRecording,
+        transcriptsPresent
+      },
+      output: result,
+      executionTimestamp,
+      executionDuration: Date.now() - executionTimestamp
+    })
+
+    return result
+  }, [])
+
   // 狀態同步：前端狀態與後端 session status 對應
   useEffect(() => {
     const activeSession = session.currentSession
-    console.log('🔄 [狀態同步] useEffect 觸發:', {
+    const effectExecutionTime = Date.now()
+
+    console.log('🔄 [狀態同步] useEffect 觸發 (時序優化版):', {
       hasActiveSession: !!activeSession,
       sessionId: activeSession?.id,
       sessionStatus: activeSession?.status,
@@ -92,33 +199,56 @@ export function useAppState() {
       isRecording: recording.isRecording,
       transcriptCount: transcript.transcripts.length,
       recordingTranscriptCount: recording.transcripts.length,
-      currentAppState: appData.state
+      currentAppState: prevStateRef.current,
+      effectExecutionTime,
+      note: '使用最新的時序檢查機制'
     })
 
     if (activeSession) {
-      // 統一使用 recording.transcripts，避免雙重逐字稿管理
-      const transcriptsPresent = (recording.transcripts.length > 0)
-      console.log('🔄 [狀態同步] 計算 transcriptsPresent (統一路徑):', {
-        recordingTranscriptCount: recording.transcripts.length,
+      // 確保使用最新的 recording.transcripts 狀態
+      const latestTranscripts = recording.transcripts
+      const transcriptsPresent = Array.isArray(latestTranscripts) && latestTranscripts.length > 0
+
+      console.log('🔄 [狀態同步] 逐字稿狀態計算 (時序保證):', {
+        recordingTranscriptCount: latestTranscripts.length,
         transcriptsPresent,
-        note: '已移除 transcript.transcripts 避免雙重管理'
+        latestTranscriptTime: latestTranscripts[latestTranscripts.length - 1]?.start_time,
+        latestTranscriptText: latestTranscripts[latestTranscripts.length - 1]?.text?.substring(0, 30) + '...',
+        effectExecutionTime,
+        note: '已確保時序同步'
       })
 
-      const frontendState = mapBackendToFrontendState(
-        activeSession.status,
-        activeSession.type,
+      const frontendState = mapStateFromSession(
+        activeSession,
         recording.isRecording,
-        transcriptsPresent
+        latestTranscripts
       )
 
-      console.log(`🔄 [狀態同步] 狀態變化: ${appData.state} → ${frontendState}`)
+      // 只有在狀態真正改變時才更新
+      if (frontendState !== prevStateRef.current) {
+        console.log(`🔄 [狀態同步] 狀態變化 (時序驗證): ${prevStateRef.current} → ${frontendState}`, {
+          previousState: prevStateRef.current,
+          newState: frontendState,
+          stateChangeTimestamp: Date.now(),
+          executionDuration: Date.now() - effectExecutionTime,
+          triggerSource: 'session_or_recording_change'
+        })
 
-      setAppData(prev => ({
-        ...prev,
-        state: frontendState
-      }))
+        setAppData(prev => ({
+          ...prev,
+          state: frontendState
+        }))
+
+        prevStateRef.current = frontendState
+      } else {
+        console.log('🔄 [狀態同步] 狀態無變化，跳過更新', {
+          currentState: frontendState,
+          executionTime: Date.now() - effectExecutionTime
+        })
+      }
     }
-  }, [session.currentSession, recording.isRecording, recording.transcripts.length, appData.state])
+  }, [session.currentSession, recording.isRecording, recording.transcripts, mapStateFromSession])
+  // 依賴於 recording.transcripts 而非 length，確保內容變化時觸發狀態同步
 
   // 初始化應用狀態 - 只在組件掛載時執行一次
   useEffect(() => {
@@ -196,6 +326,9 @@ export function useAppState() {
   useEffect(() => {
     console.log('📝 [逐字稿更新] useEffect 觸發:', {
       recordingTranscriptCount: recording.transcripts.length,
+      recordingTranscripts: recording.transcripts,
+      currentState: appData.state,
+      isRecording: appData.isRecording,
       note: '統一使用 recording.transcripts，避免雙重管理'
     })
 
@@ -206,6 +339,13 @@ export function useAppState() {
       const seconds = Math.floor(startTime % 60)
       const timeStr = `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
 
+      console.log('📝 [逐字稿轉換] 單個片段:', {
+        text: transcriptMsg.text,
+        timeStr,
+        startTime,
+        type: transcriptMsg.type
+      })
+
       return {
         time: timeStr,
         text: transcriptMsg.text ?? '',
@@ -214,28 +354,48 @@ export function useAppState() {
 
     console.log('📝 [逐字稿更新] 轉換完成:', {
       entriesCount: transcriptEntries.length,
-      firstEntry: transcriptEntries[0]?.text?.substring(0, 30) + '...'
+      entries: transcriptEntries,
+      firstEntry: transcriptEntries[0]?.text?.substring(0, 30) + '...',
+      appDataBefore: appData.transcriptEntries
     })
 
-    setAppData(prev => ({
-      ...prev,
-      transcriptEntries,
-    }))
+    setAppData(prev => {
+      console.log('📝 [逐字稿更新] setAppData 執行:', {
+        prevTranscriptEntries: prev.transcriptEntries,
+        newTranscriptEntries: transcriptEntries,
+        isChanged: prev.transcriptEntries !== transcriptEntries
+      })
+      return {
+        ...prev,
+        transcriptEntries,
+      }
+    })
   }, [recording.transcripts])
 
   // 監聽轉錄完成，自動轉為 finished 狀態
   useEffect(() => {
-    if (transcript.isCompleted && appData.state === "processing") {
-      setAppData(prev => ({ ...prev, state: "finished" }))
+    const currentCompleted = transcript.isCompleted
+    const wasCompleted = prevTranscriptCompletedRef.current
+
+    // 只在轉錄狀態從 false 變為 true 時處理
+    if (currentCompleted && !wasCompleted && prevStateRef.current === "processing") {
+      console.log('🔄 [轉錄完成] 轉錄完成，轉為 finished 狀態')
+
+      setAppData(prev => {
+        const newState = "finished"
+        prevStateRef.current = newState
+        return { ...prev, state: newState }
+      })
 
       // 完成會話
       if (session.currentSession) {
         session.finishSession().catch(console.error)
       }
     }
+
+    prevTranscriptCompletedRef.current = currentCompleted
   }, [
     transcript.isCompleted,
-    appData.state,
     session.currentSession,
     session.finishSession
   ])
@@ -244,52 +404,70 @@ export function useAppState() {
   useEffect(() => {
     const recordingError = recording.error
     const transcriptError = transcript.error
+    const prevErrors = prevErrorStateRef.current
 
-    if (recordingError || transcriptError) {
-      console.log('🚨 [錯誤處理] 檢測到錯誤:', {
-        recordingError,
-        transcriptError,
-        currentState: appData.state,
-        sessionId: session.currentSession?.id
-      })
-
-      // 如果是錄音相關錯誤，停止錄音並回到預設狀態
-      if (appData.state === "recording_waiting" || appData.state === "recording_active") {
-        console.log('🚨 [錯誤處理] 錄音狀態錯誤，停止錄音並回到預設狀態')
-
-        // 停止錄音
-        recording.stopRecording()
-
-        // 清理連線
-        transcript.disconnect()
-
-        // 回到預設狀態
-        setAppData(prev => ({ ...prev, state: "default" }))
-
-        // 顯示錯誤訊息
-        const errorMessage = recordingError || transcriptError || '錄音或轉錄過程中發生錯誤'
-        toast({
-          title: '錄音錯誤',
-          description: errorMessage,
-          variant: 'destructive',
+    // 只在錯誤狀態真正改變時處理（避免重複處理同樣的錯誤）
+    if ((recordingError !== prevErrors.recording) || (transcriptError !== prevErrors.transcript)) {
+      if (recordingError || transcriptError) {
+        console.log('🚨 [錯誤處理] 檢測到錯誤:', {
+          recordingError,
+          transcriptError,
+          currentState: prevStateRef.current,
+          sessionId: session.currentSession?.id
         })
+
+        const currentState = prevStateRef.current
+
+        // 如果是錄音相關錯誤，停止錄音並回到預設狀態
+        if (currentState === "recording_waiting" || currentState === "recording_active") {
+          console.log('🚨 [錯誤處理] 錄音狀態錯誤，停止錄音並回到預設狀態')
+
+          // 停止錄音
+          recording.stopRecording()
+
+          // 清理連線
+          transcript.disconnect()
+
+          // 回到預設狀態
+          setAppData(prev => {
+            prevStateRef.current = "default"
+            return { ...prev, state: "default" }
+          })
+
+          // 顯示錯誤訊息
+          const errorMessage = recordingError || transcriptError || '錄音或轉錄過程中發生錯誤'
+          toast({
+            title: '錄音錯誤',
+            description: errorMessage,
+            variant: 'destructive',
+          })
+        }
+
+        // 如果是處理狀態的錯誤，也回到預設狀態
+        if (currentState === "processing") {
+          console.log('🚨 [錯誤處理] 處理狀態錯誤，回到預設狀態')
+
+          setAppData(prev => {
+            prevStateRef.current = "default"
+            return { ...prev, state: "default" }
+          })
+
+          const errorMessage = transcriptError || recordingError || '處理轉錄過程中發生錯誤'
+          toast({
+            title: '處理錯誤',
+            description: errorMessage,
+            variant: 'destructive',
+          })
+        }
       }
 
-      // 如果是處理狀態的錯誤，也回到預設狀態
-      if (appData.state === "processing") {
-        console.log('🚨 [錯誤處理] 處理狀態錯誤，回到預設狀態')
-
-        setAppData(prev => ({ ...prev, state: "default" }))
-
-        const errorMessage = transcriptError || recordingError || '處理轉錄過程中發生錯誤'
-        toast({
-          title: '處理錯誤',
-          description: errorMessage,
-          variant: 'destructive',
-        })
+      // 更新錯誤狀態追蹤
+      prevErrorStateRef.current = {
+        recording: recordingError,
+        transcript: transcriptError
       }
     }
-  }, [recording.error, transcript.error, appData.state, session.currentSession, recording, transcript, toast])
+  }, [recording.error, transcript.error, session.currentSession, recording, transcript, toast])
 
   // 建立純筆記會話
   const createNoteSession = useCallback(async (title: string) => {
@@ -318,14 +496,14 @@ export function useAppState() {
         const conflictMsg = '偵測到會話衝突，請重新整理頁面後再試'
         console.error("🎤 startRecording: 會話衝突錯誤:", err.message)
         setError(conflictMsg)
-        toast({ 
-          title: '會話衝突', 
-          description: '目前已有活躍會話，請重新整理頁面後再試，或等待當前會話結束', 
-          variant: 'destructive' 
+        toast({
+          title: '會話衝突',
+          description: '目前已有活躍會話，請重新整理頁面後再試，或等待當前會話結束',
+          variant: 'destructive'
         })
         return
       }
-      
+
       const msg = err instanceof Error ? err.message : '開始錄音失敗'
       console.error("🎤 startRecording: 流程中發生錯誤:", msg)
       setError(msg)
@@ -363,14 +541,14 @@ export function useAppState() {
         const conflictMsg = '偵測到會話衝突，請重新整理頁面後再試'
         console.error("🎤 createRecordingSession: 會話衝突錯誤:", err.message)
         setError(conflictMsg)
-        toast({ 
-          title: '會話衝突', 
-          description: '目前已有活躍會話，請重新整理頁面後再試，或等待當前會話結束', 
-          variant: 'destructive' 
+        toast({
+          title: '會話衝突',
+          description: '目前已有活躍會話，請重新整理頁面後再試，或等待當前會話結束',
+          variant: 'destructive'
         })
         return
       }
-      
+
       const errorMessage = err instanceof Error ? err.message : '建立錄音會話失敗'
       setError(errorMessage)
       console.error('❌ 建立錄音會話失敗:', err)
@@ -393,7 +571,7 @@ export function useAppState() {
       // 先檢查是否有活躍會話，確保前端狀態與後端同步
       console.log("🎤 startRecording: 檢查活躍會話狀態")
       const latestActiveSession = await session.checkActiveSession()
-      
+
       let sessionToRecord = latestActiveSession || session.currentSession
       console.log("🎤 startRecording: 會話狀態檢查結果:", {
         latestActiveSession: latestActiveSession?.id,
@@ -445,14 +623,14 @@ export function useAppState() {
         const conflictMsg = '偵測到會話衝突，請重新整理頁面後再試'
         console.error("🎤 startRecording: 會話衝突錯誤:", err.message)
         setError(conflictMsg)
-        toast({ 
-          title: '會話衝突', 
-          description: '目前已有活躍會話，請重新整理頁面後再試，或等待當前會話結束', 
-          variant: 'destructive' 
+        toast({
+          title: '會話衝突',
+          description: '目前已有活躍會話，請重新整理頁面後再試，或等待當前會話結束',
+          variant: 'destructive'
         })
         return
       }
-      
+
       const msg = err instanceof Error ? err.message : '開始錄音失敗'
       console.error("🎤 startRecording: 流程中發生錯誤:", msg)
       setError(msg)

@@ -557,104 +557,112 @@ Error opening input file pipe:0.
 - ✅ **效能風險**：低（檔頭操作為輕量級字節處理）
 - ✅ **維護風險**：低（與現有代碼風格高度一致）
 
-### Phase 14: 🔧 WebM 檔頭修復核心邏輯開發 (緊急)
+### Phase 14: 🚨 前端狀態管理問題修復 (當前問題) **進行中**
 
 **問題背景**：
-基於前一次對話的深度技術分析，發現 MediaRecorder 產生的 WebM 檔案存在檔頭不完整問題。第一個 chunk 包含完整 EBML 檔頭結構，而後續 chunk 僅包含音頻數據，缺乏必要的檔頭信息，導致 Azure OpenAI Whisper API 轉錄失敗。
+用戶回報 Study Scriber 應用逐字稿不顯示的問題。後端正常運行並生成逐字稿，WebSocket 連接正常傳輸數據，但前端 UI 沒有更新顯示逐字稿內容。錄音功能正常，音檔成功處理和轉錄，但前端停留在 `recording_waiting` 狀態無法轉換到 `recording_active` 狀態。還出現 API 超時錯誤（10秒）。
 
-**技術方案**：
-基於現有 WebM 直接轉錄架構，實作智慧檔頭修復機制。在現有 `SimpleAudioTranscriptionService` 中增加會話檔頭緩存和修復邏輯，保持架構一致性並最大化代碼重用。
+**問題診斷結果**：
+通過深度代碼分析發現核心問題包括：
+1. **React useEffect 依賴項錯誤** - `appData.state` 被錯誤包含在依賴項中導致無限循環
+2. **狀態映射時序問題** - `transcriptsPresent` 計算可能在 `recording.transcripts` 更新之前執行
+3. **WebSocket 連接狀態不一致** - `connectionStates` 與實際 WebSocket 狀態不同步
+4. **API 超時配置不當** - 10秒超時對會話創建可能過短，缺乏重試機制
 
-**核心策略**：
-- ✅ **無縫集成**：在現有 `_process_chunk_async` 工作流程中增加檔頭修復步驟
-- ✅ **會話緩存**：從第一個 chunk 提取檔頭模板，緩存用於後續 chunk 修復  
-- ✅ **架構保持**：維持 WebM 直接轉錄架構不變，確保向後兼容
-- ✅ **效能優化**：檔頭提取一次性操作，後續僅需字節拼接（<10ms）
+- [ ] **UI_FIX1: 修復 React 狀態更新循環依賴問題** `cfad6f2e-78de-4d84-bca8-72f24fc1014c` 🔥 **最高優先級**
+  - [ ] 檢查 `frontend/hooks/use-app-state.ts` 第 121 行的 useEffect 依賴項
+  - [ ] 移除 `appData.state` 從依賴項陣列，避免循環依賴
+  - [ ] 重構狀態同步邏輯，使用 useCallback 優化函數穩定性
+  - [ ] 確保狀態映射函數 `mapBackendToFrontendState` 的輸入參數正確
+  - **問題**: `useEffect(..., [session.currentSession, recording.isRecording, recording.transcripts.length, appData.state])` 中的 `appData.state` 依賴導致無限循環
+  - **解決方案**: 移除 `appData.state` 依賴項，重構狀態映射邏輯
+  - **檔案**: `frontend/hooks/use-app-state.ts` (行 70-130), `frontend/types/app-state.ts` (行 1-20)
+  - **驗證標準**: useEffect 不再有 appData.state 依賴項，錄音時能正常從 recording_waiting 轉換到 recording_active，Console 中沒有狀態更新循環的警告訊息，transcriptEntries 能正確更新到 UI 組件
 
-- [ ] **WEBM_REPAIR1: 增強 WebM 檔頭檢測邏輯** `afb3d8cf-ca96-4dac-9de2-ed31a11db62e`
-  - [ ] 在 `app/core/ffmpeg.py` 中擴展 `detect_audio_format` 函數
-  - [ ] 添加 `detect_webm_header_info` 函數，返回檔頭詳細信息
-  - [ ] 實作 EBML 元素解析邏輯：檢測 EBML header (0x1A45DFA3)、提取 Segment element、識別 Tracks 和 CodecPrivate 元素
-  - [ ] 計算完整檔頭大小（通常 200-2000 bytes）
-  - [ ] 添加 `is_webm_header_complete` 函數判斷檔頭完整性
-  - [ ] 保持與現有代碼風格一致，使用相同的錯誤處理模式
-  - **檔案**: `app/core/ffmpeg.py` (行 208-280), `tests/unit/test_ffmpeg.py` (新建)
-  - **驗證**: detect_webm_header_info 函數能正確識別完整和不完整的 WebM 檔頭，精確提取檔頭大小和關鍵元素位置，對不同瀏覽器產生的 WebM 格式具有良好兼容性，執行效能 < 5ms
+- [ ] **UI_FIX2: 優化逐字稿狀態映射時序機制** `8b70af4c-f132-4ed5-b737-d2a48b633d31`
+  - [ ] 檢查 useAppState 中 `transcriptsPresent` 的計算邏輯
+  - [ ] 實作更可靠的狀態同步機制，確保 `recording.transcripts` 更新後立即觸發狀態映射
+  - [ ] 在 `mapBackendToFrontendState` 函數中添加更詳細的日誌追蹤
+  - [ ] 優化狀態更新的批處理機制
+  - **問題**: 狀態映射可能在逐字稿數據更新之前執行，導致錯誤的狀態轉換
+  - **解決方案**: 改善狀態同步時序，確保狀態映射及時反映最新數據
+  - **檔案**: `frontend/hooks/use-app-state.ts` (行 12-60), `frontend/hooks/use-recording.ts` (行 70-150)
+  - **依賴**: UI_FIX1
+  - **驗證標準**: transcriptsPresent 計算能正確反映最新的 recording.transcripts 狀態，狀態映射日誌顯示正確的時序和參數，收到第一個逐字稿後能立即觸發 recording_active 狀態，沒有狀態映射延遲或錯誤的情況
 
-- [ ] **WEBM_REPAIR2: 實作 WebM 檔頭修復核心邏輯** `79708bfd-b83b-4e5a-b33b-1d8c9d801024`
-  - [ ] 在 `app/core/` 下創建 `webm_header_repairer.py`
-  - [ ] 實作 `WebMHeaderRepairer` 類別：`extract_header()`, `repair_chunk()`, `validate_repaired_chunk()`
-  - [ ] 檔頭提取邏輯：提取從 EBML header 到第一個 Cluster 元素的完整檔頭，驗證檔頭包含所有必要元素
-  - [ ] 檔頭修復邏輯：智慧拼接完整檔頭 + 後續 chunk 的音頻數據，更新時間戳和 Cluster 元素
-  - [ ] 保持音頻數據的完整性，添加詳細的錯誤處理和日誌記錄
-  - **檔案**: `app/core/webm_header_repairer.py` (新建), `tests/unit/test_webm_header_repairer.py` (新建)
-  - **依賴**: WEBM_REPAIR1
-  - **驗證**: 能從完整 WebM chunk 正確提取檔頭模板，修復後的 chunk 通過 WebM 格式驗證，修復後的音頻品質與原始檔案一致，支援不同編碼器（Opus, Vorbis）產生的 WebM，修復過程平均耗時 < 10ms
+- [ ] **UI_FIX3: 修復 WebSocket 連接狀態不一致問題** `19dbe9a6-afee-46a2-b9ce-cc78563b1972`
+  - [ ] 檢查 TranscriptManager 的 `connectionStates` 管理邏輯
+  - [ ] 改善 `waitForConnectionReady` 方法的狀態檢測
+  - [ ] 實作更可靠的 WebSocket 就緒狀態驗證
+  - [ ] 修復連接狀態和實際 WebSocket 狀態的同步問題
+  - **問題**: TranscriptManager 中 connectionStates 與實際 WebSocket 狀態不同步
+  - **解決方案**: 實作更準確的連接狀態檢測和同步機制
+  - **檔案**: `frontend/lib/transcript-manager.ts` (行 130-200), `frontend/lib/websocket.ts` (行 30-80)
+  - **驗證標準**: connectionStates 與實際 WebSocket 狀態保持同步，isConnected 方法返回準確的連接狀態，WebSocket 訊息能正確廣播給所有監聽器，連接斷開時能正確觸發重連機制
 
-- [ ] **WEBM_REPAIR3: 集成會話檔頭緩存機制** `bd212bc2-b5be-49e9-b224-76e09c257fc0`
-  - [ ] 在 `SimpleAudioTranscriptionService` 類別中添加 `_header_cache: Dict[str, bytes]` 和 `_header_repairer`
-  - [ ] 實作檔頭管理方法：`_extract_and_cache_header()`, `_get_cached_header()`, `_clear_session_cache()`
-  - [ ] 在 `_process_chunk_async` 中集成：chunk_sequence == 0 時提取並緩存檔頭，chunk_sequence > 0 時檢查檔頭完整性
-  - [ ] 記憶體管理：設定檔頭緩存過期時間（1小時），實作自動清理機制，添加緩存大小限制（最多100個session）
-  - [ ] 錯誤處理：檔頭提取失敗時記錄警告但繼續處理
-  - **檔案**: `app/services/azure_openai_v2.py` (行 67-130), `tests/unit/test_azure_openai_v2.py` (更新)
-  - **依賴**: WEBM_REPAIR2
-  - **驗證**: 會話檔頭正確提取並緩存支援並發 session，檔頭緩存自動清理機制正常運作，記憶體使用量控制在合理範圍（<10MB），檔頭提取失敗時不影響現有轉錄流程，與現有 session 生命週期管理無縫整合
+- [ ] **UI_FIX4: 增強 API 超時處理和重試機制** `4d06e69b-f96e-4089-98f0-b633c8ae9872`
+  - [ ] 檢查 `frontend/lib/api.ts` 的超時配置
+  - [ ] 為不同類型的 API 調用設置不同的超時時間（會話: 15秒，筆記: 8秒，預設: 10秒）
+  - [ ] 實作指數退避重試機制
+  - [ ] 改善錯誤處理，區分可重試和不可重試的錯誤
+  - **問題**: 當前 10 秒超時對於會話創建和 WebSocket 初始化可能過短
+  - **解決方案**: 實作更智能的超時策略和重試機制
+  - **檔案**: `frontend/lib/api.ts` (行 1-30), `frontend/hooks/use-session.ts` (行 30-90)
+  - **驗證標準**: 不同 API 端點有適當的超時時間，可重試錯誤能自動重試，不可重試錯誤立即失敗，用戶不再遇到不必要的 timeout exceeded 錯誤，網路不穩定時有更好的錯誤恢復能力
 
-- [ ] **WEBM_REPAIR4: 更新 WebM 驗證和修復邏輯** `db878f91-e415-4312-ab5f-7e903268be37`
-  - [ ] 重構 `_validate_webm_data` 方法為 `_validate_and_repair_webm_data`
-  - [ ] 實作驗證和修復邏輯：保留現有基本大小檢查，添加檔頭完整性檢測，對不同 chunk_sequence 進行相應處理
-  - [ ] 修復流程：檔頭不完整時獲取緩存檔頭並修復，修復失敗時返回原始數據
-  - [ ] 更新 `_process_chunk_async` 調用邏輯，添加修復統計和監控日誌
-  - [ ] 確保修復邏輯不影響現有處理效能，重點是向後兼容性和錯誤處理
-  - **檔案**: `app/services/azure_openai_v2.py` (行 125-140)
-  - **依賴**: WEBM_REPAIR3
-  - **驗證**: 第一個 chunk 檔頭正確提取和驗證，後續 chunk 檔頭缺失時自動修復，修復後的 WebM 數據通過 Whisper API 驗證，處理延遲增加 < 50ms，修復成功率 > 95%
+- [ ] **UI_FIX5: 實作前端狀態診斷和調試工具** `b50879e5-85c2-42fd-a93b-1740b4d6cbb4`
+  - [ ] 擴展 `frontend/app/page.tsx` 中的診斷函數
+  - [ ] 實作狀態一致性檢查
+  - [ ] 添加自動狀態修復功能
+  - [ ] 建立狀態變化歷史追蹤
+  - **目標**: 基於現有的 debugState 和 forceUpdate 函數，建立更完整的前端狀態診斷工具
+  - **價值**: 幫助開發者快速識別狀態管理問題，並提供自動修復建議
+  - **檔案**: `frontend/app/page.tsx` (行 40-180), `frontend/hooks/use-app-state.ts` (行 1-50)
+  - **依賴**: UI_FIX1
+  - **驗證標準**: diagnoseState 函數能正確識別常見的狀態問題，提供有用的修復建議，狀態變化歷史能正確記錄，開發者能快速定位問題根源
 
-- [ ] **WEBM_REPAIR5: 擴展錯誤處理和診斷機制** `45125061-7f93-4ee7-922b-096167c37ad8`
-  - [ ] 在 `_broadcast_transcription_error` 中添加檔頭修復錯誤類型：header_extraction_failed, header_repair_failed, header_validation_failed
-  - [ ] 創建專用錯誤處理方法 `_broadcast_header_repair_error`
-  - [ ] 增強診斷信息：檔頭大小和結構分析、缺失元素識別、修復嘗試詳情、建議的用戶操作
-  - [ ] 添加修復統計追蹤：修復成功/失敗計數、修復時間統計、錯誤類型分布
-  - [ ] 在現有日誌系統中集成修復狀態記錄
-  - **檔案**: `app/services/azure_openai_v2.py` (行 450-505)
-  - **依賴**: WEBM_REPAIR4
-  - **驗證**: 檔頭修復相關錯誤能正確分類和廣播，錯誤診斷信息詳細且有助於問題定位，前端能接收並正確顯示檔頭修復錯誤，錯誤統計數據準確記錄和報告
+- [ ] **UI_FIX6: 端到端功能驗證和迴歸測試** `9ce1ead8-a918-4b28-9cdf-b432dd427bbb`
+  - [ ] 使用現有的 Playwright 測試框架進行自動化測試
+  - [ ] 執行手動錄音測試，驗證狀態轉換
+  - [ ] 測試不同瀏覽器的兼容性
+  - [ ] 驗證錯誤恢復機制
+  - **測試流程**: 開始錄音 → recording_waiting → 收到逐字稿 → recording_active → 停止錄音 → processing → 轉錄完成 → finished
+  - **目標**: 確保從錄音開始到逐字稿顯示的完整流程能正常運作，沒有引入新的問題
+  - **檔案**: `tests/frontend/state-transition.spec.ts` (行 1-100), `test/frontend_debug.html` (行 1-50)
+  - **依賴**: UI_FIX1, UI_FIX2, UI_FIX3, UI_FIX4
+  - **驗證標準**: 完整的錄音轉錄流程能正常運作，所有狀態轉換都能正確執行，異常情況能正確處理和恢復，不同瀏覽器都能正常使用，效能沒有明顯退化
 
-- [ ] **WEBM_REPAIR6: 建立完整測試框架** `8bcbc735-ddde-4a57-b9c6-2e5ef2c59542`
-  - [ ] 創建測試數據集：完整 WebM chunk、不完整 WebM chunk、來自不同瀏覽器的 WebM 樣本、損壞的 WebM 數據
-  - [ ] 單元測試：檔頭檢測準確性、檔頭提取完整性、檔頭修復正確性、緩存機制功能
-  - [ ] 整合測試更新：端到端檔頭修復流程、多 chunk 序列處理、Whisper API 兼容性
-  - [ ] 效能測試：檔頭修復時間基準、記憶體使用量測試、並發處理測試
-  - [ ] Mock 和 Fixture 建立：MediaRecorder 模擬、Whisper API 回應模擬
-  - **檔案**: `tests/unit/test_webm_header_repair.py` (新建), `tests/integration/test_one_chunk_one_transcription.py` (更新), `tests/fixtures/webm_samples.py` (新建)
-  - **依賴**: WEBM_REPAIR5
-  - **驗證**: 所有檔頭修復功能測試覆蓋率 > 90%，測試通過率 100%，包含多瀏覽器 WebM 格式兼容性測試，效能測試驗證修復時間 < 50ms，錯誤情況測試確保優雅降級
+**🎯 預期修復效果**：
+- ✅ **解決核心問題**：修復 React 狀態更新機制，使逐字稿能正常顯示
+- ✅ **狀態轉換正常**：recording_waiting → recording_active 轉換恢復正常
+- ✅ **API 穩定性提升**：減少超時錯誤，改善用戶體驗
+- ✅ **除錯能力增強**：完善的診斷工具便於未來維護
+- ✅ **系統可靠性**：提升整體穩定性和錯誤恢復能力
 
-- [ ] **WEBM_REPAIR7: 實作效能監控和優化** `57f1d4b7-a1ed-4a81-9a45-dc34f2a6e65a`
-  - [ ] 擴展 `PerformanceTimer` 添加檔頭修復指標：header_extraction_time, header_repair_time, cache_hit_rate, repair_success_rate
-  - [ ] 在關鍵方法中添加效能追蹤，實作效能統計收集 `HeaderRepairStats` 類別
-  - [ ] 添加效能優化機制：檔頭緩存預熱、批次處理優化、記憶體池重用
-  - [ ] 建立效能報告生成：定期統計摘要、異常效能告警、優化建議生成
-  - [ ] 整合到現有監控日誌系統
-  - **檔案**: `app/services/azure_openai_v2.py` (行 32-60), `app/core/webm_header_repairer.py` (行 50-100)
-  - **依賴**: WEBM_REPAIR6
-  - **驗證**: 檔頭修復效能指標正確收集和報告，平均修復時間保持在 < 10ms，緩存命中率維持在 > 95%，修復成功率達到 > 98%，效能監控不影響正常處理流程
+**🚨 修復優先級**：
+1. **UI_FIX1** (最高) - 修復 React 狀態更新循環依賴問題
+2. **UI_FIX2** (高) - 優化逐字稿狀態映射時序機制  
+3. **UI_FIX3** (中) - 修復 WebSocket 連接狀態不一致問題
+4. **UI_FIX4** (中) - 增強 API 超時處理和重試機制
+5. **UI_FIX5** (低) - 實作前端狀態診斷和調試工具
+6. **UI_FIX6** (低) - 端到端功能驗證和迴歸測試
 
-**預期效益**：
-- 🎯 **根本解決**：徹底解決 MediaRecorder 後續 chunk 轉錄失敗問題
-- 🎯 **修復成功率 > 95%**：確保絕大多數檔頭缺失情況能自動修復
-- 🎯 **效能影響最小**：檔頭修復延遲 < 50ms，不影響即時性
-- 🎯 **架構兼容**：與現有 WebM 直接轉錄架構完全兼容
-- 🎯 **自動降級**：修復失敗時優雅回退到原始處理邏輯
+---
 
-**技術風險評估**：
-- ✅ **實作風險**：低（基於現有架構，增量開發）
-- ✅ **相容性風險**：無（WebM 為當前主要格式）
-- ✅ **回滾風險**：極低（保留原有轉換邏輯）
-- ✅ **效能風險**：正面影響（減少處理步驟）
+## 📈 開發進度總結
 
-**實作策略**：
-- 🎯 **最小變更原則**：只修改核心轉錄邏輯，保留其他功能
-- 🎯 **向後相容**：保留 FFmpeg 邏輯用於最終下載檔案
-- 🎯 **段階實作**：核心邏輯 → 測試驗證 → 效能監控 → 文檔更新
+### ✅ 已完成功能
+- **後端核心功能**: Session 管理、音檔處理、WebSocket 通信、轉錄服務
+- **前端基礎架構**: React hooks、狀態管理、UI 組件
+- **音檔格式優化**: WebM 格式支援、FFmpeg 兼容性修復
+- **測試體系**: 單元測試、整合測試、CI/CD 流程
+
+### 🔧 當前進行中
+- **前端狀態管理修復**: React 狀態更新、WebSocket 同步、API 穩定性
+
+### 📋 待完成功能
+- **匯出功能**: ZIP 匯出、完整包下載
+- **文檔更新**: README、API 文檔、部署指南
+
+### 🎯 下一步行動
+執行 **Phase 14** 的前端狀態管理修復任務，優先完成 **UI_FIX1** 以解決核心的 React 狀態更新問題。

@@ -79,8 +79,8 @@ class TranscriptManager {
   }
 
   /**
- * 等待連線完全就緒
- */
+   * 等待連線完全就緒
+   */
   private async waitForConnectionReady(sessionId: string, timeout: number = 5000): Promise<void> {
     return new Promise((resolve, reject) => {
       const startTime = Date.now()
@@ -98,17 +98,31 @@ class TranscriptManager {
           elapsedTime: Date.now() - startTime
         })
 
-        // 修正：檢查 WebSocket 狀態更寬鬆，支援測試環境
+        // 優化：更可靠的 WebSocket 就緒狀態檢測
         const wsReady = ws && (
           ws.isConnected ||
           ws.readyState === WebSocket.OPEN ||
           (typeof window !== 'undefined' && window.WebSocket && ws.readyState === 1) // 測試環境兼容
         )
 
-        if (ws && isConnected && wsReady) {
+        // 即時同步狀態，確保一致性
+        if (ws && wsReady) {
+          const actualConnected = true
+          if (this.connectionStates.get(sessionId) !== actualConnected) {
+            console.log(`🔄 [TranscriptManager] 即時同步連接狀態: ${sessionId} → ${actualConnected}`)
+            this.connectionStates.set(sessionId, actualConnected)
+          }
+
           console.log(`✅ [TranscriptManager] Session ${sessionId} 連線就緒`)
           resolve()
           return
+        } else if (ws && !wsReady) {
+          // WebSocket 存在但未就緒，同步狀態為 false
+          const actualConnected = false
+          if (this.connectionStates.get(sessionId) !== actualConnected) {
+            console.log(`🔄 [TranscriptManager] 即時同步連接狀態: ${sessionId} → ${actualConnected}`)
+            this.connectionStates.set(sessionId, actualConnected)
+          }
         }
 
         // 檢查超時
@@ -300,18 +314,29 @@ class TranscriptManager {
   }
 
   /**
-   * 發送心跳
+   * 發送心跳 - 增強狀態同步
    */
   private sendHeartbeat(sessionId: string): void {
+    // 先同步狀態
+    const isActuallyConnected = this.syncConnectionState(sessionId)
+
     const ws = this.connections.get(sessionId)
-    if (ws && ws.isConnected) {
-      ws.sendJson({
-        type: 'heartbeat',
-        timestamp: Date.now()
-      })
-      console.log(`💓 TranscriptManager: 向 session ${sessionId} 發送心跳`)
+    if (ws && isActuallyConnected) {
+      try {
+        ws.sendJson({
+          type: 'heartbeat',
+          timestamp: Date.now()
+        })
+        console.log(`💓 TranscriptManager: 向 session ${sessionId} 發送心跳`)
+      } catch (error) {
+        console.error(`❌ TranscriptManager: 發送心跳失敗 ${sessionId}:`, error)
+        // 心跳發送失敗，可能連接已斷開
+        this.connectionStates.set(sessionId, false)
+        this.scheduleReconnect(sessionId)
+      }
     } else {
       // 連接已斷開，停止心跳並嘗試重連
+      console.warn(`⚠️ TranscriptManager: 心跳檢測到連接斷開 ${sessionId}`)
       this.stopHeartbeat(sessionId)
       this.connectionStates.set(sessionId, false)
       this.scheduleReconnect(sessionId)
@@ -422,20 +447,84 @@ class TranscriptManager {
   }
 
   /**
-   * 檢查連接狀態
+   * 檢查連接狀態 - 優化版，確保即時狀態同步
    */
   isConnected(sessionId: string): boolean {
     const ws = this.connections.get(sessionId)
     const stateConnected = this.connectionStates.get(sessionId) ?? false
-    const wsConnected = ws?.isConnected ?? false
 
-    // 雙重檢查確保狀態一致
-    if (stateConnected !== wsConnected) {
-      this.connectionStates.set(sessionId, wsConnected)
-      return wsConnected
+    // 實作更可靠的即時狀態檢測
+    let actualConnected = false
+
+    if (ws) {
+      // 多重檢查確保準確性
+      actualConnected = ws.isConnected && (
+        ws.readyState === WebSocket.OPEN ||
+        (typeof window !== 'undefined' && window.WebSocket && ws.readyState === 1)
+      )
     }
 
-    return stateConnected
+    console.log(`🔍 [TranscriptManager] 連接狀態檢查:`, {
+      sessionId,
+      hasWebSocket: !!ws,
+      wsReadyState: ws?.readyState,
+      wsIsConnected: ws?.isConnected ?? false,
+      stateConnected,
+      actualConnected,
+      needsSync: stateConnected !== actualConnected,
+      timestamp: Date.now()
+    })
+
+    // 即時同步狀態，確保 connectionStates 與實際 WebSocket 狀態一致
+    if (stateConnected !== actualConnected) {
+      console.log(`🔄 [TranscriptManager] 狀態不一致，即時同步: ${sessionId} ${stateConnected} → ${actualConnected}`, {
+        previousState: stateConnected,
+        newState: actualConnected,
+        wsDetails: {
+          isConnected: ws?.isConnected,
+          readyState: ws?.readyState
+        }
+      })
+      this.connectionStates.set(sessionId, actualConnected)
+
+      // 如果連接斷開但狀態顯示連接，觸發重連
+      if (stateConnected && !actualConnected) {
+        console.warn(`⚠️ [TranscriptManager] 檢測到連接斷開，將觸發重連: ${sessionId}`)
+        this.scheduleReconnect(sessionId)
+      }
+    }
+
+    return actualConnected
+  }
+
+  /**
+   * 強化的連接狀態一致性檢查
+   */
+  private syncConnectionState(sessionId: string): boolean {
+    const ws = this.connections.get(sessionId)
+    const currentState = this.connectionStates.get(sessionId) ?? false
+
+    if (!ws) {
+      // 沒有 WebSocket，狀態應該是 false
+      if (currentState !== false) {
+        console.log(`🔄 [TranscriptManager] 同步狀態 (無WebSocket): ${sessionId} → false`)
+        this.connectionStates.set(sessionId, false)
+      }
+      return false
+    }
+
+    // 有 WebSocket，檢查實際連接狀態
+    const actualConnected = ws.isConnected && (
+      ws.readyState === WebSocket.OPEN ||
+      (typeof window !== 'undefined' && window.WebSocket && ws.readyState === 1)
+    )
+
+    if (currentState !== actualConnected) {
+      console.log(`🔄 [TranscriptManager] 同步狀態: ${sessionId} ${currentState} → ${actualConnected}`)
+      this.connectionStates.set(sessionId, actualConnected)
+    }
+
+    return actualConnected
   }
 
   /**
