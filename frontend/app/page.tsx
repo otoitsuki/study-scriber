@@ -172,35 +172,64 @@ if (typeof window !== 'undefined') {
       console.error('❌ [2] recording hook 未找到');
     }
 
+    // 2.5 檢查 session hook 狀態
+    const sessionHook = (window as any).sessionHook;
+    if (sessionHook) {
+      console.log('🔐 [2.5] session hook 狀態:', {
+        currentSession: sessionHook.currentSession,
+        isLoading: sessionHook.isLoading,
+        error: sessionHook.error
+      });
+    } else {
+      console.error('❌ [2.5] session hook 未找到');
+    }
+
     // 3. 檢查 TranscriptManager 狀態
     const manager = (window as any).transcriptManager;
-    if (manager) {
-      const sessionId = appData?.session?.id;
-      if (sessionId) {
-        console.log('📡 [3] TranscriptManager 狀態:', {
-          sessionId,
-          isConnected: manager.isConnected(sessionId),
-          connectionCount: manager.getConnectionCount(),
-          listeners: manager.listeners.get(sessionId)?.size || 0
-        });
+    const sessionId = appData?.session?.id || sessionHook?.currentSession?.id;
 
-        // 檢查 WebSocket 詳情
-        const ws = manager.connections.get(sessionId);
-        if (ws) {
-          console.log('🔌 [4] WebSocket 詳情:', {
-            readyState: ws.readyState,
-            isConnected: ws.isConnected,
-            url: ws.url
-          });
-        } else {
-          console.error('❌ [4] WebSocket 未找到');
-        }
-      } else {
-        console.error('❌ [3] session ID 未定義');
-      }
+    if (manager && sessionId) {
+      console.log('💬 [3] TranscriptManager 狀態:', {
+        isConnected: manager.isConnected(sessionId),
+        listeners: manager.listeners.size,
+        websocket: manager.websocket ? '存在' : '不存在',
+        sessionId: sessionId
+      });
     } else {
-      console.error('❌ [3] TranscriptManager 未找到');
+      console.error('❌ [3] session ID 未定義 或 TranscriptManager 未找到', {
+        manager: !!manager,
+        sessionId: sessionId
+      });
     }
+
+    // 4. 檢查 WebSocket 詳情
+    if (manager?.websocket) {
+      const ws = manager.websocket;
+      console.log('🔌 [4] WebSocket 詳情:', {
+        readyState: ws.readyState,
+        readyStateText: ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState],
+        url: ws.url,
+        bufferedAmount: ws.bufferedAmount,
+        protocol: ws.protocol
+      });
+    } else {
+      console.error('❌ [4] WebSocket 未建立');
+    }
+
+    // 5. 檢查 localStorage
+    console.log('💾 [5] localStorage 內容:', {
+      draft_note: localStorage.getItem('draft_note')?.substring(0, 100) + '...',
+      hasOtherSessionKeys: Object.keys(localStorage).filter(k => k.includes('session')).length > 0
+    });
+
+    // 6. 手動建立 WebSocket 連接測試
+    console.log('🧪 [6] 測試 WebSocket 連接...');
+    const testSessionId = sessionId || '23f6bbfe-a846-44db-ba1b-2751adafe0bc'; // 使用後端日誌中的 session ID
+    const wsUrl = `ws://localhost:8000/ws/transcript_feed/${testSessionId}`;
+    console.log('🧪 測試 URL:', wsUrl);
+
+    // 7. 檢查 appData 中所有可用的屬性
+    console.log('🔍 [7] appData 完整內容:', appData);
 
     console.log('🔍 ========== 診斷結束 ==========');
   };

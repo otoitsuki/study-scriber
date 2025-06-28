@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { RotateCcw, Download } from "lucide-react"
 import { useRecording } from "./hooks/use-recording"
+import { useSession } from "./hooks/use-session"
 
 // 動態匯入 SimpleMDE 以避免 SSR 問題
 const SimpleMDE = dynamic(() => import("react-simplemde-editor"), {
@@ -45,19 +46,36 @@ export default function Component() {
     console.log("[DEBUG] session: null")
   }
 
-  // 暴露 appData 到 window 對象用於調試
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      (window as any).appData = appData;
-      (window as any).session = session;
-    }
-  }, [appData, session])
+  // 添加調試功能到 window
+  if (typeof window !== 'undefined') {
+    (window as any).appData = appData
+  }
 
   // 暴露 recording hook 到 window 以便調試
   const recording = useRecording()
   if (typeof window !== 'undefined') {
     (window as any).recordingHook = recording
   }
+
+  // 暴露 session hook 到 window 以便調試
+  const sessionHook = useSession()
+  if (typeof window !== 'undefined') {
+    (window as any).sessionHook = sessionHook
+  }
+
+  useEffect(() => {
+    console.log("📱 StudyScriber: appData 更新:", {
+      state: appData.state,
+      isRecording: appData.isRecording,
+      recordingTime: appData.recordingTime,
+      transcriptEntries: appData.transcriptEntries,
+      editorContent: appData.editorContent,
+      session: session,
+      sessionLoading: sessionLoading,
+      recordingError: recordingError,
+      transcriptError: transcriptError,
+    })
+  }, [appData, session, sessionLoading, recordingError, transcriptError])
 
   const editorOptions = useMemo(() => {
     return {
