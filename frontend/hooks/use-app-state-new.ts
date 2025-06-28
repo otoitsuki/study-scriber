@@ -215,13 +215,30 @@ export function useAppStateNew() {
     dispatch({ type: 'SET_LOADING', payload: true })
 
     try {
+      // 如果當前狀態不是 default，先重置狀態
+      if (appData.state !== 'default') {
+        console.log("🔄 [useAppStateNew] 當前狀態非 default，先重置狀態:", appData.state)
+        dispatch({ type: 'RESET_STATE' })
+        // 清除相關狀態
+        recording.clearTranscripts()
+        transcript.clearTranscripts()
+        // 更新狀態機上下文
+        stateMachineManager.getStateMachine().updateContext({
+          currentState: 'default',
+          isRecording: false,
+          transcriptCount: 0,
+          session: null,
+          error: null,
+        });
+      }
+
       // 檢查是否有現有會話需要處理
       const latestActiveSession = await session.checkActiveSession()
       const currentSession = latestActiveSession || session.currentSession
 
       // 更新狀態機上下文，包含待建立會話的標題
       stateMachineManager.getStateMachine().updateContext({
-        currentState: appData.state,
+        currentState: 'default', // 確保從 default 狀態開始
         isRecording: appData.isRecording,
         transcriptCount: appData.transcriptEntries.length,
         session: currentSession,
@@ -237,7 +254,7 @@ export function useAppStateNew() {
           dispatch({ type: 'SET_SESSION', payload: upgradedSession })
           // 再次更新狀態機上下文
           stateMachineManager.getStateMachine().updateContext({
-            currentState: appData.state,
+            currentState: 'default', // 確保從 default 狀態開始
             isRecording: appData.isRecording,
             transcriptCount: appData.transcriptEntries.length,
             session: upgradedSession,
@@ -266,7 +283,7 @@ export function useAppStateNew() {
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false })
     }
-  }, [session, toast, dispatch, transition, stateMachineManager, appData.state, appData.isRecording, appData.transcriptEntries, error])
+  }, [session, toast, dispatch, transition, stateMachineManager, appData.state, appData.isRecording, appData.transcriptEntries, error, recording, transcript])
 
   // 升級會話為錄音模式
   const upgradeToRecording = useCallback(async () => {

@@ -78,6 +78,17 @@ export const STATE_TRANSITION_RULES: StateTransitionCondition[] = [
         }
     },
 
+    // 從 recording_waiting 重新開始錄音（處理重試情況）
+    {
+        currentState: "recording_waiting",
+        targetState: "recording_waiting",
+        trigger: "USER_START_RECORDING",
+        customValidator: (context) => {
+            // 允許在沒有 session 或 session 狀態異常時重新開始
+            return !context.session || context.session.status === "completed" || context.session.status === "error"
+        }
+    },
+
     // Session 建立完成後保持在 default 狀態
     {
         currentState: "default",
@@ -163,6 +174,13 @@ export const STATE_TRANSITION_RULES: StateTransitionCondition[] = [
 export const STATE_TRANSITION_SIDE_EFFECTS: Record<string, StateTransitionSideEffect[]> = {
     // default -> recording_waiting: 建立會話、開始錄音並連接 WebSocket
     "default->recording_waiting->USER_START_RECORDING": [
+        { type: "CREATE_SESSION", sessionType: "recording" },
+        { type: "START_RECORDING" },
+        { type: "CONNECT_WEBSOCKET" }
+    ],
+
+    // recording_waiting -> recording_waiting: 重新開始錄音（重試情況）
+    "recording_waiting->recording_waiting->USER_START_RECORDING": [
         { type: "CREATE_SESSION", sessionType: "recording" },
         { type: "START_RECORDING" },
         { type: "CONNECT_WEBSOCKET" }
