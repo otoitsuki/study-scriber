@@ -31,7 +31,12 @@ export function useAppStateNew() {
     transcriptCount: appData.transcriptEntries.length
   })
 
-  const [stateMachineManager] = useState(() => {
+  const stateMachineManagerRef = useRef<StateMachineManager | null>(null);
+
+  // 確保狀態機管理器只初始化一次，避免 React StrictMode 重複初始化
+  if (!stateMachineManagerRef.current) {
+    console.log('🔄 [useAppStateNew] 初始化狀態機管理器');
+
     const smManager = new StateMachineManager({
       currentState: appData.state,
       isRecording: appData.isRecording,
@@ -105,8 +110,10 @@ export function useAppStateNew() {
       }
     });
 
-    return smManager;
-  });
+    stateMachineManagerRef.current = smManager;
+  }
+
+  const stateMachineManager = stateMachineManagerRef.current;
 
   useEffect(() => {
     stateMachineManager.getStateMachine().updateContext({
