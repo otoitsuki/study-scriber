@@ -1,6 +1,6 @@
 "use client"
 
-import { TranscriptWebSocket, TranscriptMessage } from './websocket'
+import { TranscriptWebSocket, TranscriptMessage, WebSocketManager } from './websocket'
 import { useAppStore } from './app-store-zustand'
 import type { TranscriptEntry } from '../types/app-state'
 
@@ -149,16 +149,29 @@ export class TranscriptManager {
   private async establishConnection(sessionId: string): Promise<void> {
     const ws = new TranscriptWebSocket(sessionId)
 
-    // 設定訊息處理
-    ws.onMessage((message) => {
-      this.handleMessage(sessionId, message)
-    })
+    // 🧪 測試：跳過 TranscriptWebSocket 抽象層，直接使用 WebSocketManager 的 onMessage
+    // 註釋原來的設定，使用直接的原生 WebSocket 處理
+    // ws.onMessage((message) => {
+    //   this.handleMessage(sessionId, message)
+    // })
 
     // 設定連接關閉處理
     this.setupConnectionHandlers(ws, sessionId)
 
     // 連接 WebSocket
     await ws.connect()
+
+    // 直接使用 WebSocketManager 的 onMessage 來設置原生 onmessage
+    WebSocketManager.prototype.onMessage.call(ws, (evt: MessageEvent) => {
+      console.log('[WS] raw frame', evt.data?.slice?.(0, 100))
+      try {
+        const message = JSON.parse(evt.data)
+        console.log('[WS] parsed', message.type, message.text?.slice?.(0, 20))
+        this.handleMessage(sessionId, message)
+      } catch (error) {
+        console.error('[WS] parse error', error)
+      }
+    })
 
     // 儲存連接
     this.connections.set(sessionId, ws)
@@ -196,6 +209,16 @@ export class TranscriptManager {
    * 處理收到的訊息
    */
   private handleMessage(sessionId: string, message: any): void {
+    console.log('[T] raw', message.type, message.text?.slice(0, 20))
+
+    console.log('🚨 [TranscriptManager] handleMessage 被調用!', {
+      sessionId,
+      rawMessage: message,
+      messageType: typeof message,
+      messageKeys: Object.keys(message || {}),
+      timestamp: new Date().toISOString()
+    })
+
     console.log('📨 [TranscriptManager] 收到訊息:', {
       sessionId,
       type: message.type,
@@ -232,6 +255,45 @@ export class TranscriptManager {
         end_time: message.end_time,
         confidence: message.confidence
       })
+
+      // 🎯 轉換 transcript_segment 為 TranscriptEntry 格式並推送到 store
+      if (message.text) {
+        try {
+          // 使用當前時間作為 fallback，確保時間格式正確
+          const timestamp = message.timestamp ? new Date(message.timestamp) : new Date()
+          const entry = {
+            time: timestamp.toLocaleTimeString('zh-TW', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit'
+            }),
+            text: message.text
+          }
+
+          console.log('🎯 [TranscriptManager] 準備推送 transcript_segment 到 store:', {
+            originalTimestamp: message.timestamp,
+            formattedTime: entry.time,
+            text: entry.text.substring(0, 50) + '...'
+          })
+
+          console.log('[T] before push', useAppStore.getState().appState)
+          useAppStore.getState().addTranscriptEntry(entry)
+          console.log('✅ [TranscriptManager] transcript_segment 已推送到 store:', entry)
+
+          // 檢查狀態是否有變化
+          const currentState = useAppStore.getState()
+          console.log('📊 [TranscriptManager] Store 狀態檢查:', {
+            appState: currentState.appState,
+            transcriptCount: currentState.transcriptEntries.length,
+            latestEntry: currentState.transcriptEntries[currentState.transcriptEntries.length - 1]
+          })
+
+        } catch (error) {
+          console.error('❌ [TranscriptManager] 處理 transcript_segment 時發生錯誤:', error)
+        }
+      }
+
       this.broadcastToListeners(sessionId, message)
     } else if (message.type === 'connection_established') {
       console.log('✅ [TranscriptManager] 連接已建立:', {

@@ -249,11 +249,30 @@ export class TranscriptWebSocket extends WebSocketManager {
   // 設定訊息處理回調
   onMessage(callback: (data: any) => void): void {
     super.onMessage((event) => {
+      console.log('🔥 [TranscriptWebSocket] 原始 WebSocket 訊息:', {
+        data: event.data,
+        type: typeof event.data,
+        length: event.data?.length,
+        timestamp: new Date().toISOString()
+      })
+
       try {
         const data = JSON.parse(event.data)
+        console.log('✅ [TranscriptWebSocket] JSON 解析成功:', {
+          parsedData: data,
+          dataType: data.type,
+          sessionId: data.session_id
+        })
+
+        console.log('🎯 [TranscriptWebSocket] 即將調用 callback')
         callback(data)
+        console.log('✅ [TranscriptWebSocket] callback 調用完成')
+
       } catch (error) {
-        console.error('❌ TranscriptWebSocket 解析訊息失敗:', error)
+        console.error('❌ TranscriptWebSocket 解析訊息失敗:', {
+          error: error instanceof Error ? error.message : String(error),
+          rawData: event.data
+        })
       }
     })
   }
