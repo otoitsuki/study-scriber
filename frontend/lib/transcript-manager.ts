@@ -1,6 +1,8 @@
 "use client"
 
 import { TranscriptWebSocket, TranscriptMessage } from './websocket'
+import { useAppStore } from './app-store-zustand'
+import type { TranscriptEntry } from '../types/app-state'
 
 /**
  * TranscriptManager - 統一管理 transcript WebSocket 連接的 Singleton
@@ -10,7 +12,7 @@ import { TranscriptWebSocket, TranscriptMessage } from './websocket'
  * - 統一管理連接狀態、心跳、重連
  * - 提供簡潔的 API 給其他組件使用
  */
-class TranscriptManager {
+export class TranscriptManager {
   private static instance: TranscriptManager | null = null
   private connections: Map<string, TranscriptWebSocket> = new Map()
   private listeners: Map<string, Set<(message: TranscriptMessage) => void>> = new Map()
@@ -203,7 +205,24 @@ class TranscriptManager {
     })
 
     // 處理不同類型的訊息
-    if (message.type === 'transcript_segment') {
+    if (message.type === 'transcript_entry') {
+      console.log('📝 [TranscriptManager] 收到逐字稿條目:', {
+        sessionId,
+        payload: message.payload,
+        timestamp: new Date().toISOString()
+      })
+
+      // 推送到 Zustand store
+      const entry = message.payload
+      if (entry && entry.time && entry.text) {
+        useAppStore.getState().addTranscriptEntry(entry)
+        console.log('✅ [TranscriptManager] 已推送到 store:', entry)
+      } else {
+        console.warn('⚠️ [TranscriptManager] 無效的逐字稿條目:', entry)
+      }
+
+      this.broadcastToListeners(sessionId, message)
+    } else if (message.type === 'transcript_segment') {
       console.log('📝 [TranscriptManager] 逐字稿片段詳情:', {
         sessionId,
         text: message.text,

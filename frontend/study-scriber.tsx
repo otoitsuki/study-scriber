@@ -6,35 +6,39 @@ import { useMemo, useState, useEffect } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { RotateCcw, Download } from "lucide-react"
-import { useRecording } from "./hooks/use-recording-adapter"
+
 
 // 動態匯入 SimpleMDE 以避免 SSR 問題
 const SimpleMDE = dynamic(() => import("react-simplemde-editor"), {
   ssr: false,
   loading: () => <div className="h-full flex items-center justify-center text-muted-foreground">載入編輯器中...</div>
 })
-import { useAppState } from "./hooks/use-app-state-adapter"
+import { useAppStore } from "./lib/app-store-zustand"
 import { DefaultState } from "./components/default-state"
 import { RecordingState } from "./components/recording-state"
 import { WaitingState } from "./components/waiting-state"
 import { FinishState } from "./components/finish-state"
 
 export default function Component() {
-  const {
-    appData,
-    isLoading,
-    error,
-    startRecording,
-    stopRecording,
-    newNote,
-    saveLocalDraft,
-    session,
-    recordingError,
-    transcriptError,
-    createNoteSession,
-    sessionLoading,
-  } = useAppState()
+  // 使用 Zustand store
+  const appState = useAppStore(state => state.appState)
+  const isLoading = useAppStore(state => state.isLoading)
+  const error = useAppStore(state => state.error)
+  const session = useAppStore(state => state.session)
+  const isRecording = useAppStore(state => state.isRecording)
+  const recordingTime = useAppStore(state => state.recordingTime)
+  const transcriptEntries = useAppStore(state => state.transcriptEntries)
+  const editorContent = useAppStore(state => state.editorContent)
+  
+  // Actions
+  const startRecording = useAppStore(state => state.startRecording)
+  const stopRecording = useAppStore(state => state.stopRecording)
+  const updateEditorContent = useAppStore(state => state.updateEditorContent)
+  const resetState = useAppStore(state => state.resetState)
+  const clearError = useAppStore(state => state.clearError)
   const [draftTitle, setDraftTitle] = useState("")
+
+  // 使用 Zustand store - 所有狀態已在上方宣告
 
   // 檢查並清理異常的 localStorage 狀態
   useEffect(() => {
@@ -64,8 +68,8 @@ export default function Component() {
   }, [])
 
   // 追蹤狀態流轉
-  console.log("[DEBUG] appData.state:", appData.state)
-  console.log("[DEBUG] appData.isRecording:", appData.isRecording)
+  console.log("[DEBUG] appState:", appState)
+  console.log("[DEBUG] isRecording:", isRecording)
   if (session) {
     console.log("[DEBUG] session.status:", session.status, "session.type:", session.type)
   } else {
@@ -74,37 +78,45 @@ export default function Component() {
 
   // 添加調試功能到 window
   if (typeof window !== 'undefined') {
-    (window as any).appData = appData
+    // 暴露完整狀態到 window.appData 以便診斷
+    (window as any).appData = {
+      state: appState,
+      isRecording,
+      recordingTime,
+      transcriptEntries,
+      editorContent,
+      session,
+      isLoading,
+      error
+    }
   }
 
-  // 暴露 recording hook 到 window 以便調試
-  const recording = useRecording()
+  // 暴露錄音狀態到 window 以便調試
   if (typeof window !== 'undefined') {
-    (window as any).recordingHook = recording
+    (window as any).recordingHook = { isRecording, recordingTime }
   }
 
-  // 暴露 session 到 window 以便調試（使用 useAppState 返回的 session）
+  // 暴露 session 到 window 以便調試
   if (typeof window !== 'undefined') {
     (window as any).sessionHook = {
       currentSession: session,
-      isLoading: sessionLoading,
-      error: null // useAppState 沒有直接暴露 session error
+      isLoading: isLoading,
+      error: error
     }
   }
 
   useEffect(() => {
-    console.log("📱 StudyScriber: appData 更新:", {
-      state: appData.state,
-      isRecording: appData.isRecording,
-      recordingTime: appData.recordingTime,
-      transcriptEntries: appData.transcriptEntries,
-      editorContent: appData.editorContent,
+    console.log("📱 StudyScriber: state 更新:", {
+      state: appState,
+      isRecording: isRecording,
+      recordingTime: recordingTime,
+      transcriptEntries: transcriptEntries,
+      editorContent: editorContent,
       session: session,
-      sessionLoading: sessionLoading,
-      recordingError: recordingError,
-      transcriptError: transcriptError,
+      isLoading: isLoading,
+      error: error,
     })
-  }, [appData, session, sessionLoading, recordingError, transcriptError])
+  }, [appState, isRecording, recordingTime, transcriptEntries, editorContent, session, isLoading, error])
 
   const editorOptions = useMemo(() => {
     return {
@@ -138,11 +150,8 @@ export default function Component() {
   }, [])
 
   const renderRightPanel = () => {
-    // 組合錯誤訊息
-    const combinedError = recordingError || transcriptError || null
-
     // 狀態異常檢查：如果是 recording_waiting 但沒有 session，應該顯示 default 狀態
-    if (appData.state === "recording_waiting" && !session) {
+    if (appState === "recording_waiting" && !session) {
       console.log("⚠️ [StudyScriber] 檢測到狀態異常: recording_waiting 但沒有 session，顯示 DefaultState")
       return <DefaultState
         onStartRecording={() => {
@@ -152,7 +161,7 @@ export default function Component() {
       />
     }
 
-    switch (appData.state) {
+    switch (appState) {
       case "default":
         console.log("🔄 [StudyScriber] 渲染 DefaultState，startRecording 函數:", typeof startRecording)
         return <DefaultState
@@ -165,19 +174,19 @@ export default function Component() {
       case "recording_active":
         return (
           <RecordingState
-            transcriptEntries={appData.transcriptEntries}
-            recordingTime={appData.recordingTime}
+            transcriptEntries={transcriptEntries}
+            recordingTime={recordingTime}
             onStopRecording={stopRecording}
-            error={combinedError}
+            error={error}
           />
         )
       case "recording_waiting":
         return (
           <RecordingState
-            transcriptEntries={appData.transcriptEntries}
-            recordingTime={appData.recordingTime}
+            transcriptEntries={transcriptEntries}
+            recordingTime={recordingTime}
             onStopRecording={stopRecording}
-            error={combinedError}
+            error={error}
           />
         )
       case "processing":
@@ -185,7 +194,7 @@ export default function Component() {
       case "finished":
         return (
           <FinishState
-            transcriptEntries={appData.transcriptEntries}
+            transcriptEntries={transcriptEntries}
             onExport={() => {
               // TODO: 實現匯出功能
               console.log('Export functionality not implemented yet')
@@ -215,18 +224,18 @@ export default function Component() {
         {/* Header action buttons */}
         <div className="flex gap-2">
           {/* New note 按鈕 - 在有活躍會話或需要的狀態下顯示 */}
-          {((appData.state === "default" && !!session) ||
-            appData.state === "recording_waiting" ||
-            appData.state === "recording_active" ||
-            appData.state === "finished") && (
-              <Button variant="outline" onClick={newNote} size="sm" className="px-4 h-8 flex items-center gap-2">
+          {((appState === "default" && !!session) ||
+            appState === "recording_waiting" ||
+            appState === "recording_active" ||
+            appState === "finished") && (
+              <Button variant="outline" onClick={resetState} size="sm" className="px-4 h-8 flex items-center gap-2">
                 <RotateCcw className="w-4 h-4" />
                 New note
               </Button>
             )}
 
           {/* Export 按鈕 - 只在 finished 狀態顯示 */}
-          {appData.state === "finished" && (
+          {appState === "finished" && (
             <Button onClick={() => console.log('Export functionality')} size="sm" className="px-4 h-8 flex items-center gap-2">
               <Download className="w-4 h-4" />
               Export
@@ -245,13 +254,13 @@ export default function Component() {
               className="text-lg font-semibold"
               value={draftTitle}
               onChange={(e) => setDraftTitle(e.target.value)}
-              disabled={appData.state === 'processing' || appData.state === 'finished' || appData.isRecording}
+              disabled={appState === 'processing' || appState === 'finished' || isRecording}
             />
             <div className="h-full editor-container flex-grow" data-testid="editor-container">
               <SimpleMDE
                 options={editorOptions}
-                value={appData.editorContent}
-                onChange={saveLocalDraft}
+                value={editorContent}
+                onChange={updateEditorContent}
                 getMdeInstance={(instance) => {
                   if (process.env.NODE_ENV !== 'production') {
                     (window as any).theEditor = instance;
@@ -262,8 +271,8 @@ export default function Component() {
               <textarea
                 data-testid="fallback-editor"
                 className="hidden"
-                value={appData.editorContent}
-                onChange={(e) => saveLocalDraft(e.target.value)}
+                value={editorContent}
+                onChange={(e) => updateEditorContent(e.target.value)}
                 placeholder="Start writing your notes..."
               />
             </div>

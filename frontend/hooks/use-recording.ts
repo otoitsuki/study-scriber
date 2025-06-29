@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { AudioUploadWebSocket, AckMissingMessage } from '../lib/websocket'
 import { AudioRecorder, AudioChunk } from '../lib/audio-recorder'
 import { transcriptManager, TranscriptMessage } from '../lib/transcript-manager'
+import { getAudioChunkIntervalMs, getAudioConfigInfo } from '../lib/config'
 
 interface UseRecordingReturn {
   isRecording: boolean
@@ -211,12 +212,15 @@ export function useRecording(): UseRecordingReturn {
         throw new Error('此功能僅在瀏覽器環境中可用')
       }
 
-      // 步驟 1: 建立音檔錄製器（12 秒切片）
+      // 步驟 1: 建立音檔錄製器
       console.log('🎤 [useRecording] 步驟 1: 初始化音檔錄製器')
+      const chunkInterval = getAudioChunkIntervalMs()
       const audioRecorder = new AudioRecorder({
-        chunkInterval: 12000, // 12 秒切片
+        chunkInterval, // 使用環境變數配置的切片間隔
         mimeType: 'audio/webm;codecs=opus'
       })
+
+      console.log(`🎤 [useRecording] 音訊配置: ${getAudioConfigInfo()}`)
 
       audioRecorderRef.current = audioRecorder
       chunksRef.current = []

@@ -1,11 +1,10 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { AudioUploadWebSocket, AckMissingMessage } from '../lib/websocket'
-import { AudioRecorder, AudioChunk } from '../lib/audio-recorder'
-import { transcriptManager, TranscriptMessage } from '../lib/transcript-manager'
 import { useAppStateContext } from './use-app-state-context'
 import { isFeatureEnabled } from '../lib/feature-flags'
+import { SERVICE_KEYS, serviceContainer } from '../lib/services'
+import type { IRecordingService, ITranscriptService, TranscriptMessage } from '../lib/services'
 
 interface UseRecordingNewReturn {
   isRecording: boolean
@@ -18,6 +17,14 @@ interface UseRecordingNewReturn {
   clearTranscripts: () => void
 }
 
+/**
+ * useRecordingNew - 錄音管理 Hook (適配器層)
+ *
+ * 重構為適配器層：
+ * - 內部調用 RecordingService 和 TranscriptService 而非直接管理音頻錄製器
+ * - 保持對外接口完全不變，確保組件層無感知變更
+ * - 簡化複雜的錄音邏輯，委託給服務層處理
+ */
 export function useRecordingNew(): UseRecordingNewReturn {
   // 使用新的 Context 狀態管理
   const context = useAppStateContext()
@@ -26,20 +33,12 @@ export function useRecordingNew(): UseRecordingNewReturn {
   const [localError, setLocalError] = useState<string | null>(null)
   const [localTranscriptCompleted, setLocalTranscriptCompleted] = useState(false)
 
-  // WebSocket 和錄音器引用
-  const audioUploadWsRef = useRef<AudioUploadWebSocket | null>(null)
-  const audioRecorderRef = useRef<AudioRecorder | null>(null)
+  // 服務引用
+  const recordingServiceRef = useRef<IRecordingService | null>(null)
+  const transcriptServiceRef = useRef<ITranscriptService | null>(null)
   const currentSessionIdRef = useRef<string | null>(null)
 
-  // 計時器和狀態引用
-  const timerRef = useRef<NodeJS.Timeout | null>(null)
-  const heartbeatRef = useRef<NodeJS.Timeout | null>(null)
-  const chunksRef = useRef<AudioChunk[]>([])
-  const retryCountsRef = useRef<Map<number, number>>(new Map())
-  // 保護計時器不被意外清除
-  const timerProtectionRef = useRef<boolean>(false)
-
-  console.log('🔄 [useRecordingNew] Hook 初始化，功能開關狀態:', {
+  console.log('🔄 [useRecordingNew] Hook 初始化 (適配器層)，功能開關狀態:', {
     useNewStateManagement: isFeatureEnabled('useNewStateManagement'),
     useNewRecordingHook: isFeatureEnabled('useNewRecordingHook'),
     contextState: context.appData.state,
@@ -47,62 +46,28 @@ export function useRecordingNew(): UseRecordingNewReturn {
     contextRecordingTime: context.appData.recordingTime,
   })
 
-  // 清理計時器
-  const clearTimer = useCallback(() => {
-    console.log('🛑 [useRecordingNew] clearTimer 被調用，當前計時器狀態:', !!timerRef.current)
-    // 如果計時器受保護（錄音中），不清除
-    if (timerProtectionRef.current) {
-      console.log('🛡️ [useRecordingNew] 計時器受保護，跳過清除')
-      return
-    }
-    if (timerRef.current) {
-      clearInterval(timerRef.current)
-      timerRef.current = null
-      console.log('🛑 [useRecordingNew] 計時器已清除')
-    }
-  }, [])
-
-  // 清理心跳計時器
-  const clearHeartbeat = useCallback(() => {
-    if (heartbeatRef.current) {
-      clearInterval(heartbeatRef.current)
-      heartbeatRef.current = null
-    }
-  }, [])
-
-  // 開始音檔上傳心跳
-  const startHeartbeat = useCallback((uploadWs: AudioUploadWebSocket) => {
-    clearHeartbeat()
-
-    heartbeatRef.current = setInterval(() => {
-      if (uploadWs.isConnected) {
-        uploadWs.send(JSON.stringify({
-          type: 'heartbeat',
-          timestamp: Date.now()
-        }))
+  // 初始化服務實例
+  const initializeServices = useCallback(() => {
+    if (!recordingServiceRef.current) {
+      try {
+        recordingServiceRef.current = serviceContainer.resolve<IRecordingService>(SERVICE_KEYS.RECORDING_SERVICE)
+        console.log('✅ [useRecordingNew] RecordingService 初始化成功')
+      } catch (error) {
+        console.error('❌ [useRecordingNew] 無法解析 RecordingService:', error)
+        throw new Error('錄音服務初始化失敗')
       }
-    }, 30000) // 每30秒發送一次心跳
-  }, [clearHeartbeat])
+    }
 
-  // 開始錄音計時器 - 整合 Context
-  const startTimer = useCallback(() => {
-    console.log('⏰ [useRecordingNew] startTimer 被調用')
-    clearTimer()
-    context.setRecordingTime(0)
-    let currentTime = 0
-    console.log('⏰ [useRecordingNew] 啟動錄音計時器')
-
-    timerRef.current = setInterval(() => {
-      // 使用本地變數追蹤時間，避免閉包問題
-      currentTime += 1
-      console.log('⏰ [useRecordingNew] 計時器 tick:', currentTime)
-      context.setRecordingTime(currentTime)
-    }, 1000)
-
-    // 啟動保護機制
-    timerProtectionRef.current = true
-    console.log('⏰ [useRecordingNew] 計時器已設置，ID:', timerRef.current)
-  }, [clearTimer, context])
+    if (!transcriptServiceRef.current) {
+      try {
+        transcriptServiceRef.current = serviceContainer.resolve<ITranscriptService>(SERVICE_KEYS.TRANSCRIPT_SERVICE)
+        console.log('✅ [useRecordingNew] TranscriptService 初始化成功')
+      } catch (error) {
+        console.error('❌ [useRecordingNew] 無法解析 TranscriptService:', error)
+        throw new Error('逐字稿服務初始化失敗')
+      }
+    }
+  }, [])
 
   // 處理逐字稿接收 - 整合 Context
   const handleTranscript = useCallback((transcript: TranscriptMessage) => {
@@ -116,7 +81,6 @@ export function useRecordingNew(): UseRecordingNewReturn {
       confidence: transcript.confidence,
       sessionId: currentSessionIdRef.current,
       timestamp: new Date().toISOString(),
-      fullMessage: transcript
     })
 
     // 處理轉錄完成通知
@@ -183,46 +147,7 @@ export function useRecordingNew(): UseRecordingNewReturn {
     }
   }, [context])
 
-  // 處理 ACK/Missing 訊息 - 支援重傳機制
-  const handleAckMissing = useCallback((data: AckMissingMessage) => {
-    console.log('📨 [useRecordingNew] 收到 ACK/Missing:', data)
-
-    if (data.missing.length > 0) {
-      console.warn('⚠️ 有遺失的音檔切片需要重傳:', data.missing)
-
-      // 實作重傳機制
-      data.missing.forEach(sequence => {
-        const retryCount = retryCountsRef.current.get(sequence) ?? 0
-
-        if (retryCount < 5) { // 最多重傳 5 次
-          retryCountsRef.current.set(sequence, retryCount + 1)
-
-          // 尋找對應的音檔切片進行重傳（如果還存在）
-          if (chunksRef.current[sequence]) {
-            console.log(`🔄 重傳音檔切片 #${sequence} (第 ${retryCount + 1} 次)`)
-            audioUploadWsRef.current?.uploadAudioChunk(chunksRef.current[sequence].blob)
-          }
-        } else {
-          console.error(`❌ 音檔切片 #${sequence} 重傳次數已達上限`)
-        }
-      })
-    }
-  }, [])
-
-  // 處理音檔切片
-  const handleAudioChunk = useCallback((chunk: AudioChunk) => {
-    console.log(`🎵 [useRecordingNew] 收到音檔切片 #${chunk.sequence}, 大小: ${chunk.blob.size} bytes`)
-
-    // 儲存切片供重傳使用
-    chunksRef.current[chunk.sequence] = chunk
-
-    // 如果 WebSocket 已連接，立即上傳
-    if (audioUploadWsRef.current?.isConnected) {
-      audioUploadWsRef.current.uploadAudioChunk(chunk.blob)
-    }
-  }, [])
-
-  // 開始錄音 - 整合 Context 狀態管理
+  // 開始錄音 - 使用服務層
   const startRecording = useCallback(async (sessionId: string): Promise<void> => {
     try {
       setLocalError(null)
@@ -230,133 +155,76 @@ export function useRecordingNew(): UseRecordingNewReturn {
       setLocalTranscriptCompleted(false)
       currentSessionIdRef.current = sessionId
 
-      console.log('🎤 [useRecordingNew] 開始錄音流程:', { sessionId })
+      console.log('🎤 [useRecordingNew] 開始錄音流程 (適配器層):', { sessionId })
 
-      // 確保在瀏覽器環境中執行
-      if (typeof window === 'undefined') {
-        throw new Error('此功能僅在瀏覽器環境中可用')
+      // 初始化服務
+      initializeServices()
+
+      const recordingService = recordingServiceRef.current!
+      const transcriptService = transcriptServiceRef.current!
+
+      // 設置錄音狀態監聽
+      const checkRecordingState = () => {
+        const state = recordingService.getRecordingState()
+        context.setRecording(state.isRecording)
+        context.setRecordingTime(state.recordingTime)
+
+        if (state.error) {
+          setLocalError(state.error)
+          context.setError(state.error)
+        }
       }
 
-      // 步驟 1: 建立音檔錄製器（12 秒切片）
-      console.log('🎤 [useRecordingNew] 步驟 1: 初始化音檔錄製器')
-      const audioRecorder = new AudioRecorder({
-        chunkInterval: 12000, // 12 秒切片
-        mimeType: 'audio/webm;codecs=opus'
-      })
+      // 週期性檢查錄音狀態（用於同步錄音時間和狀態）
+      const stateCheckInterval = setInterval(checkRecordingState, 1000)
 
-      audioRecorderRef.current = audioRecorder
-      chunksRef.current = []
-      retryCountsRef.current.clear()
+      // 添加逐字稿監聽器
+      transcriptService.addTranscriptListener(sessionId, handleTranscript)
 
-      // 設定音檔錄製器事件
-      audioRecorder.onChunk(handleAudioChunk)
-      audioRecorder.onError((err) => {
-        console.error('❌ [useRecordingNew] AudioRecorder 錯誤:', err)
-        setLocalError(err.message)
-        context.setError(err.message)
-      })
+      // 使用服務層開始錄音
+      await recordingService.startRecording(sessionId)
 
-      // 步驟 2: 初始化音訊權限
-      console.log('🎤 [useRecordingNew] 步驟 2: 初始化音訊權限')
-      await audioRecorder.initialize()
-
-      // 步驟 3: 建立 WebSocket 連線（並行建立，確保都就緒）
-      console.log('🎤 [useRecordingNew] 步驟 3: 建立 WebSocket 連線')
-
-      // 3a. 建立音檔上傳 WebSocket
-      console.log('🔌 [useRecordingNew] 建立音檔上傳 WebSocket')
-      const uploadWs = new AudioUploadWebSocket(sessionId)
-      await uploadWs.connect()
-
-      // 設定音檔上傳 WebSocket 事件處理
-      uploadWs.onAckMissing(handleAckMissing)
-      audioUploadWsRef.current = uploadWs
-
-      // 3b. 建立逐字稿接收 WebSocket（透過 TranscriptManager）
-      console.log('🔌 [useRecordingNew] 建立逐字稿接收 WebSocket')
-      await transcriptManager.connect(sessionId)
-      transcriptManager.addListener(sessionId, handleTranscript)
-
-      // 步驟 4: 驗證連線狀態
-      console.log('🎤 [useRecordingNew] 步驟 4: 驗證連線狀態')
-      if (!uploadWs.isConnected) {
-        throw new Error('音檔上傳 WebSocket 連線失敗')
+      // 設置清理函數
+      const cleanup = () => {
+        clearInterval(stateCheckInterval)
+        transcriptService.removeTranscriptListener(sessionId, handleTranscript)
       }
 
-      if (!transcriptManager.isConnected(sessionId)) {
-        throw new Error('逐字稿接收 WebSocket 連線失敗')
-      }
+      // 儲存清理函數供停止錄音時使用
+      (globalThis as any).currentRecordingCleanup = cleanup
 
-      console.log('✅ [useRecordingNew] 所有 WebSocket 連線已建立')
-
-      // 步驟 5: 啟動心跳機制
-      console.log('🎤 [useRecordingNew] 步驟 5: 啟動心跳機制')
-      startHeartbeat(uploadWs)
-
-      // 步驟 6: 開始錄音 - 使用 Context 狀態管理
-      console.log('🎤 [useRecordingNew] 步驟 6: 開始錄音')
-
-      // 先設置錄音狀態到 Context
-      context.setRecording(true)
-      console.log('🎤 [useRecordingNew] 錄音狀態已設置到 Context: true')
-
-      console.log('✅ [useRecordingNew] 準備啟動 audioRecorder.startRecording()')
-      await audioRecorder.startRecording()
-      console.log('🎤 [useRecordingNew] audioRecorder.startRecording() 完成，準備啟動計時器')
-      startTimer()
-
-      console.log('✅ [useRecordingNew] 錄音開始成功，Session ID:', sessionId)
-      console.log('⏰ [useRecordingNew] 檢查計時器狀態:', {
-        timerExists: !!timerRef.current,
-        recordingTime: context.appData.recordingTime,
-        isRecording: context.appData.isRecording
-      })
+      console.log('✅ [useRecordingNew] 錄音開始成功 (服務層)，Session ID:', sessionId)
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '開始錄音失敗'
       setLocalError(errorMessage)
       context.setError(errorMessage)
       console.error('❌ [useRecordingNew] 開始錄音失敗:', err)
-
-      // 錯誤時清理資源
-      if (audioRecorderRef.current) {
-        audioRecorderRef.current.stopRecording()
-      }
-      if (audioUploadWsRef.current) {
-        audioUploadWsRef.current.disconnect()
-        audioUploadWsRef.current = null
-      }
-      if (currentSessionIdRef.current) {
-        transcriptManager.removeListener(currentSessionIdRef.current, handleTranscript)
-      }
     }
-  }, [handleAudioChunk, handleAckMissing, handleTranscript, startTimer, startHeartbeat, context])
+  }, [initializeServices, handleTranscript, context])
 
-  // 停止錄音 - 整合 Context 狀態管理
+  // 停止錄音 - 使用服務層
   const stopRecording = useCallback(() => {
     try {
-      // 關閉計時器保護
-      timerProtectionRef.current = false
+      console.log('🛑 [useRecordingNew] 停止錄音 (適配器層)')
 
-      // 停止音檔錄製器
-      if (audioRecorderRef.current) {
-        audioRecorderRef.current.stopRecording()
+      // 執行清理函數
+      const cleanup = (globalThis as any).currentRecordingCleanup
+      if (cleanup) {
+        cleanup()
+        delete (globalThis as any).currentRecordingCleanup
       }
 
-      // 關閉音檔上傳 WebSocket
-      if (audioUploadWsRef.current) {
-        audioUploadWsRef.current.disconnect()
-        audioUploadWsRef.current = null
+      // 使用服務層停止錄音
+      const recordingService = recordingServiceRef.current
+      if (recordingService) {
+        recordingService.stopRecording()
       }
 
-      // 使用 Context 更新狀態
+      // 更新 Context 狀態
       context.setRecording(false)
-      clearTimer()
-      clearHeartbeat()
 
-      console.log('✅ [useRecordingNew] 錄音停止，等待轉錄完成')
-
-      // 注意：不斷開 TranscriptManager 連接，繼續接收轉錄結果
+      console.log('✅ [useRecordingNew] 錄音停止成功 (服務層)，等待轉錄完成')
 
     } catch (err) {
       console.error('❌ [useRecordingNew] 停止錄音失敗:', err)
@@ -364,49 +232,45 @@ export function useRecordingNew(): UseRecordingNewReturn {
       setLocalError(errorMessage)
       context.setError(errorMessage)
     }
-  }, [clearTimer, clearHeartbeat, context])
+  }, [context])
 
   // 清空逐字稿 - 整合 Context
   const clearTranscripts = useCallback(() => {
     context.setTranscriptEntries([])
     setLocalTranscriptCompleted(false)
-    console.log('🔄 [useRecordingNew] 逐字稿已清除')
+    console.log('🔄 [useRecordingNew] 逐字稿已清除 (適配器層)')
   }, [context])
 
   // 清理資源
   useEffect(() => {
     return () => {
-      // 移除 TranscriptManager 監聽器
-      if (currentSessionIdRef.current) {
-        transcriptManager.removeListener(currentSessionIdRef.current, handleTranscript)
+      // 清理逐字稿監聽器
+      if (currentSessionIdRef.current && transcriptServiceRef.current) {
+        transcriptServiceRef.current.removeTranscriptListener(currentSessionIdRef.current, handleTranscript)
       }
 
-      // 不在 cleanup 中清理計時器，避免 React StrictMode 問題
-      // 計時器會在 stopRecording 或組件真正卸載時清理
-      clearHeartbeat()
-
-      // 關閉音檔上傳 WebSocket
-      if (audioUploadWsRef.current) {
-        audioUploadWsRef.current.disconnect()
+      // 清理錄音狀態檢查
+      const cleanup = (globalThis as any).currentRecordingCleanup
+      if (cleanup) {
+        cleanup()
+        delete (globalThis as any).currentRecordingCleanup
       }
-
-      // 注意：不在這裡停止錄音器，避免 React StrictMode 重新渲染時意外停止
-      // 錄音的停止應該由使用者明確觸發或錯誤處理觸發
     }
-  }, [clearHeartbeat, handleTranscript])
+  }, [handleTranscript])
 
   // 組件真正卸載時的清理（例如頁面切換）
   useEffect(() => {
-    // 使用 window unload 事件來檢測真正的頁面卸載
     const handleUnload = () => {
-      console.log('🔚 [useRecordingNew] 頁面卸載，清理所有資源')
-      timerProtectionRef.current = false
-      if (timerRef.current) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
+      console.log('🔚 [useRecordingNew] 頁面卸載，清理所有資源 (適配器層)')
+      const cleanup = (globalThis as any).currentRecordingCleanup
+      if (cleanup) {
+        cleanup()
+        delete (globalThis as any).currentRecordingCleanup
       }
-      if (audioRecorderRef.current) {
-        audioRecorderRef.current.stopRecording()
+
+      const recordingService = recordingServiceRef.current
+      if (recordingService) {
+        recordingService.stopRecording()
       }
     }
 

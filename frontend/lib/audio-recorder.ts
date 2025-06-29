@@ -1,5 +1,7 @@
 "use client"
 
+import { getAudioChunkIntervalMs } from './config'
+
 // 音訊錄製狀態
 export type AudioRecorderState = 'idle' | 'recording' | 'paused' | 'error'
 
@@ -20,7 +22,7 @@ export interface AudioChunk {
 
 // 預設配置
 const DEFAULT_CONFIG: AudioRecorderConfig = {
-  chunkInterval: 12000, // 12 秒切片（與後端同步）
+  chunkInterval: getAudioChunkIntervalMs(), // 使用環境變數配置
   mimeType: 'audio/webm;codecs=opus',
   audioBitsPerSecond: 128000, // 128 kbps
 }
@@ -37,13 +39,10 @@ const SUPPORTED_MIME_TYPES = [
 
 export class AudioRecorder {
   private mediaRecorder: MediaRecorder | null = null
-  private mediaStream: MediaStream | null = null
+  private stream: MediaStream | null = null
   private config: AudioRecorderConfig
   private state: AudioRecorderState = 'idle'
-  private sequence = 0
-  private startTime = 0
-  // 片段定時器，用於定時呼叫 requestData()
-  private chunkTimer: ReturnType<typeof setInterval> | null = null
+  private chunkSequence: number = 0 // 切片序號計數器
 
   // 事件回調
   private onChunkCallback?: (chunk: AudioChunk) => void
@@ -52,224 +51,88 @@ export class AudioRecorder {
 
   constructor(config: Partial<AudioRecorderConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
+  }
 
-    // 檢查瀏覽器相容性
-    if (!this.isSupported()) {
-      throw new Error('您的瀏覽器不支援音訊錄製功能')
+  /**
+   * 開始錄製
+   */
+  async start(onDataAvailable: (chunk: AudioChunk) => void): Promise<void> {
+    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+      throw new Error('錄製已在進行中')
     }
 
-    // 選擇支援的音訊格式
-    this.config.mimeType = this.getSupportedMimeType()
-  }
+    // 獲取麥克風權限
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true })
 
-  // 檢查瀏覽器支援度
-  isSupported(): boolean {
-    return (
-      'mediaDevices' in navigator &&
-      'getUserMedia' in navigator.mediaDevices &&
-      'MediaRecorder' in window
-    )
-  }
+    // 創建 MediaRecorder
+    this.mediaRecorder = new MediaRecorder(this.stream, {
+      mimeType: this.config.mimeType,
+      audioBitsPerSecond: this.config.audioBitsPerSecond,
+    })
 
-  // 獲取支援的音訊格式
-  private getSupportedMimeType(): string {
-    for (const mimeType of SUPPORTED_MIME_TYPES) {
-      if (MediaRecorder.isTypeSupported(mimeType)) {
-        console.log('🎤 使用音訊格式:', mimeType)
-        return mimeType
+    // 重置序號計數器
+    this.chunkSequence = 0
+
+    // 監聽資料可用事件
+    this.mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        const chunk: AudioChunk = {
+          blob: event.data,
+          timestamp: Date.now(),
+          duration: this.config.chunkInterval,
+          sequence: this.chunkSequence++, // 分配序號並遞增
+        }
+        onDataAvailable(chunk)
       }
     }
 
-    // 如果都不支援，使用預設格式
-    console.warn('⚠️ 使用預設音訊格式:', DEFAULT_CONFIG.mimeType)
-    return DEFAULT_CONFIG.mimeType
+    // 開始錄製，每隔指定時間產生一個切片
+    this.mediaRecorder.start(this.config.chunkInterval)
   }
 
-  // 初始化音訊串流
-  async initialize(): Promise<void> {
-    try {
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          // sampleRate: 16000 // 移除硬性約束，避免部分瀏覽器立即終止錄音
-        }
-      })
-
-      console.log('🎤 音訊權限已獲取')
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '無法取得音訊權限'
-      this.handleError(new Error(`音訊初始化失敗: ${errorMessage}`))
-      throw error
-    }
-  }
-
-  // 開始錄音
-  async startRecording(): Promise<void> {
-    if (this.state === 'recording') {
-      return
-    }
-
-    if (!this.mediaStream) {
-      await this.initialize()
-    }
-
-    if (!this.mediaStream) {
-      throw new Error('音訊串流未初始化')
-    }
-
-    try {
-      // 建立 MediaRecorder
-      this.mediaRecorder = new MediaRecorder(this.mediaStream, {
-        mimeType: this.config.mimeType,
-        audioBitsPerSecond: this.config.audioBitsPerSecond,
-      })
-
-      // 設定事件處理器
-      this.setupMediaRecorderEvents()
-
-      // Safari 在使用 timeSlice 參數時，可能導致 MediaRecorder 立即產生空片段並停止。
-      // 因此改為不傳入 timeSlice，改由手動定時呼叫 requestData() 保持跨瀏覽器穩定性。
-      this.mediaRecorder.start() // 不給 timeSlice，啟動後每 chunkInterval 主動 requestData
-
-      // 啟動定時器，定時要求資料切片
-      this.chunkTimer = setInterval(() => {
-        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-          try {
-            this.mediaRecorder.requestData()
-          } catch (err) {
-            console.warn('⚠️ requestData 失敗:', err)
-          }
-        }
-      }, this.config.chunkInterval)
-
-      this.startTime = Date.now()
-      this.sequence = 0
-
-      this.setState('recording')
-      console.log('🎤 開始錄音')
-
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '錄音啟動失敗'
-      this.handleError(new Error(`錄音啟動失敗: ${errorMessage}`))
-      throw error
-    }
-  }
-
-  // 停止錄音
-  stopRecording(): void {
-    if (this.state !== 'recording') {
-      return
-    }
-
-    if (this.chunkTimer) {
-      clearInterval(this.chunkTimer)
-      this.chunkTimer = null
-    }
-
-    if (this.mediaRecorder) {
+  /**
+   * 停止錄製
+   */
+  stop(): void {
+    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop()
     }
 
-    this.setState('idle')
-    console.log('🛑 停止錄音')
-  }
-
-  // 暫停錄音
-  pauseRecording(): void {
-    if (this.state !== 'recording' || !this.mediaRecorder) {
-      return
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop())
+      this.stream = null
     }
 
-    this.mediaRecorder.pause()
-    this.setState('paused')
-    console.log('⏸️ 暫停錄音')
+    this.mediaRecorder = null
+    this.chunkSequence = 0 // 重置序號
   }
 
-  // 恢復錄音
-  resumeRecording(): void {
-    if (this.state !== 'paused' || !this.mediaRecorder) {
-      return
-    }
+  /**
+   * 獲取錄製狀態
+   */
+  get isRecording(): boolean {
+    return this.mediaRecorder !== null && this.mediaRecorder.state === 'recording'
+  }
 
-    this.mediaRecorder.resume()
-    this.setState('recording')
-    console.log('▶️ 恢復錄音')
+  /**
+   * 獲取當前序號
+   */
+  get currentSequence(): number {
+    return this.chunkSequence
   }
 
   // 清理資源
   cleanup(): void {
-    this.stopRecording()
+    this.stop()
 
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(track => track.stop())
-      this.mediaStream = null
-    }
-
-    if (this.chunkTimer) {
-      clearInterval(this.chunkTimer)
-      this.chunkTimer = null
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop())
+      this.stream = null
     }
 
     this.mediaRecorder = null
     console.log('🧹 音訊錄製器已清理')
   }
-
-  // 注意：已移除 WebM 格式驗證，信任 MediaRecorder 和後端 FFmpeg 處理
-
-  // 設定 MediaRecorder 事件處理器
-  private setupMediaRecorderEvents(): void {
-    if (!this.mediaRecorder) return
-
-    this.mediaRecorder.ondataavailable = async (event) => {
-      if (event.data && event.data.size > 0) {
-        // 基本大小檢查 - 降低門檻值以接受更多有效切片
-        if (event.data.size < 50) {
-          console.warn(`⚠️ 音訊切片 #${this.sequence} 太小，跳過: ${event.data.size} bytes`)
-          return
-        }
-
-        // 信任 MediaRecorder 產生的資料，不做格式驗證
-        // 後端 FFmpeg 會用 -fflags +genpts 處理不完整的流式資料
-
-        const chunk: AudioChunk = {
-          blob: event.data,
-          timestamp: Date.now(),
-          duration: Date.now() - this.startTime,
-          sequence: this.sequence++,
-        }
-
-        console.log(`🎵 產生有效音訊切片 #${chunk.sequence}, 大小: ${chunk.blob.size} bytes, 類型: ${chunk.blob.type}`)
-
-        this.onChunkCallback?.(chunk)
-      } else {
-        console.warn(`⚠️ 收到空的音訊切片 #${this.sequence}`)
-      }
-    }
-
-    this.mediaRecorder.onerror = (event) => {
-      const error = event.error || new Error('MediaRecorder 錯誤')
-      this.handleError(error)
-    }
-
-    this.mediaRecorder.onstart = () => {
-      console.log('🎤 MediaRecorder 已啟動')
-    }
-
-    this.mediaRecorder.onstop = () => {
-      console.log('🛑 MediaRecorder 已停止')
-
-      // 如果並非由 stopRecording 呼叫導致，視為異常停止
-      if (this.state === 'recording') {
-        this.handleError(new Error('MediaRecorder 未預期停止'))
-        // 額外清理，確保資源釋放
-        this.cleanup()
-      }
-    }
-  }
-
-  // 注意：不再需要手動定時器，MediaRecorder.start(interval) 會自動處理切片
 
   // 設定狀態
   private setState(newState: AudioRecorderState): void {
@@ -302,14 +165,6 @@ export class AudioRecorder {
     return this.state
   }
 
-  get isRecording(): boolean {
-    return this.state === 'recording'
-  }
-
-  get isPaused(): boolean {
-    return this.state === 'paused'
-  }
-
   get currentConfig(): AudioRecorderConfig {
     return { ...this.config }
   }
@@ -320,32 +175,29 @@ export const createAudioRecorder = (config?: Partial<AudioRecorderConfig>): Audi
   return new AudioRecorder(config)
 }
 
-// 瀏覽器相容性檢查函數
-export const checkAudioRecordingSupport = (): {
-  supported: boolean
-  errors: string[]
-} => {
-  const errors: string[] = []
-
-  if (!('mediaDevices' in navigator)) {
-    errors.push('不支援 MediaDevices API')
+/**
+ * 檢查瀏覽器音訊錄製支援
+ */
+export async function checkAudioRecordingSupport(): Promise<{ isSupported: boolean; error?: string }> {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return { isSupported: false, error: '瀏覽器不支援 MediaDevices API' }
   }
 
-  if (!('getUserMedia' in navigator.mediaDevices)) {
-    errors.push('不支援 getUserMedia API')
+  if (!window.MediaRecorder) {
+    return { isSupported: false, error: '瀏覽器不支援 MediaRecorder API' }
   }
 
-  if (!('MediaRecorder' in window)) {
-    errors.push('不支援 MediaRecorder API')
+  // 檢查 MIME 類型支援
+  if (!MediaRecorder.isTypeSupported(DEFAULT_CONFIG.mimeType)) {
+    return { isSupported: false, error: `不支援音訊格式: ${DEFAULT_CONFIG.mimeType}` }
   }
 
-  // 檢查 HTTPS
-  if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-    errors.push('需要 HTTPS 連接才能使用音訊功能')
-  }
-
-  return {
-    supported: errors.length === 0,
-    errors
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    // 立即停止串流以釋放資源
+    stream.getTracks().forEach(track => track.stop())
+    return { isSupported: true }
+  } catch (error) {
+    return { isSupported: false, error: `無法獲取麥克風權限: ${error}` }
   }
 }
