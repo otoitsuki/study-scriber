@@ -112,25 +112,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
             // 3. 啟動完整錄音流程（包含雙 WebSocket）
             console.log('🔍 [AppStore] 啟動完整錄音流程...')
-            const result = await recordingFlowService.startRecordingFlow(
+            const sessionResponse = await recordingFlowService.startRecordingFlow(
                 title || `錄音筆記 ${new Date().toLocaleString()}`
             )
 
-            if (!result.success) {
-                throw new Error(result.error || '錄音流程啟動失敗')
-            }
-
             console.log('✅ [AppStore] 雙 WebSocket 錄音流程啟動成功:', {
-                sessionId: result.sessionId
+                sessionId: sessionResponse.id
             })
 
             // 4. 更新狀態，跳到錄音畫面
             set({
                 appState: 'recording_active',
                 session: {
-                    id: result.sessionId,
-                    status: 'active' as SessionStatus,
-                    type: 'recording' as SessionType
+                    id: sessionResponse.id,
+                    status: sessionResponse.status as SessionStatus,
+                    type: sessionResponse.type as SessionType
                 },
                 isRecording: true,
                 isLoading: false

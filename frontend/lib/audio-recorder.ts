@@ -75,6 +75,12 @@ export class AudioRecorder {
 
     // 監聽資料可用事件
     this.mediaRecorder.ondataavailable = (event) => {
+      console.log('🎙️ [AudioRecorder] MediaRecorder.ondataavailable 觸發', {
+        dataSize: event.data.size,
+        sequence: this.chunkSequence,
+        timestamp: new Date().toISOString()
+      })
+
       if (event.data.size > 0) {
         const chunk: AudioChunk = {
           blob: event.data,
@@ -82,12 +88,33 @@ export class AudioRecorder {
           duration: this.config.chunkInterval,
           sequence: this.chunkSequence++, // 分配序號並遞增
         }
+
+        console.log('📦 [AudioRecorder] 建立音頻切片', {
+          sequence: chunk.sequence,
+          size: chunk.blob.size,
+          duration: chunk.duration,
+          mimeType: this.config.mimeType
+        })
+
         onDataAvailable(chunk)
+      } else {
+        console.warn('⚠️ [AudioRecorder] ondataavailable 但 data.size = 0')
       }
     }
 
     // 開始錄製，每隔指定時間產生一個切片
+    console.log('🎬 [AudioRecorder] 開始錄製', {
+      chunkInterval: this.config.chunkInterval,
+      mimeType: this.config.mimeType,
+      state: this.mediaRecorder.state
+    })
+
     this.mediaRecorder.start(this.config.chunkInterval)
+
+    console.log('✅ [AudioRecorder] MediaRecorder.start() 已調用', {
+      state: this.mediaRecorder.state,
+      stream: this.stream ? 'active' : 'null'
+    })
   }
 
   /**

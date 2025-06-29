@@ -89,9 +89,23 @@ export class WebSocketManager {
 
   send(data: string | ArrayBuffer): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const dataInfo = data instanceof ArrayBuffer
+        ? `Binary (${data.byteLength} bytes)`
+        : `Text (${data.length} chars)`
+
+      console.log('📡 [WebSocketManager] 發送資料', {
+        type: dataInfo,
+        url: this.url,
+        readyState: this.ws.readyState,
+        timestamp: new Date().toISOString()
+      })
+
       this.ws.send(data)
     } else {
-      console.warn('⚠️ WebSocket 未連接，無法發送資料')
+      console.warn('⚠️ WebSocket 未連接，無法發送資料', {
+        url: this.url,
+        readyState: this.ws?.readyState || 'null'
+      })
     }
   }
 
@@ -134,6 +148,13 @@ export class AudioUploadWebSocket extends WebSocketManager {
   }
 
   uploadAudioChunk(audioBlob: Blob): void {
+    console.log('🔊 [AudioUploadWebSocket] uploadAudioChunk 被調用', {
+      sequence: this.sequenceNumber,
+      blobSize: audioBlob.size,
+      wsState: this.readyState,
+      isConnected: this.isConnected
+    })
+
     if (!this.isConnected) {
       console.warn('⚠️ WebSocket 未連接，無法上傳音檔')
       return
@@ -152,10 +173,27 @@ export class AudioUploadWebSocket extends WebSocketManager {
       combinedView.set(new Uint8Array(sequenceBuffer), 0)
       combinedView.set(new Uint8Array(audioBuffer), sequenceBuffer.byteLength)
 
+      console.log('🔄 [AudioUploadWebSocket] 準備發送 binary frame', {
+        sequence: this.sequenceNumber,
+        totalSize: combinedBuffer.byteLength,
+        audioSize: audioBuffer.byteLength,
+        sequenceSize: sequenceBuffer.byteLength
+      })
+
       this.send(combinedBuffer)
-      console.log(`📤 上傳音檔切片 #${this.sequenceNumber}, 大小: ${audioBlob.size} bytes`)
+
+      console.log(`✅ [AudioUploadWebSocket] Binary frame 已送出 #${this.sequenceNumber}`, {
+        size: `${audioBlob.size} bytes`,
+        totalSize: `${combinedBuffer.byteLength} bytes`,
+        timestamp: new Date().toISOString()
+      })
 
       this.sequenceNumber++
+    }).catch(error => {
+      console.error('❌ [AudioUploadWebSocket] 處理音頻資料失敗', {
+        sequence: this.sequenceNumber,
+        error: error.message || error
+      })
     })
   }
 

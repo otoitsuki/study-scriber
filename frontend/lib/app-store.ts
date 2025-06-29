@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { serviceContainer, SERVICE_KEYS } from './services'
-import type { RecordingFlowService, RecordingFlowListener, RecordingFlowResult } from './services/recording-flow-service'
+import type { RecordingFlowService, RecordingFlowListener } from './services/recording-flow-service'
+import type { SessionResponse } from './api'
 import { AppState, SessionStatus, SessionType, TranscriptEntry } from '../types/app-state'
 
 /**
@@ -60,10 +61,10 @@ export interface AppStoreReturn {
 
 /**
  * AppStore - 統一的狀態管理
- * 
+ *
  * 職責：
  * 1. 管理應用狀態
- * 2. 調用服務層執行業務邏輯  
+ * 2. 調用服務層執行業務邏輯
  * 3. 處理 loading 和錯誤狀態
  * 4. 提供簡潔的 API 給 UI 層
  */
@@ -175,7 +176,7 @@ export function useAppStore(): AppStoreReturn {
         })
 
         setCurrentState('recording_waiting')
-        
+
         // 啟動時間追蹤
         startRecordingTimeTracking()
 
@@ -188,7 +189,7 @@ export function useAppStore(): AppStoreReturn {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '開始錄音失敗'
       console.error('❌ [AppStore] 錄音流程啟動失敗:', error)
-      
+
       setError(errorMessage)
       setCurrentState('default')
     } finally {
@@ -220,7 +221,7 @@ export function useAppStore(): AppStoreReturn {
       // 更新狀態
       setIsRecording(false)
       setCurrentState('finished')
-      
+
       console.log('✅ [AppStore] 錄音流程停止成功')
 
     } catch (error) {
@@ -244,7 +245,7 @@ export function useAppStore(): AppStoreReturn {
    */
   const resetState = useCallback(() => {
     console.log('🔄 [AppStore] 重置狀態')
-    
+
     // 停止錄音流程（如果有）
     const recordingFlowService = recordingFlowServiceRef.current
     if (recordingFlowService && recordingFlowService.isActive()) {

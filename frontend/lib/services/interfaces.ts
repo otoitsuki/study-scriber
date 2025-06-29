@@ -9,6 +9,14 @@ import type { SessionResponse } from '../api'
  */
 
 /**
+ * 錄音流程啟動結果
+ *
+ * RecordingFlowService.startRecordingFlow() 的返回類型
+ * 成功時直接返回 SessionResponse，失敗時拋出 Error
+ */
+export type StartRecordingResult = SessionResponse
+
+/**
  * 會話管理服務介面
  */
 export interface ISessionService {
