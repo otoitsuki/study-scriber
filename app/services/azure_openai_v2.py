@@ -58,7 +58,7 @@ class PerformanceTimer:
         return 0.0
 
 # 配置常數
-CHUNK_DURATION = 12  # 12 秒切片
+CHUNK_DURATION = settings.AUDIO_CHUNK_DURATION_SEC  # 從配置讀取切片時長
 PROCESSING_TIMEOUT = 30  # 處理超時（秒）
 MAX_RETRIES = 3  # 最大重試次數
 
@@ -72,12 +72,12 @@ class SimpleAudioTranscriptionService:
         self.client = azure_client
         self.deployment_name = deployment_name
         self.processing_tasks: Dict[str, asyncio.Task] = {}
-        
+
         # WebM 檔頭緩存機制
         self._header_cache: Dict[str, bytes] = {}  # session_id -> header_bytes
         self._header_cache_timestamps: Dict[str, float] = {}  # session_id -> timestamp
         self._header_repairer = None  # 延遲初始化
-        
+
         # 緩存配置
         self._cache_expiry_seconds = 3600  # 1小時
         self._max_cache_sessions = 100  # 最多100個session
@@ -91,30 +91,30 @@ class SimpleAudioTranscriptionService:
     def _extract_and_cache_header(self, session_id: str, chunk_0_data: bytes) -> bool:
         """
         從第一個 chunk 提取並緩存檔頭
-        
+
         Args:
             session_id: 會話 ID
             chunk_0_data: 第一個音訊 chunk 數據
-            
+
         Returns:
             bool: 是否成功提取並緩存檔頭
         """
         try:
             repairer = self._get_header_repairer()
             result = repairer.extract_header(chunk_0_data)
-            
+
             if result.success and result.header_data:
                 self._header_cache[session_id] = result.header_data
                 self._header_cache_timestamps[session_id] = time.time()
                 logger.info(f"✅ [檔頭緩存] 成功提取並緩存 session {session_id} 的檔頭 ({len(result.header_data)} bytes)")
-                
+
                 # 執行緩存清理
                 self._cleanup_expired_cache()
                 return True
             else:
                 logger.warning(f"⚠️ [檔頭提取] Session {session_id} 檔頭提取失敗: {result.error_message}")
                 return False
-                
+
         except Exception as e:
             logger.error(f"❌ [檔頭提取] Session {session_id} 檔頭提取異常: {e}")
             return False
@@ -122,29 +122,29 @@ class SimpleAudioTranscriptionService:
     def _get_cached_header(self, session_id: str) -> Optional[bytes]:
         """
         獲取緩存的檔頭
-        
+
         Args:
             session_id: 會話 ID
-            
+
         Returns:
             Optional[bytes]: 緩存的檔頭數據，如果不存在或已過期則返回 None
         """
         if session_id not in self._header_cache:
             return None
-            
+
         # 檢查是否過期
         timestamp = self._header_cache_timestamps.get(session_id, 0)
         if time.time() - timestamp > self._cache_expiry_seconds:
             logger.debug(f"🗑️ [緩存過期] Session {session_id} 檔頭緩存已過期，自動清理")
             self._clear_session_cache(session_id)
             return None
-            
+
         return self._header_cache[session_id]
 
     def _clear_session_cache(self, session_id: str) -> None:
         """
         清理特定會話的緩存
-        
+
         Args:
             session_id: 會話 ID
         """
@@ -156,14 +156,14 @@ class SimpleAudioTranscriptionService:
         """自動清理過期的緩存"""
         current_time = time.time()
         expired_sessions = []
-        
+
         for session_id, timestamp in self._header_cache_timestamps.items():
             if current_time - timestamp > self._cache_expiry_seconds:
                 expired_sessions.append(session_id)
-        
+
         for session_id in expired_sessions:
             self._clear_session_cache(session_id)
-        
+
         # 如果緩存超過最大限制，清理最舊的會話
         if len(self._header_cache) > self._max_cache_sessions:
             # 按時間戳升序排序，最舊的在前面
@@ -238,12 +238,12 @@ class SimpleAudioTranscriptionService:
     async def _validate_and_repair_webm_data(self, session_id: UUID, chunk_sequence: int, webm_data: bytes) -> Optional[bytes]:
         """
         驗證和修復 WebM 數據，集成檔頭完整性檢測和自動修復功能
-        
+
         Args:
             session_id: 會話 ID
             chunk_sequence: 切片序號
             webm_data: 原始 WebM 音訊數據
-            
+
         Returns:
             Optional[bytes]: 修復後的 WebM 數據，驗證失敗時返回 None
         """
@@ -256,19 +256,19 @@ class SimpleAudioTranscriptionService:
             "original_size": len(webm_data),
             "final_size": 0
         }
-        
+
         start_time = time.time()
-        
+
         try:
             # 步驟 1: 基本驗證
             if not webm_data or len(webm_data) < 50:
                 logger.warning(f"WebM chunk {chunk_sequence} too small: {len(webm_data) if webm_data else 0} bytes")
                 return None
-            
+
             repair_stats["validation_time"] = (time.time() - start_time) * 1000  # ms
             session_id_str = str(session_id)
             processed_webm_data = webm_data
-            
+
             # 步驟 2: 檔頭處理邏輯
             if chunk_sequence == 0:
                 # 第一個 chunk：提取並緩存檔頭
@@ -278,23 +278,23 @@ class SimpleAudioTranscriptionService:
                     logger.debug(f"✅ [檔頭提取] Session {session_id_str} 檔頭提取成功")
                 else:
                     logger.warning(f"⚠️ [檔頭提取] Session {session_id_str} 檔頭提取失敗，但繼續處理")
-                
+
                 # 第一個 chunk 應該包含完整檔頭，直接使用
                 processed_webm_data = webm_data
-                
+
             else:
                 # 後續 chunk：檢查檔頭完整性，必要時修復
                 logger.info(f"🔧 [檔頭修復] 處理後續 chunk {chunk_sequence} (session: {session_id_str})")
                 repair_start = time.time()
-                
+
                 try:
                     repairer = self._get_header_repairer()
-                    
+
                     # 檢查是否需要修復
                     if not repairer.validate_repaired_chunk(webm_data):
                         logger.info(f"⚠️ [檔頭修復] Chunk {chunk_sequence} 檔頭不完整，嘗試修復")
                         repair_stats["repair_attempted"] = True
-                        
+
                         # 獲取緩存的檔頭
                         cached_header = self._get_cached_header(session_id_str)
                         if cached_header:
@@ -313,17 +313,17 @@ class SimpleAudioTranscriptionService:
                     else:
                         logger.debug(f"✅ [檔頭檢查] Chunk {chunk_sequence} 檔頭完整，無需修復")
                         processed_webm_data = webm_data
-                        
+
                 except Exception as e:
                     logger.error(f"❌ [檔頭修復] Chunk {chunk_sequence} 修復過程異常: {e}")
                     processed_webm_data = webm_data  # 使用原始數據
                 finally:
                     repair_stats["repair_time"] = (time.time() - repair_start) * 1000  # ms
-            
+
             # 步驟 3: 最終驗證
             repair_stats["final_size"] = len(processed_webm_data)
             total_time = (time.time() - start_time) * 1000  # ms
-            
+
             # 記錄效能統計
             if repair_stats["repair_attempted"]:
                 status = "成功" if repair_stats["repair_successful"] else "失敗"
@@ -333,13 +333,13 @@ class SimpleAudioTranscriptionService:
                           f"總計: {total_time:.1f}ms")
             else:
                 logger.debug(f"📊 [處理統計] Chunk {chunk_sequence} 無需修復 - 總計: {total_time:.1f}ms")
-            
+
             # 效能警告
             if total_time > 50:  # 超過50ms警告
                 logger.warning(f"⚠️ [效能警告] Chunk {chunk_sequence} 處理時間過長: {total_time:.1f}ms")
-            
+
             return processed_webm_data
-            
+
         except Exception as e:
             logger.error(f"❌ [驗證修復] Chunk {chunk_sequence} 處理異常: {e}")
             return webm_data  # 降級使用原始數據
@@ -347,7 +347,7 @@ class SimpleAudioTranscriptionService:
     async def _convert_webm_to_wav(self, webm_data: bytes, chunk_sequence: int, session_id: UUID) -> Optional[bytes]:
         """
         將 WebM / fMP4 轉換為 WAV (保留用於最終下載檔案)
-        
+
         注意：在 WebM 直接轉錄架構 v2 中，此方法不再用於即時轉錄流程，
         而是保留作為最終匯出時生成 WAV 檔案的備選方案。
         """

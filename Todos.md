@@ -1,132 +1,162 @@
-# StudyScriber MVP 開發任務清單
+# Study Scriber - Todos
 
-基於 PRD 分析與 shrimp-task-manager 規劃的詳細開發任務
+## 🎯 WebM 處理改善：「段段都含完整 WebM Header」方案
 
-## 🚨 緊急修復：WebSocket 逐字稿顯示問題 (2024-12-29)
+### 背景
+- **問題**：Azure OpenAI Whisper API 無法解碼修復後的 WebM 檔案
+- **解決方案**：每個 chunk 都包含完整 WebM 檔頭，避免檔頭修復邏輯
+- **方法**：使用遞迴啟動/停止 MediaRecorder 的方式
 
-**問題描述**: 按下錄音後進入 waiting 狀態，但秒數不會動，且 WebSocket 未連接導致無法接收逐字稿
+---
 
-**診斷結果**:
+## 📋 實作任務清單
+
+### Phase 1: 前端 AudioRecorder 重構
+
+- [ ] **1.1 建立新的 SegmentedAudioRecorder 類別**
+  - 路徑：`frontend/lib/segmented-audio-recorder.ts`
+  - 實作遞迴啟動/停止 MediaRecorder 邏輯
+  - 每個 segment 包含完整 WebM Header
+  - 支援可配置的切片時長 (預設 5 秒)
+
+- [ ] **1.2 實作核心錄音邏輯**
+  ```typescript
+  // 核心功能：
+  // - startSegment() 遞迴函式
+  // - 每個 MediaRecorder 只錄一個切片
+  // - setTimeout 控制切片時長
+  // - requestData() + stop() + 重新啟動
+  ```
+
+- [ ] **1.3 改善 AudioUploader 介面**
+  - 確保 WebSocket 傳送格式正確
+  - 4-byte sequence + Blob 數據
+  - 錯誤處理和重連機制
+
+- [ ] **1.4 更新 useRecording Hook**
+  - 替換現有的 AudioRecorder 為 SegmentedAudioRecorder
+  - 保持現有 API 兼容性
+  - 狀態管理 (recording flag)
+
+### Phase 2: 配置調整
+
+- [ ] **2.1 切片時長調整**
+  - 前端：調整為 5 秒切片 (`CHUNK_MS = 5_000`)
+  - 後端：設定 `AUDIO_CHUNK_DURATION_SEC=5`
+  - 更新環境變數文件
+
+- [ ] **2.2 音頻格式優化**
+  ```typescript
+  const MIME = 'audio/webm;codecs=opus'
+  const AUDIO_BITRATE = 64_000  // 64 kbps for 5s chunks
+  ```
+
+- [ ] **2.3 WebSocket 協議確認**
+  - 確認後端支援新的傳送格式
+  - 驗證 sequence + blob 解析邏輯
+
+### Phase 3: 後端簡化
+
+- [ ] **3.1 移除 WebM 檔頭修復邏輯**
+  - 移除或註解 `WebMHeaderRepairer` 相關程式碼
+  - 簡化 `_validate_and_repair_webm_data` 函式
+  - 每個 chunk 直接轉錄，不需修復
+
+- [ ] **3.2 更新轉錄服務**
+  - 確認每個 chunk 都有完整檔頭
+  - 移除檔頭緩存機制
+  - 簡化錯誤處理邏輯
+
+- [ ] **3.3 時間戳計算調整**
+  - 確認 5 秒切片的時間戳正確性
+  - 更新 `start_time` 和 `end_time` 計算
+
+### Phase 4: 測試與驗證
+
+- [ ] **4.1 單元測試**
+  - SegmentedAudioRecorder 功能測試
+  - WebSocket 傳送格式測試
+  - 切片完整性驗證
+
+- [ ] **4.2 整合測試**
+  - 端到端錄音轉錄流程
+  - 多個連續切片測試
+  - Azure OpenAI Whisper API 相容性
+
+- [ ] **4.3 效能測試**
+  - 5 秒切片延遲測試
+  - 記憶體使用量監控
+  - MediaRecorder 重建開銷評估
+
+### Phase 5: 部署與監控
+
+- [ ] **5.1 環境配置更新**
+  - 更新 `.env` 檔案範例
+  - 文件化新的配置選項
+  - 向後兼容性考量
+
+- [ ] **5.2 監控與日誌**
+  - 新增切片成功率監控
+  - 檔頭完整性日誌
+  - 轉錄成功率統計
+
+- [ ] **5.3 回滾計畫**
+  - 保留舊版 AudioRecorder 作為備用
+  - 功能開關控制新舊版本
+  - 問題回報機制
+
+---
+
+## 🎯 預期效果
+
+✅ **解決問題**
+- Azure OpenAI Whisper API 轉錄錯誤
+- 逐字稿只出現第一行的問題
+- WebM 檔頭修復的複雜性
+
+✅ **效能提升**
+- 更短的切片 (5 秒) = 更即時的反饋
+- 簡化後端處理邏輯
+- 減少錯誤率
+
+✅ **維護性**
+- 移除複雜的檔頭修復程式碼
+- 更簡潔的錄音邏輯
+- 更好的錯誤處理
+
+---
+
+## 🔧 技術細節參考
+
+### MediaRecorder 遞迴模式
+```typescript
+const startSegment = () => {
+  const rec = new MediaRecorder(stream, {
+    mimeType: 'audio/webm;codecs=opus',
+    audioBitsPerSecond: 64_000
+  })
+  
+  rec.ondataavailable = (evt) => {
+    // evt.data 包含完整 WebM Header
+    audioUploader.send(evt.data, seq++)
+  }
+  
+  rec.start()
+  
+  setTimeout(() => {
+    rec.requestData()  // 觸發 ondataavailable
+    rec.stop()         // 結束此段
+    if (recording) startSegment()  // 重新開始
+  }, CHUNK_MS)
+}
 ```
-📊 appData 狀態: {state: undefined, isRecording: undefined, transcriptEntries: 0}
-🎤 recording hook: {isRecording: true, transcriptsCount: 0}
-💬 TranscriptManager: {isConnected: false, websocket: '不存在'}
-❌ WebSocket 連接未找到 for session: 2d47cc9b-4300-4dd1-be70-29b261f8fe07
-```
 
-**根本原因**: 從 useState 切換到 Zustand store 時不完整的遷移導致：
-1. 計時邏輯沒有移植到 Zustand store
-2. WebSocket 連接觸發機制斷裂 
-3. window 暴露使用舊的狀態結構
-4. 可能存在雙重狀態管理
-
-### 🎯 **修復任務 (第一階段: 基礎 WebSocket 連接)**
-
-- [x] **T-WS.1: 實現 Zustand 錄音計時器邏輯** ⚡ **緊急** ✅ **已完成**
-- [x] **T-WS.2: 在 RecordingFlowService 中強制 WebSocket 連接** ⚡ **緊急** ✅ **已完成**
-- [x] **T-WS.3: 清理舊 Hook 系統，統一使用 Zustand** ⚡ **重要** ✅ **已完成**
-- [x] **T-WS.4: 修復 window.appData 暴露邏輯** ⚡ **重要** ✅ **已完成**
-- [x] **T-WS.5: 修復 TranscriptManager 中的 transcript_entry 處理** ⚡ **關鍵** ✅ **已完成**
-
-## 🔌 **第二階段：雙 WebSocket 音訊上傳修復 (2024-12-29)**
-
-**問題診斷**: Zustand store 的 startRecording 缺少音訊錄製邏輯，導致：
-- ✅ WebSocket 逐字稿接收正常
-- ✅ 計時器正常運作
-- ❌ **缺少 AudioRecorder 啟動**
-- ❌ **沒有音訊上傳 WebSocket**
-- ❌ **後端無音訊數據，無法生成逐字稿**
-
-### 🎯 **音訊上傳修復任務**
-
-- [x] **T-AU.1: 建立音訊上傳 WebSocket 類別** ⚡ **關鍵** ✅ **已完成**
-  - [x] 創建 `frontend/lib/stream/audio-uploader.ts`
-  - [x] 實現 `connect(sessionId)` → `/ws/upload_audio/{sessionId}`
-  - [x] 實現 `send(blob)` 發送音訊切片
-  - [x] 實現 `close()` 關閉連接
-  - [x] DEV 模式診斷：`window.__rec.chunksSent++`
-  - **檔案**: `frontend/lib/stream/audio-uploader.ts`
-
-- [x] **T-AU.2: 整合 AudioRecorder 到 RecordingFlowService** ⚡ **關鍵** ✅ **已完成**
-  - [x] 修改 `recording-flow-service.ts` 添加 `startRecordingFlow()`
-  - [x] 流程：`audioRecorder.initialize()` → `audioUploader.connect()` → `recorder.onChunk()`
-  - [x] 設定音訊切片自動上傳：`onChunk(chunk => audioUploader.send(chunk.blob))`
-  - [x] 錯誤處理：權限拒絕、WebSocket 失敗 → 回到 default 狀態
-  - **檔案**: `frontend/lib/services/recording-flow-service.ts`
-
-- [x] **T-AU.3: 更新 Zustand Store 使用 RecordingFlowService** ⚡ **關鍵** ✅ **已完成**
-  - [x] 修改 `app-store-zustand.ts` 的 `startRecording()`
-  - [x] 改調用 `recordingFlowService.startRecordingFlow()`
-  - [x] 移除直接的 WebSocket 連接邏輯
-  - [x] 添加 `stopRecording()` 調用 `stopRecordingFlow()`
-  - **檔案**: `frontend/lib/app-store-zustand.ts`
-
-- [x] **T-AU.7: 修復 WebSocket URL 路徑不匹配** ⚡ **緊急** ✅ **已完成**
-  - [x] 前端嘗試連接: `/ws/audio_upload/{sessionId}`
-  - [x] 後端實際端點: `/ws/upload_audio/{session_id}`
-  - [x] 修改 `audio-uploader.ts` 使用正確的 `/ws/upload_audio/` 路徑
-  - **檔案**: `frontend/lib/stream/audio-uploader.ts`
-
-- [x] **T-AU.8: 實現可配置的音訊切片間隔** ⚡ **優化** ✅ **已完成**
-  - [x] 創建 `frontend/lib/config.ts` 配置管理器
-  - [x] 添加環境變數 `NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_SEC` (預設 15 秒)
-  - [x] 支援毫秒格式 `NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_MS` (優先級較高)
-  - [x] 更新 `RecordingFlowService` 使用配置化的切片間隔
-  - [x] 更新 `AudioRecorder` 預設配置使用環境變數
-  - [x] 在 DEV 模式添加配置診斷資訊
-  - **檔案**: `frontend/lib/config.ts`, `frontend/.env.local`, `frontend/.env.example`
-
-- [ ] **T-AU.4: 創建音訊上傳單元測試** ⚡ **驗證**
-  - [ ] 創建 `frontend/lib/stream/__tests__/audio-uploader.test.ts`
-  - [ ] Mock WebSocket API，測試連接/發送/關閉
-  - [ ] 測試錯誤處理：連接失敗、發送失敗
-  - **檔案**: `frontend/lib/stream/__tests__/audio-uploader.test.ts`
-
-- [ ] **T-AU.5: 創建錄音流程整合測試** ⚡ **驗證**
-  - [ ] 修改 `frontend/lib/services/__tests__/recording-flow-service.test.ts`
-  - [ ] Mock `getUserMedia`, `MediaRecorder`, `AudioUploader`
-  - [ ] 驗證 `audioUploader.connect/send` 被正確調用
-  - [ ] Mock transcript WebSocket 推送，驗證 store 更新
-  - **檔案**: `frontend/lib/services/__tests__/recording-flow-service.test.ts`
-
-- [ ] **T-AU.6: 端到端驗證雙 WebSocket 模式** ⚡ **驗證**
-  - [ ] 驗證 WebSocket 1 (逐字稿接收) 正常運作
-  - [ ] 驗證 WebSocket 2 (音訊上傳) 成功建立
-  - [ ] 測試完整流程：錄音 → 音訊上傳 → 逐字稿接收 → UI 更新
-  - [ ] 驗證 `window.__rec` 和 `window.diagnose()` 診斷工具
-  - **驗證**: 手動測試 + 自動化測試
-
-### 📋 **預期修復效果**
-
-**修復後的完整流程**:
-1. 用戶點擊錄音 → `startRecording()`
-2. 建立錄音會話 → `ensureRecordingSession()`
-3. **連接雙 WebSocket**:
-   - WS1: `/ws/transcript_feed/{sessionId}` (逐字稿接收)
-   - WS2: `/ws/upload_audio/{sessionId}` (音訊上傳) ←─ **修復 URL**
-4. **獲取麥克風權限** → `AudioRecorder.initialize()` ←─ **修復**
-5. **開始錄音並上傳** → 可配置切片間隔自動上傳 ←─ **優化**
-6. 後端語音辨識 → 逐字稿推送 → UI 即時更新
-
-**音訊切片配置**:
-```bash
-# 環境變數配置 (二選一)
-NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_SEC=15    # 設定秒數 (推薦)
-NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_MS=15000  # 設定毫秒數 (優先級較高)
-
-# 預設值：15 秒 (15000ms)
-```
-
-**診斷工具增強**:
-```javascript
-window.diagnose()           // 現有：檢查 TranscriptManager 狀態
-window.__rec                // 新增：音訊上傳狀態
-// { 
-//   chunksSent: X, 
-//   totalBytes: Y, 
-//   isRecording: true, 
-//   sessionId: "xxx",
-//   chunkInterval: 15000,
-//   chunkIntervalSec: 15
-// }
+### WebSocket 傳送格式
+```typescript
+send(blob: Blob, sequence: number) {
+  const seqBuf = new ArrayBuffer(4)
+  new DataView(seqBuf).setUint32(0, sequence)
+  this.ws.send(seqBuf)  // 先送 sequence
+  this.ws.send(blob)    // 再送音頻數據
+}
 ```
