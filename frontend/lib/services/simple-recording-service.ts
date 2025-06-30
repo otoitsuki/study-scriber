@@ -2,17 +2,17 @@
 
 import { BaseService } from './base-service'
 import { IRecordingService, RecordingState } from './interfaces'
-import { SimpleAudioRecorder, AudioSegment, checkSimpleAudioRecordingSupport } from '../simple-audio-recorder'
+import { AdvancedAudioRecorder, AudioSegment, checkAdvancedAudioRecordingSupport } from '../advanced-audio-recorder'
 import { RestAudioUploader, UploadSegmentResponse } from '../rest-audio-uploader'
 
 /**
  * SimpleRecordingService - 簡化錄音管理服務
  *
- * Phase 2 重構：移除 WebSocket 和 ack/missing 複雜邏輯
- * 整合 SimpleAudioRecorder + RestAudioUploader
+ * Phase 2.5 重構：使用 AdvancedAudioRecorder 修復 WebM Header 問題
+ * 整合 AdvancedAudioRecorder + RestAudioUploader
  *
  * 特點：
- * - 使用 SimpleAudioRecorder（標準 MediaRecorder + timeslice）
+ * - 使用 AdvancedAudioRecorder（雙 MediaRecorder 無縫切換策略）
  * - 使用 RestAudioUploader（REST API 上傳）
  * - 移除 ack/missing 重傳機制
  * - 簡化錯誤處理和狀態管理
@@ -22,7 +22,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
     protected readonly serviceName = 'SimpleRecordingService'
 
     // 錄音器和上傳器引用
-    private audioRecorder: SimpleAudioRecorder | null = null
+    private audioRecorder: AdvancedAudioRecorder | null = null
     private audioUploader: RestAudioUploader | null = null
 
     // 錄音狀態
@@ -45,7 +45,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
         this.logInfo('服務初始化開始')
 
         // 檢查瀏覽器支援度
-        const supportCheck = await checkSimpleAudioRecordingSupport()
+        const supportCheck = await checkAdvancedAudioRecordingSupport()
         if (!supportCheck.isSupported) {
             const errorMessage = `音頻錄製不支援: ${supportCheck.error || '未知錯誤'}`
             this.logWarning('瀏覽器支援度檢查失敗', supportCheck.error)
@@ -106,8 +106,8 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
             this.recordingState.currentSessionId = sessionId
 
             // 步驟 1: 初始化音頻錄製器
-            this.logInfo('步驟 1: 初始化簡化音頻錄製器')
-            this.audioRecorder = new SimpleAudioRecorder({
+            this.logInfo('步驟 1: 初始化進階音頻錄製器 (Advanced Audio Recorder)')
+            this.audioRecorder = new AdvancedAudioRecorder({
                 segmentDuration: 10000, // 10 秒切片
                 mimeType: 'audio/webm;codecs=opus',
                 audioBitsPerSecond: 128000 // 128 kbps
@@ -395,7 +395,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
      */
     async getDetailedStatus(): Promise<SimpleRecordingServiceStatus> {
         const baseStatus = this.getStatus()
-        const supportCheck = await checkSimpleAudioRecordingSupport()
+        const supportCheck = await checkAdvancedAudioRecordingSupport()
         const cachedCount = await this.getCachedSegmentsCount()
 
         return {
