@@ -1,0 +1,207 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+## Development Notes
+
+- Dependency-Injection everywhere (container + FastAPI `Depends`)
+- Strict TDD workflow: **Red → Green → Refactor** for every ticket
+- Clean, layered architecture (API / Services / Domain / Infra / Core)
+- Async-first, non-blocking I/O only (`httpx`, `aioboto3`, SQLAlchemy 2.0 async)
+- Structured JSON logging with `structlog`
+- Environment-based, typed configuration (`pydantic-settings`, Pydantic v2)
+- OpenTelemetry tracing + Prometheus metrics
+- Graceful startup/shutdown with FastAPI lifespan
+- Health, metrics & readiness endpoints for orchestration
+- Blue-green/containerised deployment (uvicorn + uvloop)
+
+---
+
+- Async context managers for resources
+
+```python
+# Good
+async with aiofiles.open(file_path, "rb") as f:
+    content = await f.read()
+
+# Bad
+f = await aiofiles.open(file_path, "rb")
+content = await f.read()
+f.close()
+```
+
+- Always use structured logging (never `print`)
+
+```python
+# Good
+logger.info(
+    "processing_chunk",
+    extra={"chunk_id": chunk_id, "size": len(data)}
+)
+```
+
+---
+
+## Error-Handling Patterns
+
+```python
+# Good - Specific exception handling
+try:
+    result = await some_operation()
+except ValidationError as e:
+    raise HTTPException(status_code=422, detail=e.errors())
+except ResourceNotFound as e:
+    raise HTTPException(status_code=404, detail=str(e))
+except Exception as e:
+    logger.error("unexpected_error", exc_info=True)
+    raise HTTPException(status_code=500, detail="Internal server error")
+```
+
+### Bare except exceptions (允許的例外情況)
+
+```python
+# Acceptable - JSON parsing with fallback logging
+try:
+    parsed_msg = json.loads(message)
+    # ... process message
+except:  # ✅ 允許：JSON 解析失敗的靜默處理
+    logger.info(f"原始訊息: {message[:100]}...")
+
+# Acceptable - Process cleanup with pass
+try:
+    if process.poll() is None:
+        process.terminate()
+        process.wait(timeout=2)
+except:  # ✅ 允許：進程清理時的靜默失敗處理
+    pass
+```
+
+---
+
+## Synchronous vs Asynchronous Operations
+
+### Threading and Background Tasks
+
+```python
+# Good - Background thread with synchronous sleep
+def _cleanup_expired(self):
+    """後台執行緒中的清理工作"""
+    while True:
+        try:
+            time.sleep(30)  # ✅ 允許：後台執行緒中的同步等待
+            # ... cleanup logic
+        except Exception as e:
+            logger.error(f"清理過程錯誤: {e}")
+
+# Good - Async operations use asyncio.sleep
+async def heartbeat_monitor(self):
+    """異步心跳監控"""
+    while self.is_connected:
+        await asyncio.sleep(self.heartbeat_interval)  # ✅ 正確
+        # ... monitoring logic
+```
+
+### Sleep Usage Guidelines
+- **`time.sleep()`**: 只在**同步後台執行緒**中使用
+- **`asyncio.sleep()`**: 在**異步函數**中使用
+- **避免**: 在主事件循環中使用 `time.sleep()`
+
+---
+
+## WebSocket Patterns
+
+```python
+class ConnectionManager:
+    def __init__(self):
+        self.active: dict[str, WebSocket] = {}
+
+    async def connect(self, ws: WebSocket, client_id: str):
+        await ws.accept()
+        self.active[client_id] = ws
+        logger.info("ws_connected", client_id=client_id)
+
+    async def disconnect(self, client_id: str):
+        if client_id in self.active:
+            del self.active[client_id]
+            logger.info("ws_disconnected", client_id=client_id)
+
+    async def broadcast(self, msg: str, client_id: str):
+        if ws := self.active.get(client_id):
+            try:
+                await ws.send_text(msg)
+            except WebSocketDisconnect:
+                await self.disconnect(client_id)
+```
+
+---
+
+## Database Patterns
+
+```python
+async def get_db():
+    async with AsyncSession(engine) as session, session.begin():
+        yield session
+```
+
+---
+
+# Tests
+
+- pytest + pytest-asyncio
+- tests/ mirrors source tree
+- Fixtures for common data/deps
+- Mock external services (OpenAI, R2, Supabase)
+- Test success & failure paths
+- Coverage ≥ 90%
+
+```python
+@pytest.mark.asyncio
+async def test_process_audio_chunk_success(azure_client_mock, supabase_mock):
+    svc = AudioTranscriptionService(azure_client_mock, "deployment")
+    ok = await svc.process_audio_chunk(uuid4(), 0, b"webm")
+    assert ok is True
+    azure_client_mock.audio.transcriptions.create.assert_called_once()
+```
+
+---
+
+# Performance Considerations
+
+- DB connection pooling
+- Async cache (aioredis TTL)
+- Background tasks for heavy CPU work
+- Stream files with StreamingResponse
+- Proper DB indexes
+- PerformanceTimer wrapper for critical paths
+
+---
+
+# Security
+
+- No secrets in code (use env or secret manager)
+- Validate all inputs with Pydantic
+- CORS allow list, never "*" in prod
+- Rate-limit APIs (SlowAPI / gateway)
+- Sanitize file uploads
+- Secure WebSockets (wss) in production
+
+---
+
+# Logging Levels
+
+- **DEBUG** detailed diagnostics
+- **INFO** high-level flow
+- **WARNING** unusual situations
+- **ERROR** request failed, with stack
+- **CRITICAL** service unusable
+
+---
+
+# Deployment
+- uvicorn[standard] with `--loop uvloop --http httptools`
+- Workers = (2 × CPU) + 1
+- Env-specific `.env.*` files
+- /healthz & /metrics endpoints
+- Graceful shutdown hooks
+- Memory monitoring & cleanup tasks
