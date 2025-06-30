@@ -83,6 +83,103 @@
   - ✅ 加入功能開關 `useSimpleRecordingService`
   - ✅ 保持 WebSocket transcript_feed 不變
 
+### 🚨 Phase 2.5: 修復 WebM Header 問題 (優先處理)
+
+**問題分析:**
+- ✅ 第一個段落（seq=0）：上傳成功，包含完整 WebM EBML header
+- ❌ 後續段落（seq≥1）：HTTP 400 錯誤，缺少 WebM header，`valid_webm()` 驗證失敗
+- 🔍 根因：`MediaRecorder.start(timeslice)` 只在第一個段落包含完整 container header
+
+- [ ] **2.5.1 實作進階分段錄音器 (Advanced Audio Recorder)**
+  - 替換 `SimpleAudioRecorder` 為 `AdvancedAudioRecorder`
+  - 實作無縫 MediaRecorder 切換策略：
+    ```typescript
+    // 核心方案：每10秒重新創建 MediaRecorder
+    let currentRec: MediaRecorder | null = null
+    let nextRec: MediaRecorder | null = null
+    let seq = 0
+
+    function start() {
+      currentRec = makeRecorder()
+      nextRec = makeRecorder()
+      currentRec.start()
+      setTimeout(swap, 10_000)
+    }
+
+    function swap() {
+      currentRec?.stop()          // 觸發 dataavailable
+      nextRec!.start()            // 啟動備用 recorder
+      currentRec = nextRec        // 角色轉換
+      nextRec = makeRecorder()    // 準備下一個
+      if (isRecording) setTimeout(swap, 10_000)
+    }
+    ```
+
+- [ ] **2.5.2 確保音訊連續性**
+  - ✅ **預建策略**：提前創建下一個 MediaRecorder，避免建立延遲
+  - ✅ **buffer 完整性**：MediaRecorder.stop() 會清空所有 buffer，不會漏聲音
+  - ✅ **切換間隙**：stop→start 間隙 ≈ 1-3ms，可接受
+  - 測試驗證：錄製連續音頻確認無丟失
+
+- [ ] **2.5.3 增強錯誤處理**
+  ```typescript
+  function makeRecorderSafe(): MediaRecorder | null {
+    try {
+      if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        throw new Error('瀏覽器不支援 WebM Opus 編碼')
+      }
+      return makeRecorder()
+    } catch (e) {
+      toast.error(`錄音功能異常：${e.message}`)
+      return null
+    }
+  }
+  ```
+
+- [ ] **2.5.4 優化狀態管理**
+  - 整合到 Zustand store：
+    ```typescript
+    const useRecStore = create<RecState>(set => ({
+      status: 'idle' as 'idle'|'recording'|'processing'|'error',
+      sessionId: null,
+      currentSeq: 0,
+      recordingTime: 0,
+      
+      startRecording: (sessionId: string) => set({ 
+        status: 'recording', 
+        sessionId,
+        currentSeq: 0,
+        recordingTime: 0 
+      }),
+      incrementSeq: () => set(state => ({ 
+        currentSeq: state.currentSeq + 1 
+      }))
+    }))
+    ```
+
+- [ ] **2.5.5 整合到錄音服務**
+  - 更新 `SimpleRecordingService` 使用 `AdvancedAudioRecorder`
+  - 確保與現有的 `RestAudioUploader` 正常配合
+  - 保持所有現有功能（重試、暫存、狀態管理）
+
+- [ ] **2.5.6 測試驗證**
+  - ✅ 驗證每個段落（seq 0~N）都能成功上傳（HTTP 201）
+  - ✅ 驗證逐字稿連續產生
+  - ✅ 驗證音訊連續性（無丟失、無重複）
+  - ✅ 測試錯誤情況（網路斷線、瀏覽器不支援等）
+
+### 🔧 Phase 2.6: 後端優化 (可選)
+
+- [ ] **2.6.1 WebM 驗證優化**
+  ```python
+  # 只驗證第一個段落的 WebM header
+  if seq == 0:
+      if not valid_webm(blob[:32]):
+          raise HTTPException(HTTP_400_BAD_REQUEST, "Invalid WebM header")
+  else:
+      logger.debug(f"Segment {seq}: Skipping WebM header validation")
+  ```
+
 ### Phase 3: 後端清理與優化
 
 - [ ] **3.1 移除舊 WebSocket 上傳**
