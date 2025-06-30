@@ -59,54 +59,40 @@ export class SessionService extends BaseService implements ISessionService {
      * 3. 確保返回可用的錄音會話
      */
     async ensureRecordingSession(title?: string, content?: string): Promise<SessionResponse> {
-        this.logInfo('確保錄音會話存在', { title, hasContent: !!content })
+        this.logInfo('確保錄音會話存在 - 強制新建策略', { title, hasContent: !!content })
 
         try {
-            // 1. 嘗試直接創建新會話
-            return await this.createRecordingSession(
+            // 1. 檢查並完成任何現有活躍會話
+            const existingSession = await this.checkActiveSession()
+            if (existingSession) {
+                this.logInfo('檢測到現有活躍會話，準備完成', {
+                    sessionId: existingSession.id,
+                    type: existingSession.type,
+                    status: existingSession.status
+                })
+                
+                await this.finishSession(existingSession.id)
+                this.logSuccess('現有會話已完成', { sessionId: existingSession.id })
+            } else {
+                this.logInfo('沒有現有活躍會話')
+            }
+            
+            // 2. 強制創建新會話
+            const newSession = await this.createRecordingSession(
                 title || `錄音筆記 ${new Date().toLocaleString()}`,
                 content
             )
+            
+            this.logSuccess('強制新建策略完成', {
+                newSessionId: newSession.id,
+                type: newSession.type,
+                status: newSession.status
+            })
+            
+            return newSession
+            
         } catch (error) {
-            // 2. 處理 409 衝突錯誤 - 改為獲取現有會話
-            let originalError = error
-
-            // 如果是 ServiceError，提取原始錯誤
-            if (error && typeof error === 'object' && 'originalError' in error) {
-                originalError = (error as any).originalError
-            }
-
-            if (axios.isAxiosError(originalError) && originalError.response?.status === 409) {
-                this.logInfo('檢測到會話衝突，嘗試獲取現有活躍會話')
-
-                const existingSession = await this.checkActiveSession()
-
-                if (existingSession) {
-                    this.logSuccess('成功獲取現有活躍會話', {
-                        sessionId: existingSession.id,
-                        type: existingSession.type,
-                        status: existingSession.status
-                    })
-
-                    // 確保現有會話是錄音會話
-                    if (existingSession.type === 'recording') {
-                        return existingSession
-                    } else {
-                        // 如果現有會話不是錄音會話，嘗試升級
-                        this.logInfo('現有會話非錄音會話，嘗試升級', {
-                            currentType: existingSession.type
-                        })
-                        return await this.upgradeToRecording(existingSession.id)
-                    }
-                } else {
-                    // 獲取不到現有會話，說明系統狀態異常
-                    this.handleError('確保錄音會話存在',
-                        new Error('會話衝突但無法獲取現有活躍會話，請重新整理頁面'))
-                }
-            }
-
-            // 3. 其他錯誤照丟
-            this.handleError('確保錄音會話存在', error as Error)
+            this.handleError('確保錄音會話存在 - 強制新建策略', error as Error)
         }
     }
 

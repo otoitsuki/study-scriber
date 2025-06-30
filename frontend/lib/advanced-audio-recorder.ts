@@ -169,6 +169,14 @@ export class AdvancedAudioRecorder {
     }
 
     /**
+     * 重置序號
+     */
+    resetSequence(): void {
+        this.sequence = 0
+        console.log('🔄 [AdvancedAudioRecorder] 序號已重置為 0')
+    }
+
+    /**
      * 獲取當前配置
      */
     get currentConfig(): AdvancedAudioRecorderConfig {

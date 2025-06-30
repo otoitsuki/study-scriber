@@ -89,6 +89,15 @@ export class RestAudioUploader {
     }
 
     /**
+     * 重置序號和上傳狀態
+     */
+    resetSequence(): void {
+        this.uploadQueue.clear()
+        this.retryCount.clear()
+        console.log('🔄 [RestAudioUploader] 上傳狀態已重置')
+    }
+
+    /**
      * 上傳音頻段落
      */
     async uploadSegment(sequence: number, blob: Blob): Promise<UploadSegmentResponse> {
@@ -112,6 +121,19 @@ export class RestAudioUploader {
             })
 
             if (!response.ok) {
+                if (response.status === 409) {
+                    // 409 視為冪等成功
+                    console.log(`✅ [RestAudioUploader] 段落 #${sequence} 已存在，視為上傳成功`)
+                    const successResponse = { ack: sequence, size: blob.size, status: 'success' as const }
+                    
+                    // 重置重試計數
+                    this.retryCount.delete(sequence)
+                    
+                    // 觸發成功回調
+                    this.onUploadSuccessCallback?.(sequence, successResponse)
+                    
+                    return successResponse
+                }
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`)
             }
 

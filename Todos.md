@@ -229,6 +229,291 @@
 
 ---
 
+## 🚨 緊急修復：逐字稿無法產生問題 (2024-12-30)
+
+### 問題分析
+**根本原因**：音頻段落序號衝突導致 HTTP 409 錯誤
+- 現象：所有音頻段落上傳都返回 409 Conflict
+- 根因：系統重用現有會話時，`audio_files` 表中已存在相同的 `(session_id, chunk_sequence)` 記錄
+- 影響：逐字稿無法產生，整個錄音功能失效
+
+### 🔥 修復任務 (最高優先級)
+
+- [ ] **Task 1: 修改 RestAudioUploader 將 HTTP 409 視為冪等成功**
+  - 📁 檔案：`frontend/lib/rest-audio-uploader.ts`
+  - 🎯 修改 `uploadSegment()` 方法錯誤處理邏輯
+  - 📋 實作細節：
+    ```typescript
+    if (!response.ok) {
+        if (response.status === 409) {
+            // 409 視為冪等成功
+            console.log(`✅ [RestAudioUploader] 段落 #${sequence} 已存在，視為上傳成功`)
+            const successResponse = { ack: sequence, size: blob.size, status: 'success' as const }
+            this.onUploadSuccessCallback?.(sequence, successResponse)
+            return successResponse
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+    ```
+  - ✅ 驗證標準：上傳重複序號時返回成功響應，觸發成功回調
+
+- [ ] **Task 2: 修改 SessionService 強制創建新會話策略**
+  - 📁 檔案：`frontend/lib/services/session-service.ts`
+  - 🎯 修改 `ensureRecordingSession()` 方法為強制新建策略
+  - 📋 實作細節：
+    ```typescript
+    async ensureRecordingSession(title?: string, content?: string): Promise<SessionResponse> {
+        // 1. 檢查並完成任何現有活躍會話
+        const existingSession = await this.checkActiveSession()
+        if (existingSession) {
+            await this.finishSession(existingSession.id)
+        }
+        
+        // 2. 強制創建新會話
+        return await this.createRecordingSession(title, content)
+    }
+    ```
+  - ✅ 驗證標準：每次都創建新會話，舊會話被正確完成
+
+- [ ] **Task 3: 在錄音器中添加序號重置機制**
+  - 📁 檔案：`frontend/lib/advanced-audio-recorder.ts`, `frontend/lib/rest-audio-uploader.ts`
+  - 🎯 添加 `resetSequence()` 方法，確保新會話時序號從 0 開始
+  - 📋 實作細節：
+    ```typescript
+    // AdvancedAudioRecorder
+    resetSequence(): void {
+        this.sequence = 0
+        console.log('🔄 [AdvancedAudioRecorder] 序號已重置為 0')
+    }
+    
+    // RestAudioUploader
+    resetSequence(): void {
+        this.uploadQueue.clear()
+        this.retryCount.clear()
+        console.log('🔄 [RestAudioUploader] 上傳狀態已重置')
+    }
+    ```
+  - 🔗 依賴：Task 2 (SessionService 修改)
+  - ✅ 驗證標準：新錄音開始時序號確實從 0 開始
+
+- [ ] **Task 4: 測試和驗證修復效果**
+  - 🎯 全面測試修復後的逐字稿功能
+  - 📋 測試場景：
+    - **基本功能**：新錄音 → 會話創建 → 音頻上傳 → 逐字稿生成
+    - **序號衝突**：驗證 409 錯誤被正確處理為成功
+    - **邊緣情況**：快速停止/重啟、網路中斷、瀏覽器重新整理
+    - **回歸測試**：確保不影響其他現有功能
+  - 🔗 依賴：Task 1, 2, 3 全部完成
+  - ✅ 驗證標準：逐字稿正常產生，控制台無 409 錯誤，音頻上傳成功率 100%
+
+### 📊 修復策略優勢
+- **最小侵入性**：只修改前端邏輯，保持後端 API 不變
+- **冪等處理**：409 錯誤變為成功，消除重試開銷
+- **狀態一致**：強制新會話確保序號從 0 開始
+- **向後兼容**：不影響其他功能模塊
+
+### ⏱️ 預估時間
+- Task 1: 2-3 小時
+- Task 2: 2-3 小時  
+- Task 3: 1-2 小時
+- Task 4: 2-4 小時
+- **總計：7-12 小時**
+
+---
+
+## 🚨 緊急修復：逐字稿更新停止問題 (2024-12-30)
+
+### 問題分析
+**根本原因**：Azure OpenAI Whisper API 頻率限制 (429 錯誤) 導致逐字稿更新停止
+- 現象：`HTTP 429 Too Many Requests` 頻繁出現，重試間隔從 7 秒激增到 39 秒
+- 根因：缺乏流量控制，處理速度跟不上音頻產生速度，造成積壓
+- 影響：轉錄任務堆積，逐字稿無法持續更新，用戶體驗嚴重受影響
+
+### 🔥 修復任務 (最高優先級)
+
+- [ ] **Task 1: Azure OpenAI 客戶端優化**
+  - 📁 檔案：`app/services/azure_openai_v2.py`
+  - 🎯 升級為異步客戶端，優化 timeout 和重試配置
+  - 📋 實作細節：
+    ```python
+    from openai import AsyncAzureOpenAI
+    from httpx import Timeout
+    
+    TIMEOUT = Timeout(connect=5, read=55, write=30, pool=5)
+    
+    def get_client() -> AsyncAzureOpenAI:
+        return AsyncAzureOpenAI(
+            api_key=settings.AZURE_OPENAI_API_KEY,
+            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+            api_version="2024-06-01",
+            timeout=TIMEOUT,
+            max_retries=2,  # 由 5 次降到 2 次，避免積壓
+        )
+    
+    client = get_client()
+    ```
+  - ✅ 驗證標準：客戶端超時配置生效，重試次數減少
+
+- [ ] **Task 2: 智能頻率限制處理**
+  - 📁 檔案：`app/services/azure_openai_v2.py`
+  - 🎯 實作自定義退避策略，避免過長等待
+  - 📋 實作細節：
+    ```python
+    class RateLimitHandler:
+        def __init__(self):
+            self._delay = 0
+    
+        async def wait(self):
+            if self._delay:
+                await asyncio.sleep(self._delay)
+    
+        def backoff(self):
+            self._delay = min((self._delay or 5)*2, 60)  # 最大 60 秒
+    
+        def reset(self):
+            self._delay = 0
+    
+    rate_limit = RateLimitHandler()
+    
+    # 在 _transcribe_audio() 前後插入
+    async def _transcribe_audio(self, webm_data: bytes, session_id: UUID, chunk_sequence: int):
+        await rate_limit.wait()
+        try:
+            # ... 轉錄邏輯
+            resp = await client.audio.transcriptions.create(
+                model=self.deployment_name,
+                file=audio_file,
+                language="zh",
+                response_format="text"
+            )
+            rate_limit.reset()
+            return resp
+        except openai.RateLimitError:
+            rate_limit.backoff()
+            raise
+    ```
+  - ✅ 驗證標準：429 錯誤時智能退避，成功時重置延遲
+
+- [ ] **Task 3: 併發控制 & 任務優先級**
+  - 📁 檔案：`app/services/azure_openai_v2.py`
+  - 🎯 實作優先級隊列和併發控制，確保順序處理
+  - 📋 實作細節：
+    ```python
+    from asyncio import PriorityQueue, Semaphore
+    
+    # 0 = high priority (補傳); 1 = normal
+    queue: PriorityQueue[tuple[int, dict]] = PriorityQueue()
+    sem = Semaphore(1)  # 單並發保證順序
+    
+    async def enqueue(job: dict, priority: int = 1):
+        await queue.put((priority, job))
+    
+    async def worker():
+        while True:
+            _, job = await queue.get()
+            async with sem:
+                try:
+                    await process(job)  # 包含 _transcribe_audio
+                except openai.RateLimitError:
+                    await enqueue(job, 0)  # 排回高優先等待
+            queue.task_done()
+    
+    # 修改 SimpleAudioTranscriptionService 使用 worker 模式
+    ```
+  - ✅ 驗證標準：一次只有 1 個 Whisper API 呼叫，失敗任務高優先級重試
+
+- [ ] **Task 4: 積壓檢測 & 前端通知**
+  - 📁 檔案：`app/services/azure_openai_v2.py`, `app/ws/transcript_feed.py`
+  - 🎯 監控隊列積壓，及時通知前端用戶
+  - 📋 實作細節：
+    ```python
+    # 後端積壓監控
+    async def backlog_monitor():
+        while True:
+            size = queue.qsize()
+            if size > 30:  # 超過 5 分鐘積壓 (30 任務 × 10秒)
+                for session_id in manager.active_connections:
+                    await manager.broadcast(
+                        json.dumps({"event": "stt_backlog", "size": size}),
+                        session_id
+                    )
+            await asyncio.sleep(10)
+    
+    # 前端處理 (frontend/lib/websocket.ts)
+    ws.onmessage = e => {
+        const m = JSON.parse(e.data)
+        if (m.event === 'stt_backlog') {
+            showBanner(`轉錄擁塞：隊列 ${m.size}，逐字稿將延遲`)
+        }
+    }
+    ```
+  - ✅ 驗證標準：積壓超閾值觸發 WebSocket 通知，前端顯示橙色 Banner
+
+- [ ] **Task 5: 監控與日誌優化**
+  - 📁 檔案：`app/services/azure_openai_v2.py`, `app/main.py`, `pyproject.toml`
+  - 🎯 整合 Prometheus 監控，提供詳細的效能指標
+  - 📋 實作細節：
+    ```python
+    # 添加依賴到 pyproject.toml
+    dependencies = [
+        # ... 現有依賴
+        "prometheus-client",
+    ]
+    
+    # 監控指標
+    import prometheus_client as prom
+    
+    REQ_TOTAL = prom.Counter("whisper_req_total", "Total calls", ["status"])
+    LATENCY_SEC = prom.Summary("whisper_latency_seconds", "Latency")
+    BACKLOG_GA = prom.Gauge("whisper_backlog_size", "Queue size")
+    
+    @LATENCY_SEC.time()
+    async def process(job):
+        try:
+            REQ_TOTAL.labels("ok").inc()
+            # ... 處理邏輯
+        except openai.RateLimitError:
+            REQ_TOTAL.labels("429").inc()
+            raise
+        finally:
+            BACKLOG_GA.set(queue.qsize())
+    
+    # 在 app/main.py 新增 /metrics 端點
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    
+    @app.get("/metrics")
+    def metrics():
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    ```
+  - ✅ 驗證標準：`/metrics` 端點可被 curl 存取，顯示 `whisper_req_total`、`whisper_backlog_size` 等指標
+
+### 📊 修復策略優勢
+- **智能流量控制**：避免 API 頻率限制，維持穩定處理速度
+- **優雅降級處理**：積壓時不會完全停止，提供用戶反饋
+- **完整監控體系**：Prometheus 指標幫助即時診斷問題
+- **最小侵入性**：保持現有架構，僅優化關鍵瓶頸點
+
+### ⏱️ 預估時間
+- Task 1: 2-3 小時（客戶端升級 + 配置調整）
+- Task 2: 3-4 小時（頻率限制處理器 + 集成測試）
+- Task 3: 4-5 小時（隊列系統 + Worker 模式重構）
+- Task 4: 2-3 小時（積壓監控 + WebSocket 通知）
+- Task 5: 3-4 小時（Prometheus 整合 + 監控面板）
+- **總計：14-19 小時**
+
+### 🎯 預期效果
+**立即改善：**
+- 429 錯誤重試時間從 39 秒降低到 <10 秒
+- 處理積壓狀況緩解，逐字稿更新恢復正常
+- 用戶獲得清楚的狀態反饋
+
+**長期穩定：**
+- 智能流量控制避免頻率限制
+- 完整的監控和警報機制
+- 優雅降級，不會完全停止服務
+
+---
+
 ## 🎯 預期效果
 
 ### ✅ **解決的問題**
