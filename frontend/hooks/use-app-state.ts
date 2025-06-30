@@ -371,11 +371,12 @@ export function useAppState() {
     })
 
     const transcriptEntries = recording.transcripts.map((transcriptMsg: TranscriptMessage) => {
-      // 使用 start_time 或 timestamp 計算時間
+      // 使用 start_time 並轉換為 HH:MM:SS 格式
       const startTime = transcriptMsg.start_time ?? 0
-      const minutes = Math.floor(startTime / 60)
+      const hours = Math.floor(startTime / 3600)
+      const minutes = Math.floor((startTime % 3600) / 60)
       const seconds = Math.floor(startTime % 60)
-      const timeStr = `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+      const timeStr = `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
 
       console.log('📝 [逐字稿轉換] 單個片段:', {
         text: transcriptMsg.text,

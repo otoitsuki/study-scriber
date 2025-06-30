@@ -122,9 +122,10 @@ export function useRecordingNew(): UseRecordingNewReturn {
 
     // 使用 Context 更新逐字稿 - 轉換為 TranscriptEntry 格式
     const startTime = transcript.start_time ?? 0
-    const minutes = Math.floor(startTime / 60)
+    const hours = Math.floor(startTime / 3600)
+    const minutes = Math.floor((startTime % 3600) / 60)
     const seconds = Math.floor(startTime % 60)
-    const timeStr = `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+    const timeStr = `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
 
     const transcriptEntry = {
       time: timeStr,

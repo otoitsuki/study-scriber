@@ -55,27 +55,10 @@ export function RecordingActiveState({ transcriptEntries, onStopRecording }: Rec
     // 手動切換自動捲動鎖定狀態
     const toggleAutoScrollLock = useCallback(() => setIsAutoScrollLocked(prev => !prev), [])
 
-    // 合併相近段落，減少行數
+    // 禁用合併段落邏輯 - 用戶要求一句話一個時間戳
     const mergeSegments = useCallback((entries: TranscriptEntry[]): TranscriptEntry[] => {
-        if (entries.length <= 1) return entries
-        const merged: TranscriptEntry[] = []
-        let current = { ...entries[0] }
-        for (let i = 1; i < entries.length; i++) {
-            const next = entries[i]
-            const diff =
-                Math.abs(
-                    parseInt(next.time.split(":")[0]) * 60 + parseInt(next.time.split(":")[1]) -
-                    (parseInt(current.time.split(":")[0]) * 60 + parseInt(current.time.split(":")[1]))
-                )
-            if (diff <= 5 && current.text.length + next.text.length < 200) {
-                current = { time: current.time, text: current.text.trim() + " " + next.text.trim() }
-            } else {
-                merged.push(current)
-                current = { ...next }
-            }
-        }
-        merged.push(current)
-        return merged
+        // 直接返回原始條目，不進行任何合併
+        return entries
     }, [])
 
     // 自動捲動

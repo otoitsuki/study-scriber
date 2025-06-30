@@ -231,13 +231,12 @@ export class RecordingFlowService extends BaseService {
 
     try {
       if (message.type === 'transcript' && message.text) {
-        // 格式化時間戳
-        const time = new Date(message.timestamp || Date.now()).toLocaleTimeString('zh-TW', {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        })
+        // 使用 start_time 並轉換為 HH:MM:SS 格式
+        const startTime = message.start_time ?? 0
+        const hours = Math.floor(startTime / 3600)
+        const minutes = Math.floor((startTime % 3600) / 60)
+        const seconds = Math.floor(startTime % 60)
+        const time = `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
 
         // 添加逐字稿項目
         const entry = {

@@ -92,42 +92,14 @@ export function useTranscript(): UseTranscriptReturn {
         })
     }, [transcripts.length])
 
-    // 逐字稿片段合併邏輯 - 相鄰 ≤1 s 合併段落
+    // 逐字稿片段合併邏輯 - 禁用合併，確保每句話都有獨立時間戳
     const mergeSegments = useCallback((
         existingSegments: TranscriptMessage[],
         newSegment: TranscriptMessage
     ): TranscriptMessage[] => {
-        if (!newSegment.start_time) {
-            // 如果沒有時間戳，直接添加到末尾
-            return [...existingSegments, newSegment]
-        }
-
-        const mergeThreshold = 1.0 // 1秒內的片段可以合併
-
-        // 尋找可以合併的相鄰片段
-        const lastSegmentIndex = existingSegments.length - 1
-        const lastSegment = existingSegments[lastSegmentIndex]
-
-        if (lastSegment &&
-            lastSegment.end_time &&
-            Math.abs(newSegment.start_time - lastSegment.end_time) <= mergeThreshold) {
-
-            // 合併片段
-            const mergedSegment: TranscriptMessage = {
-                ...lastSegment,
-                text: (lastSegment.text || '') + ' ' + (newSegment.text || ''),
-                end_time: newSegment.end_time || lastSegment.end_time,
-                end_sequence: newSegment.end_sequence || lastSegment.end_sequence,
-            }
-
-            return [
-                ...existingSegments.slice(0, lastSegmentIndex),
-                mergedSegment
-            ]
-        } else {
-            // 不需要合併，直接添加
-            return [...existingSegments, newSegment]
-        }
+        // 禁用合併邏輯，直接添加新片段
+        // 用戶要求：「一句話一個時間戳」，不要將逐字稿合併
+        return [...existingSegments, newSegment]
     }, [])
 
     // 自動捲動功能

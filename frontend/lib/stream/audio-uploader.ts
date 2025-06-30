@@ -91,10 +91,10 @@ export class AudioUploader {
     }
 
     /**
-     * 發送音訊切片（改善的 4-byte sequence + Blob 格式）
-     * 根據新的 SegmentedAudioRecorder 優化傳送協議
+     * 發送音訊切片（修正的 4-byte sequence + Blob 格式）
+     * 合併序號和音檔數據為一個二進制消息，使用小端序與後端匹配
      */
-    send(blob: Blob, sequence?: number): void {
+    async send(blob: Blob, sequence?: number): Promise<void> {
         if (this.ws?.readyState !== WebSocket.OPEN) {
             console.warn('⚠️ [AudioUploader] WebSocket 未連接，無法發送音訊數據', {
                 readyState: this.ws?.readyState,
@@ -115,19 +115,27 @@ export class AudioUploader {
             timestamp: new Date().toISOString()
         })
 
-        // 方法 1：分別發送序號和 Blob（推薦方式）
-        // 4-byte sequence + Blob 數據
-        const sequenceBuffer = new ArrayBuffer(4)
-        const sequenceView = new DataView(sequenceBuffer)
-        sequenceView.setUint32(0, currentSequence, false) // big-endian 確保後端正確解析
-
         try {
-            // 先發送 4-byte 序號
-            this.ws.send(sequenceBuffer)
-            // 再發送 Blob 數據
-            this.ws.send(blob)
+            // 修正：將序號和音檔數據合併為一個二進制消息
+            // 4-byte sequence (小端序) + Blob 數據
+            const sequenceBuffer = new ArrayBuffer(4)
+            const sequenceView = new DataView(sequenceBuffer)
+            sequenceView.setUint32(0, currentSequence, true) // true = 小端序，與後端匹配
 
-            console.log(`✅ [AudioUploader] 音訊切片 #${currentSequence} 發送成功: ${blob.size} bytes`)
+            // 將序號和音檔數據合併
+            const blobArrayBuffer = await blob.arrayBuffer()
+            const combinedBuffer = new ArrayBuffer(4 + blobArrayBuffer.byteLength)
+            const combinedView = new Uint8Array(combinedBuffer)
+
+            // 複製序號到合併緩衝區
+            combinedView.set(new Uint8Array(sequenceBuffer), 0)
+            // 複製音檔數據到合併緩衝區
+            combinedView.set(new Uint8Array(blobArrayBuffer), 4)
+
+            // 一次性發送合併的二進制數據
+            this.ws.send(combinedBuffer)
+
+            console.log(`✅ [AudioUploader] 音訊切片 #${currentSequence} 發送成功: ${blob.size} bytes (總計: ${combinedBuffer.byteLength} bytes)`)
 
             // DEV 模式診斷計數
             if (process.env.NODE_ENV === 'development') {

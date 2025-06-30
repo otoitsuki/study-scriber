@@ -144,27 +144,17 @@ export function useRecording(): UseRecordingReturn {
     if (data.missing.length > 0) {
       console.warn('⚠️ [useRecording] 有遺失的音檔段落需要重傳:', data.missing)
 
-      // 實作重傳機制
-      data.missing.forEach(sequence => {
-        const retryCount = retryCountsRef.current.get(sequence) ?? 0
-
-        if (retryCount < 5) { // 最多重傳 5 次
-          retryCountsRef.current.set(sequence, retryCount + 1)
-
-          // 尋找對應的音檔段落進行重傳（如果還存在）
-          if (segmentsRef.current[sequence]) {
-            console.log(`🔄 [useRecording] 重傳音檔段落 #${sequence} (第 ${retryCount + 1} 次)`)
-            audioUploader.send(segmentsRef.current[sequence].blob, sequence)
-          }
-        } else {
-          console.error(`❌ [useRecording] 音檔段落 #${sequence} 重傳次數已達上限`)
+      // 重發遺失的段落
+      data.missing.forEach(async (sequence) => {
+        if (segmentsRef.current[sequence]) {
+          await audioUploader.send(segmentsRef.current[sequence].blob, sequence)
         }
       })
     }
   }, [])
 
   // 處理音檔段落 - 使用新的 SegmentedAudioRecorder
-  const handleAudioSegment = useCallback((segment: AudioSegment) => {
+  const handleAudioSegment = useCallback(async (segment: AudioSegment) => {
     console.log(`🎵 [useRecording] 收到音檔段落 #${segment.sequence}, 大小: ${segment.blob.size} bytes`)
 
     // 儲存段落供重傳使用
@@ -172,7 +162,7 @@ export function useRecording(): UseRecordingReturn {
 
     // 使用改善的 AudioUploader 發送
     if (audioUploader.isConnected) {
-      audioUploader.send(segment.blob, segment.sequence)
+      await audioUploader.send(segment.blob, segment.sequence)
     } else {
       console.warn('⚠️ [useRecording] AudioUploader 未連接，無法發送段落')
     }

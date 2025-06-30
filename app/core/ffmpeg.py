@@ -9,11 +9,185 @@ import subprocess
 import shlex
 import logging
 from typing import Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 # FFmpeg 命令：WebM 輸入 → 16kHz 單聲道 PCM 輸出
 FFMPEG_CMD = "ffmpeg -i pipe:0 -ac 1 -ar 16000 -f s16le pipe:1 -loglevel error"
+
+
+@dataclass
+class WebMHeaderInfo:
+    """WebM 檔頭信息數據類"""
+    is_complete: bool = False
+    has_ebml_header: bool = False
+    has_segment: bool = False
+    header_size: int = 0
+    codec_type: str = "unknown"
+    track_count: int = 0
+    error_message: Optional[str] = None
+
+
+def detect_webm_header_info(data: bytes) -> WebMHeaderInfo:
+    """
+    檢測 WebM 檔頭信息
+
+    Args:
+        data: WebM 音頻二進制數據
+
+    Returns:
+        WebMHeaderInfo: 檔頭信息
+    """
+    info = WebMHeaderInfo()
+
+    if not data or len(data) < 16:
+        info.error_message = "數據長度不足"
+        return info
+
+    try:
+        # 檢查 EBML 標頭 (0x1A45DFA3)
+        if data[:4] == b'\x1A\x45\xDF\xA3':
+            info.has_ebml_header = True
+
+            # 簡單檢測 Segment 元素 (0x18538067)
+            if b'\x18\x53\x80\x67' in data[:1024]:
+                info.has_segment = True
+
+                # 估算檔頭大小（簡化版本）
+                cluster_pos = data.find(b'\x1F\x43\xB6\x75')  # Cluster 標記
+                if cluster_pos > 0:
+                    info.header_size = cluster_pos
+                else:
+                    info.header_size = min(len(data), 512)  # 預設估算
+
+                info.is_complete = True
+                info.codec_type = "opus" if b'Opus' in data[:1024] else "vorbis"
+                info.track_count = 1  # 簡化假設只有一個音軌
+            else:
+                info.error_message = "缺少 Segment 元素"
+        else:
+            info.error_message = "缺少 EBML 檔頭"
+
+    except Exception as e:
+        info.error_message = f"檢測異常: {str(e)}"
+
+    return info
+
+
+def is_webm_header_complete(data: bytes) -> bool:
+    """
+    檢查 WebM 檔頭是否完整
+
+    Args:
+        data: WebM 音頻二進制數據
+
+    Returns:
+        bool: 如果檔頭完整則返回 True
+    """
+    if not data or len(data) < 16:
+        return False
+
+    # 檢查 EBML 檔頭
+    if data[:4] != b'\x1A\x45\xDF\xA3':
+        return False
+
+    # 檢查是否包含 Segment 元素
+    return b'\x18\x53\x80\x67' in data[:1024]
+
+
+def detect_audio_format(audio_data: bytes) -> str:
+    """
+    檢測音頻格式
+
+    Args:
+        audio_data: 音頻二進制數據
+
+    Returns:
+        str: 檢測到的音頻格式 ('webm', 'mp4', 'ogg', 'wav', 'unknown')
+    """
+    if not audio_data or len(audio_data) < 16:
+        return 'unknown'
+
+    # 檢查檔案頭簽名
+    header = audio_data[:16]
+
+    # WebM 格式 (EBML header)
+    if header.startswith(b'\x1A\x45\xDF\xA3'):
+        return 'webm'
+
+    # MP4 格式 (ftypMSNV for fragmented MP4, ftyp for regular MP4)
+    if b'ftyp' in header[:8] or header[4:8] == b'ftyp':
+        return 'mp4'
+
+    # OGG 格式
+    if header.startswith(b'OggS'):
+        return 'ogg'
+
+    # WAV 格式 (RIFF header)
+    if header.startswith(b'RIFF') and header[8:12] == b'WAVE':
+        return 'wav'
+
+    # 檢查更大範圍內的 MP4 格式標識
+    search_range = min(len(audio_data), 64)
+    for i in range(search_range - 4):
+        if audio_data[i:i+4] == b'ftyp':
+            return 'mp4'
+
+    logger.debug(f"Unknown audio format, header: {header.hex()}")
+    return 'unknown'
+
+
+def check_ffmpeg_health() -> dict:
+    """
+    檢查 FFmpeg 健康狀態
+
+    Returns:
+        dict: 包含 FFmpeg 狀態信息的字典
+    """
+    try:
+        # 檢查 FFmpeg 是否可用
+        result = subprocess.run(['ffmpeg', '-version'],
+                              capture_output=True, text=True, timeout=5)
+
+        if result.returncode == 0:
+            # 解析版本信息
+            version_line = result.stdout.split('\n')[0]
+            version = version_line.split(' ')[2] if len(version_line.split(' ')) > 2 else 'unknown'
+
+            return {
+                'ffmpeg_available': True,
+                'status': 'healthy',
+                'version': version,
+                'active_processes': 0,  # 簡化版本，不追踪活躍進程
+                'pooled_processes': 0,
+                'max_processes': 3
+            }
+        else:
+            return {
+                'ffmpeg_available': False,
+                'status': 'error',
+                'error': 'FFmpeg command failed'
+            }
+
+    except FileNotFoundError:
+        return {
+            'ffmpeg_available': False,
+            'status': 'not_found',
+            'error': 'FFmpeg not installed'
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            'ffmpeg_available': False,
+            'status': 'timeout',
+            'error': 'FFmpeg version check timeout'
+        }
+    except Exception as e:
+        return {
+            'ffmpeg_available': False,
+            'status': 'error',
+            'error': str(e)
+        }
 
 
 async def webm_to_pcm(webm: bytes) -> bytes:

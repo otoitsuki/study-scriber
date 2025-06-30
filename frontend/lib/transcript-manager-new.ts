@@ -154,13 +154,14 @@ export class TranscriptManager {
         })
 
         // 轉換為 UI 格式並推送到 store
+        // 使用 start_time 並轉換為 HH:MM:SS 格式
+        const startTimeInSeconds = msg.start_time ?? 0
+        const hours = Math.floor(startTimeInSeconds / 3600)
+        const minutes = Math.floor((startTimeInSeconds % 3600) / 60)
+        const seconds = Math.floor(startTimeInSeconds % 60)
+
         const entry: TranscriptEntry = {
-            time: new Date(msg.timestamp).toLocaleTimeString('zh-TW', {
-                hour12: false,
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            }),
+            time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
             text: msg.text
         }
 

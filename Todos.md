@@ -342,3 +342,28 @@ async def process_and_transcribe(sid: UUID, seq: int, webm_blob: bytes):
         logger.error(f"轉錄失敗 segment {seq}: {e}")
         await transcript_hub.broadcast_error(sid, seq, str(e))
 ```
+
+# Study Scriber 開發清單
+
+## 已完成 ✅
+- 逐字稿時間戳顯示修正
+  - ✅ 修正時間戳來源：使用 `start_time` 而不是 `timestamp`
+  - ✅ 修正時間格式：改為 `HH:MM:SS` 而不是 `MM:SS`
+  - ✅ 禁用逐字稿合併邏輯，確保一句話一個時間戳
+  - ✅ **根本問題修正：前端音頻上傳協議**
+    - 修正前：分兩次發送序號和音檔數據，使用大端序
+    - 修正後：合併為一個二進制消息，使用小端序
+    - 現在 `chunk_sequence` 可以正確遞增 (0, 1, 2, ...)
+    - 時間戳將顯示為：00:00:00, 00:00:10, 00:00:20, ...
+  - ✅ 修正的檔案包括：
+    - frontend/lib/transcript-manager.ts
+    - frontend/lib/transcript-manager-new.ts  
+    - frontend/hooks/use-app-state.ts
+    - frontend/hooks/use-recording-new.ts
+    - frontend/hooks/use-transcript-new.ts
+    - frontend/hooks/use-transcript.ts
+    - frontend/hooks/use-app-state-context.ts
+    - frontend/app/page.tsx
+    - frontend/lib/services/recording-flow-service.ts
+    - frontend/components/recording-active-state.tsx
+    - **frontend/lib/stream/audio-uploader.ts** (關鍵修正)

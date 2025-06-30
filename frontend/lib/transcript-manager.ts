@@ -259,20 +259,20 @@ export class TranscriptManager {
       // 🎯 轉換 transcript_segment 為 TranscriptEntry 格式並推送到 store
       if (message.text) {
         try {
-          // 使用當前時間作為 fallback，確保時間格式正確
-          const timestamp = message.timestamp ? new Date(message.timestamp) : new Date()
+          // 使用 start_time 而不是 timestamp，並轉換為 HH:MM:SS 格式
+          const startTimeInSeconds = message.start_time ?? 0
+          const hours = Math.floor(startTimeInSeconds / 3600)
+          const minutes = Math.floor((startTimeInSeconds % 3600) / 60)
+          const seconds = Math.floor(startTimeInSeconds % 60)
+
           const entry = {
-            time: timestamp.toLocaleTimeString('zh-TW', {
-              hour12: false,
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit'
-            }),
+            time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
             text: message.text
           }
 
           console.log('🎯 [TranscriptManager] 準備推送 transcript_segment 到 store:', {
-            originalTimestamp: message.timestamp,
+            originalStartTime: message.start_time,
+            startTimeInSeconds,
             formattedTime: entry.time,
             text: entry.text.substring(0, 50) + '...'
           })
