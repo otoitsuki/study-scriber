@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(False, alias="debug")
 
     # 音頻切片配置
-    AUDIO_CHUNK_DURATION_SEC: int = Field(12, description="音頻切片時長（秒）")
+    AUDIO_CHUNK_DURATION_SEC: int = Field(10, description="音頻切片時長（秒）")
 
     # 你可以依需求再加更多欄位
 

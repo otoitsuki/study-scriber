@@ -10,6 +10,10 @@ export class AudioUploader {
     private ws: WebSocket | null = null
     private sessionId: string | null = null
     private sequenceNumber = 0  // 音訊切片序號
+    private reconnectAttempts = 0  // 重連嘗試次數
+    private maxReconnectAttempts = 5  // 最大重連次數
+    private reconnectDelay = 1000  // 重連延遲（毫秒）
+    private pendingChunks: Map<number, Blob> = new Map()  // 待重發的音訊切片
 
     /**
      * 連接音訊上傳 WebSocket
@@ -17,6 +21,8 @@ export class AudioUploader {
     async connect(sessionId: string): Promise<void> {
         this.sessionId = sessionId
         this.sequenceNumber = 0  // 重置序號
+        this.reconnectAttempts = 0  // 重置重連計數
+        this.pendingChunks.clear()  // 清空待處理切片
 
         const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
         const wsUrl = `${wsBaseUrl}/ws/upload_audio/${sessionId}`
@@ -42,8 +48,14 @@ export class AudioUploader {
                 console.log('🔌 [AudioUploader] WebSocket 連接已關閉:', {
                     code: event.code,
                     reason: event.reason,
-                    sessionId: this.sessionId
+                    sessionId: this.sessionId,
+                    wasClean: event.wasClean
                 })
+
+                // 如果不是手動關閉，嘗試重連
+                if (!event.wasClean && this.sessionId && this.reconnectAttempts < this.maxReconnectAttempts) {
+                    this.attemptReconnect()
+                }
             }
 
             this.ws.onmessage = (event) => {
@@ -79,60 +91,145 @@ export class AudioUploader {
     }
 
     /**
-     * 發送音訊切片（包含序號）
+     * 發送音訊切片（改善的 4-byte sequence + Blob 格式）
+     * 根據新的 SegmentedAudioRecorder 優化傳送協議
      */
-    send(blob: Blob): void {
+    send(blob: Blob, sequence?: number): void {
         if (this.ws?.readyState !== WebSocket.OPEN) {
             console.warn('⚠️ [AudioUploader] WebSocket 未連接，無法發送音訊數據', {
                 readyState: this.ws?.readyState,
                 expectedState: WebSocket.OPEN,
-                sessionId: this.sessionId
+                sessionId: this.sessionId,
+                sequence: sequence ?? this.sequenceNumber
             })
             return
         }
 
-        // 建立包含序號的資料包（與 AudioUploadWebSocket 相同格式）
+        // 使用傳入的序號或內部序號
+        const currentSequence = sequence ?? this.sequenceNumber
+
+        console.log(`📤 [AudioUploader] 準備發送音訊切片 #${currentSequence}`, {
+            blobSize: blob.size,
+            mimeType: blob.type,
+            sessionId: this.sessionId,
+            timestamp: new Date().toISOString()
+        })
+
+        // 方法 1：分別發送序號和 Blob（推薦方式）
+        // 4-byte sequence + Blob 數據
         const sequenceBuffer = new ArrayBuffer(4)
         const sequenceView = new DataView(sequenceBuffer)
-        sequenceView.setUint32(0, this.sequenceNumber, true) // little-endian
+        sequenceView.setUint32(0, currentSequence, false) // big-endian 確保後端正確解析
 
-        // 合併序號和音訊資料
-        blob.arrayBuffer().then(audioBuffer => {
-            const combinedBuffer = new ArrayBuffer(sequenceBuffer.byteLength + audioBuffer.byteLength)
-            const combinedView = new Uint8Array(combinedBuffer)
+        try {
+            // 先發送 4-byte 序號
+            this.ws.send(sequenceBuffer)
+            // 再發送 Blob 數據
+            this.ws.send(blob)
 
-            combinedView.set(new Uint8Array(sequenceBuffer), 0)
-            combinedView.set(new Uint8Array(audioBuffer), sequenceBuffer.byteLength)
-
-            this.ws!.send(combinedBuffer)
-
-            console.log(`📤 [AudioUploader] 發送音訊切片 #${this.sequenceNumber}: ${blob.size} bytes`)
+            console.log(`✅ [AudioUploader] 音訊切片 #${currentSequence} 發送成功: ${blob.size} bytes`)
 
             // DEV 模式診斷計數
             if (process.env.NODE_ENV === 'development') {
-                if (!(window as any).__rec) {
-                    (window as any).__rec = {
-                        chunksSent: 0,
-                        totalBytes: 0,
-                        isRecording: false,
-                        sessionId: null
-                    }
-                }
-
-                const rec = (window as any).__rec
-                rec.chunksSent++
-                rec.totalBytes += blob.size
-                rec.sessionId = this.sessionId
-                rec.isRecording = true
-                rec.lastSequence = this.sequenceNumber
-
-                console.log(`🔍 [AudioUploader] DEV 診斷: 已發送 ${rec.chunksSent} 個切片，總計 ${rec.totalBytes} bytes，最後序號 ${this.sequenceNumber}`)
+                this.updateDevDiagnostics(currentSequence, blob.size)
             }
 
-            // 遞增序號
-            this.sequenceNumber++
-        }).catch(error => {
-            console.error('❌ [AudioUploader] 音訊數據轉換失敗:', error)
+            // 只有使用內部序號時才遞增
+            if (sequence === undefined) {
+                this.sequenceNumber++
+            }
+
+        } catch (error) {
+            console.error(`❌ [AudioUploader] 發送音訊切片 #${currentSequence} 失敗:`, error)
+            this.handleSendError(currentSequence, error)
+        }
+    }
+
+    /**
+     * 處理發送錯誤的重試機制
+     */
+    private handleSendError(sequence: number, error: any): void {
+        console.error(`❌ [AudioUploader] 序號 #${sequence} 發送錯誤:`, error)
+        // 可以在這裡實作重試邏輯
+        // 例如：將失敗的序號加入重試佇列
+    }
+
+    /**
+     * 嘗試重新連接 WebSocket
+     */
+    private async attemptReconnect(): Promise<void> {
+        this.reconnectAttempts++
+
+        console.log(`🔄 [AudioUploader] 嘗試重連 (#${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
+
+        // 漸進式延遲重連
+        const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1)
+
+        setTimeout(async () => {
+            try {
+                if (this.sessionId) {
+                    await this.connect(this.sessionId)
+                    console.log('✅ [AudioUploader] 重連成功')
+                    this.reconnectAttempts = 0 // 重置重連計數
+
+                    // 重新發送待處理的音訊切片
+                    this.resendPendingChunks()
+                }
+            } catch (error) {
+                console.error(`❌ [AudioUploader] 重連失敗 (#${this.reconnectAttempts}):`, error)
+
+                if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                    this.attemptReconnect()
+                } else {
+                    console.error('❌ [AudioUploader] 已達重連最大次數，停止嘗試')
+                }
+            }
+        }, delay)
+    }
+
+    /**
+     * 重新發送待處理的音訊切片
+     */
+    private resendPendingChunks(): void {
+        if (this.pendingChunks.size === 0) return
+
+        console.log(`🔄 [AudioUploader] 重新發送 ${this.pendingChunks.size} 個待處理切片`)
+
+        for (const [sequence, blob] of this.pendingChunks.entries()) {
+            this.send(blob, sequence)
+        }
+
+        // 清空待處理切片
+        this.pendingChunks.clear()
+    }
+
+    /**
+     * 更新開發模式診斷信息
+     */
+    private updateDevDiagnostics(sequence: number, blobSize: number): void {
+        if (!(window as any).__rec) {
+            (window as any).__rec = {
+                chunksSent: 0,
+                totalBytes: 0,
+                isRecording: false,
+                sessionId: null,
+                lastSequence: -1,
+                errors: 0
+            }
+        }
+
+        const rec = (window as any).__rec
+        rec.chunksSent++
+        rec.totalBytes += blobSize
+        rec.sessionId = this.sessionId
+        rec.isRecording = true
+        rec.lastSequence = sequence
+
+        console.log(`🔍 [AudioUploader] DEV 診斷:`, {
+            chunksSent: rec.chunksSent,
+            totalBytes: rec.totalBytes,
+            lastSequence: sequence,
+            sessionId: this.sessionId
         })
     }
 
@@ -155,6 +252,8 @@ export class AudioUploader {
 
         this.sessionId = null
         this.sequenceNumber = 0
+        this.reconnectAttempts = 0
+        this.pendingChunks.clear()
 
         // 更新 DEV 模式診斷狀態
         if (process.env.NODE_ENV === 'development' && (window as any).__rec) {

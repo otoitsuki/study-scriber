@@ -1,162 +1,249 @@
-# Study Scriber - Todos
+# Study Scriber - Todos (REST API 簡化架構)
 
-## 🎯 WebM 處理改善：「段段都含完整 WebM Header」方案
+## 🎯 架構簡化：從 WebSocket 串流 → REST API 模式
 
 ### 背景
-- **問題**：Azure OpenAI Whisper API 無法解碼修復後的 WebM 檔案
-- **解決方案**：每個 chunk 都包含完整 WebM 檔頭，避免檔頭修復邏輯
-- **方法**：使用遞迴啟動/停止 MediaRecorder 的方式
+- **問題**：WebSocket 串流架構過於複雜，錯誤率高，難以除錯
+- **解決方案**：改用 MediaRecorder timeslice + REST API 上傳完整 10s 檔案
+- **優勢**：更簡單、更可靠、更容易測試和維護
 
 ---
 
 ## 📋 實作任務清單
 
-### Phase 1: 前端 AudioRecorder 重構
+### Phase 1: 後端 REST API 建立
 
-- [ ] **1.1 建立新的 SegmentedAudioRecorder 類別**
-  - 路徑：`frontend/lib/segmented-audio-recorder.ts`
-  - 實作遞迴啟動/停止 MediaRecorder 邏輯
-  - 每個 segment 包含完整 WebM Header
-  - 支援可配置的切片時長 (預設 5 秒)
-
-- [ ] **1.2 實作核心錄音邏輯**
-  ```typescript
-  // 核心功能：
-  // - startSegment() 遞迴函式
-  // - 每個 MediaRecorder 只錄一個切片
-  // - setTimeout 控制切片時長
-  // - requestData() + stop() + 重新啟動
+- [ ] **1.1 建立 segments API 路由**
+  - 📁 路徑：`app/api/segments.py` (新檔案)
+  - 🎯 實作 `POST /api/segment` 端點
+  ```python
+  async def upload_segment(
+      sid: UUID,
+      seq: int,
+      file: UploadFile = File(...)
+  ) -> dict
   ```
 
-- [ ] **1.3 改善 AudioUploader 介面**
-  - 確保 WebSocket 傳送格式正確
-  - 4-byte sequence + Blob 數據
-  - 錯誤處理和重連機制
+- [ ] **1.2 實作檔案驗證與處理**
+  - 檔案大小限制：≤ 5MB
+  - MIME 類型檢查：`audio/webm`
+  - seq 唯一性驗證：`(session_id, seq)` UNIQUE
 
-- [ ] **1.4 更新 useRecording Hook**
-  - 替換現有的 AudioRecorder 為 SegmentedAudioRecorder
-  - 保持現有 API 兼容性
-  - 狀態管理 (recording flag)
-
-### Phase 2: 配置調整
-
-- [ ] **2.1 切片時長調整**
-  - 前端：調整為 5 秒切片 (`CHUNK_MS = 5_000`)
-  - 後端：設定 `AUDIO_CHUNK_DURATION_SEC=5`
-  - 更新環境變數文件
-
-- [ ] **2.2 音頻格式優化**
-  ```typescript
-  const MIME = 'audio/webm;codecs=opus'
-  const AUDIO_BITRATE = 64_000  // 64 kbps for 5s chunks
+- [ ] **1.3 實作背景轉錄任務**
+  - 使用 FastAPI `BackgroundTasks`
+  - 流程：WebM → PCM (FFmpeg) → Whisper API → 儲存 → 廣播
+  ```python
+  async def process_and_transcribe(sid, seq, webm_blob):
+      # 背景執行，不阻塞上傳回應
   ```
 
-- [ ] **2.3 WebSocket 協議確認**
-  - 確認後端支援新的傳送格式
-  - 驗證 sequence + blob 解析邏輯
+- [ ] **1.4 更新儲存服務**
+  - 修改 `services.storage` 支援完整檔案儲存
+  - 保持 Cloudflare R2 + DB 雙重儲存
 
-### Phase 3: 後端簡化
+### Phase 2: 前端錄音重構
 
-- [ ] **3.1 移除 WebM 檔頭修復邏輯**
-  - 移除或註解 `WebMHeaderRepairer` 相關程式碼
-  - 簡化 `_validate_and_repair_webm_data` 函式
-  - 每個 chunk 直接轉錄，不需修復
+- [ ] **2.1 重構 MediaRecorder 邏輯**
+  - 移除 SegmentedAudioRecorder 複雜邏輯
+  - 改用標準 `MediaRecorder` + `timeslice=10000`
+  ```typescript
+  const recorder = new MediaRecorder(stream, {
+    mimeType: 'audio/webm;codecs=opus',
+    audioBitsPerSecond: 128_000
+  });
+  recorder.ondataavailable = handleSegment;
+  recorder.start(10_000);  // 10 秒自動切片
+  ```
 
-- [ ] **3.2 更新轉錄服務**
-  - 確認每個 chunk 都有完整檔頭
-  - 移除檔頭緩存機制
-  - 簡化錯誤處理邏輯
+- [ ] **2.2 實作 REST API 上傳**
+  - 替換 WebSocket 為 `fetch` POST
+  - 實作上傳錯誤處理和重試
+  ```typescript
+  async function uploadSegment(seq: number, blob: Blob) {
+    const form = new FormData();
+    form.append('seq', String(seq));
+    form.append('file', blob, `seg${seq}.webm`);
+    await fetch('/api/segment', { method: 'POST', body: form });
+  }
+  ```
 
-- [ ] **3.3 時間戳計算調整**
-  - 確認 5 秒切片的時間戳正確性
-  - 更新 `start_time` 和 `end_time` 計算
+- [ ] **2.3 實作失敗檔案暫存**
+  - 使用 IndexedDB 暫存失敗的檔案
+  - 提供重新上傳機制
+  - Toast 提示使用者暫存狀態
 
-### Phase 4: 測試與驗證
+- [ ] **2.4 更新狀態管理**
+  - 移除 ack/missing 相關狀態
+  - 簡化錄音狀態機
+  - 保持 WebSocket transcript_feed 不變
 
-- [ ] **4.1 單元測試**
-  - SegmentedAudioRecorder 功能測試
-  - WebSocket 傳送格式測試
-  - 切片完整性驗證
+### Phase 3: 後端清理與優化
 
-- [ ] **4.2 整合測試**
-  - 端到端錄音轉錄流程
-  - 多個連續切片測試
-  - Azure OpenAI Whisper API 相容性
+- [ ] **3.1 移除舊 WebSocket 上傳**
+  - 刪除 `app/ws/upload_audio.py`
+  - 移除相關路由註冊
+  - 清理 ack/missing 邏輯
 
-- [ ] **4.3 效能測試**
-  - 5 秒切片延遲測試
+- [ ] **3.2 簡化轉錄服務**
+  - 移除串流處理複雜邏輯
+  - 專注於單檔處理優化
+  - 保留 Whisper 429 重試機制
+
+- [ ] **3.3 優化 FFmpeg 處理**
+  - 改為處理完整 10s 檔案
+  - 移除串流相關配置
+  - 提升轉換成功率
+
+### Phase 4: 測試更新
+
+- [ ] **4.1 更新單元測試**
+  - 測試新的 `/api/segment` 端點
+  - 測試檔案上傳和驗證邏輯
+  - 測試背景轉錄任務
+
+- [ ] **4.2 更新整合測試**
+  - 修改 Playwright 測試：
+    - 首句延遲：8s → 15s
+    - 測試 REST API 上傳流程
+  - 測試失敗重試機制
+
+- [ ] **4.3 效能基準測試**
+  - 10s 檔案上傳速度
+  - 轉錄延遲測量
   - 記憶體使用量監控
-  - MediaRecorder 重建開銷評估
 
-### Phase 5: 部署與監控
+### Phase 5: 配置與部署
 
-- [ ] **5.1 環境配置更新**
-  - 更新 `.env` 檔案範例
-  - 文件化新的配置選項
-  - 向後兼容性考量
+- [ ] **5.1 更新環境配置**
+  - 新增配置項目：
+    ```
+    SEGMENT_DURATION=10
+    UPLOAD_MAX_SIZE=5242880  # 5MB
+    AUDIO_BITRATE=128000
+    ```
 
-- [ ] **5.2 監控與日誌**
-  - 新增切片成功率監控
-  - 檔頭完整性日誌
-  - 轉錄成功率統計
+- [ ] **5.2 更新 SLA 指標**
+  - 首句延遲 KPI：≤ 15s
+  - 平均句延遲：≤ 12s
+  - 檔案上傳成功率：≥ 99%
 
-- [ ] **5.3 回滾計畫**
-  - 保留舊版 AudioRecorder 作為備用
-  - 功能開關控制新舊版本
-  - 問題回報機制
+- [ ] **5.3 監控與日誌**
+  - 上傳成功率監控
+  - 轉錄延遲統計
+  - 失敗檔案暫存狀況
 
 ---
 
 ## 🎯 預期效果
 
-✅ **解決問題**
-- Azure OpenAI Whisper API 轉錄錯誤
-- 逐字稿只出現第一行的問題
-- WebM 檔頭修復的複雜性
+### ✅ **解決的問題**
+- WebSocket 連接不穩定
+- ack/missing 重傳複雜性
+- 檔頭修復錯誤頻發
+- 除錯困難
 
-✅ **效能提升**
-- 更短的切片 (5 秒) = 更即時的反饋
-- 簡化後端處理邏輯
-- 減少錯誤率
+### ✅ **架構優勢**
+- **簡化開發**：REST API 比 WebSocket 更容易實作和測試
+- **提升可靠性**：完整檔案處理，減少錯誤
+- **更好維護**：減少狀態管理複雜度
+- **容易擴展**：可以輕鬆加入批次處理、重試隊列等
 
-✅ **維護性**
-- 移除複雜的檔頭修復程式碼
-- 更簡潔的錄音邏輯
-- 更好的錯誤處理
+### ✅ **使用者體驗**
+- **延遲可接受**：10s 延遲符合學習筆記場景
+- **更穩定**：減少連接中斷和重傳問題
+- **錯誤處理**：清楚的失敗提示和重試機制
 
 ---
 
-## 🔧 技術細節參考
+## 🔧 技術實作細節
 
-### MediaRecorder 遞迴模式
+### MediaRecorder 最佳實作
 ```typescript
-const startSegment = () => {
-  const rec = new MediaRecorder(stream, {
-    mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: 64_000
-  })
-  
-  rec.ondataavailable = (evt) => {
-    // evt.data 包含完整 WebM Header
-    audioUploader.send(evt.data, seq++)
+class SimpleRecorder {
+  private recorder: MediaRecorder;
+  private sequence = 0;
+
+  start(stream: MediaStream) {
+    this.recorder = new MediaRecorder(stream, {
+      mimeType: 'audio/webm;codecs=opus',
+      audioBitsPerSecond: 128_000
+    });
+    
+    this.recorder.ondataavailable = async (e) => {
+      if (e.data.size > 0) {
+        await this.uploadSegment(this.sequence++, e.data);
+      }
+    };
+    
+    this.recorder.start(10_000); // 10 秒自動切片
   }
   
-  rec.start()
-  
-  setTimeout(() => {
-    rec.requestData()  // 觸發 ondataavailable
-    rec.stop()         // 結束此段
-    if (recording) startSegment()  // 重新開始
-  }, CHUNK_MS)
+  async uploadSegment(seq: number, blob: Blob) {
+    try {
+      const form = new FormData();
+      form.append('seq', String(seq));
+      form.append('file', blob, `seg${seq}.webm`);
+      
+      const response = await fetch(`/api/segment?sid=${this.sessionId}`, {
+        method: 'POST',
+        body: form
+      });
+      
+      if (!response.ok) throw new Error('Upload failed');
+      
+    } catch (error) {
+      // 暫存到 IndexedDB
+      await this.cacheFailedSegment(seq, blob);
+      this.showUploadError(seq);
+    }
+  }
 }
 ```
 
-### WebSocket 傳送格式
-```typescript
-send(blob: Blob, sequence: number) {
-  const seqBuf = new ArrayBuffer(4)
-  new DataView(seqBuf).setUint32(0, sequence)
-  this.ws.send(seqBuf)  // 先送 sequence
-  this.ws.send(blob)    // 再送音頻數據
-}
+### 後端 API 實作
+```python
+@router.post("/api/segment")
+async def upload_segment(
+    sid: UUID,
+    seq: int,
+    file: UploadFile = File(...),
+    background: BackgroundTasks = BackgroundTasks()
+):
+    # 1. 基本驗證
+    if file.content_type != "audio/webm":
+        raise HTTPException(415, "Only WebM format accepted")
+    
+    if file.size > 5 * 1024 * 1024:  # 5MB
+        raise HTTPException(413, "File too large")
+    
+    # 2. 讀取並儲存
+    blob = await file.read()
+    await storage.save_segment(sid, seq, blob)
+    
+    # 3. 背景轉錄
+    background.add_task(process_and_transcribe, sid, seq, blob)
+    
+    return {"ack": seq, "size": len(blob)}
+
+async def process_and_transcribe(sid: UUID, seq: int, webm_blob: bytes):
+    try:
+        # FFmpeg 轉換
+        pcm_data = await ffmpeg.webm_to_pcm(webm_blob)
+        
+        # Whisper 轉錄
+        text = await whisper.transcribe(pcm_data)
+        
+        # 儲存結果
+        await db.save_transcript_segment(sid, seq, text)
+        
+        # WebSocket 廣播
+        await transcript_hub.broadcast(sid, {
+            "seq": seq,
+            "text": text,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"轉錄失敗 segment {seq}: {e}")
+        await transcript_hub.broadcast_error(sid, seq, str(e))
 ```

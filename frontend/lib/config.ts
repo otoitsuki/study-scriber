@@ -47,8 +47,8 @@ function getAudioChunkInterval(): number {
     }
   }
 
-  // 預設值：15秒
-  return 15 * 1000
+  // 預設值：10秒
+  return 10 * 1000
 }
 
 /**
@@ -61,7 +61,7 @@ export const appConfig: AppConfig = {
   audio: {
     chunkInterval: getAudioChunkInterval(),
     mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: 128000
+    audioBitsPerSecond: 64000  // 64 kbps for 10s chunks
   }
 }
 

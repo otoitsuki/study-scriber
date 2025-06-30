@@ -22,9 +22,9 @@ export interface AudioChunk {
 
 // 預設配置
 const DEFAULT_CONFIG: AudioRecorderConfig = {
-  chunkInterval: getAudioChunkIntervalMs(), // 使用環境變數配置
+  chunkInterval: 12000, // 12 秒
   mimeType: 'audio/webm;codecs=opus',
-  audioBitsPerSecond: 128000, // 128 kbps
+  audioBitsPerSecond: 64000, // 64 kbps
 }
 
 // 支援的音訊格式列表（優先順序）

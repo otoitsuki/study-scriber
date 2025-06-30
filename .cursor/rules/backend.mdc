@@ -46,7 +46,7 @@ logger.info(
 ## Error-Handling Patterns
 
 ```python
-# Good - Specific exception handling
+# Good
 try:
     result = await some_operation()
 except ValidationError as e:
@@ -57,57 +57,6 @@ except Exception as e:
     logger.error("unexpected_error", exc_info=True)
     raise HTTPException(status_code=500, detail="Internal server error")
 ```
-
-### Bare except exceptions (允許的例外情況)
-
-```python
-# Acceptable - JSON parsing with fallback logging
-try:
-    parsed_msg = json.loads(message)
-    # ... process message
-except:  # ✅ 允許：JSON 解析失敗的靜默處理
-    logger.info(f"原始訊息: {message[:100]}...")
-
-# Acceptable - Process cleanup with pass
-try:
-    if process.poll() is None:
-        process.terminate()
-        process.wait(timeout=2)
-except:  # ✅ 允許：進程清理時的靜默失敗處理
-    pass
-```
-
----
-
-## Synchronous vs Asynchronous Operations
-
-### Threading and Background Tasks
-
-```python
-# Good - Background thread with synchronous sleep
-def _cleanup_expired(self):
-    """後台執行緒中的清理工作"""
-    while True:
-        try:
-            time.sleep(30)  # ✅ 允許：後台執行緒中的同步等待
-            # ... cleanup logic
-        except Exception as e:
-            logger.error(f"清理過程錯誤: {e}")
-
-# Good - Async operations use asyncio.sleep
-async def heartbeat_monitor(self):
-    """異步心跳監控"""
-    while self.is_connected:
-        await asyncio.sleep(self.heartbeat_interval)  # ✅ 正確
-        # ... monitoring logic
-```
-
-### Sleep Usage Guidelines
-- **`time.sleep()`**: 只在**同步後台執行緒**中使用
-- **`asyncio.sleep()`**: 在**異步函數**中使用
-- **避免**: 在主事件循環中使用 `time.sleep()`
-
----
 
 ## WebSocket Patterns
 
