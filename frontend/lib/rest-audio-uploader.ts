@@ -12,6 +12,8 @@
  * - 簡化的錯誤處理流程
  */
 
+import { appConfig } from './config'
+
 export interface UploadSegmentResponse {
     ack: number
     size: number
@@ -102,10 +104,9 @@ export class RestAudioUploader {
 
         try {
             const formData = new FormData()
-            formData.append('seq', sequence.toString())
             formData.append('file', blob, `seg${sequence}.webm`)
 
-            const response = await fetch(`/api/segment?sid=${this.sessionId}`, {
+            const response = await fetch(`${appConfig.apiUrl}/api/segment?sid=${this.sessionId}&seq=${sequence}`, {
                 method: 'POST',
                 body: formData
             })
@@ -177,8 +178,8 @@ export class RestAudioUploader {
     }
 
     /**
- * 暫存失敗的段落到 IndexedDB
- */
+     * 暫存失敗的段落到 IndexedDB
+     */
     private async cacheFailedSegment(sequence: number, blob: Blob): Promise<void> {
         if (!this.sessionId || typeof window === 'undefined' || !window.indexedDB) return
 
@@ -219,8 +220,8 @@ export class RestAudioUploader {
     }
 
     /**
- * 重新上傳暫存的失敗段落
- */
+     * 重新上傳暫存的失敗段落
+     */
     async retryFailedSegments(): Promise<void> {
         if (!this.sessionId || typeof window === 'undefined' || !window.indexedDB) return
 
@@ -264,8 +265,8 @@ export class RestAudioUploader {
     }
 
     /**
- * 從 IndexedDB 中移除成功上傳的段落
- */
+     * 從 IndexedDB 中移除成功上傳的段落
+     */
     private async removeFailedSegment(id: string): Promise<void> {
         if (typeof window === 'undefined' || !window.indexedDB) return
 
@@ -289,8 +290,8 @@ export class RestAudioUploader {
     }
 
     /**
- * 獲取暫存的失敗段落數量
- */
+     * 獲取暫存的失敗段落數量
+     */
     async getCachedSegmentsCount(): Promise<number> {
         if (!this.sessionId || typeof window === 'undefined' || !window.indexedDB) return 0
 
