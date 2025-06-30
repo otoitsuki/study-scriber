@@ -6,6 +6,7 @@ Cloudflare R2 儲存服務客戶端
 import os
 import logging
 import asyncio
+import aiohttp
 from typing import Dict, Any
 from uuid import UUID
 import requests
@@ -45,6 +46,44 @@ class R2Client:
         }
 
         logger.info("R2 客戶端初始化成功，使用 API Token 認證")
+
+    async def store_segment(self, sid: UUID, seq: int, blob: bytes) -> str:
+        """
+        儲存音檔切片到 R2 (簡化版 REST API 架構)
+
+        Args:
+            sid: 會話 ID
+            seq: 切片序號
+            blob: 音檔二進制資料
+
+        Returns:
+            str: R2 儲存鍵值
+
+        Raises:
+            R2ClientError: 上傳失敗時拋出
+        """
+        key = f"{sid}/{seq:06}.webm"
+        url = f"{self.api_base_url}/{key}"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "audio/webm"
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.put(url, data=blob, headers=headers) as response:
+                    if response.status in [200, 201]:
+                        logger.info(f"✅ R2 上傳成功: {key} ({len(blob)} bytes)")
+                        return key
+                    else:
+                        error_text = await response.text()
+                        raise R2ClientError(f"R2 上傳失敗: {response.status} - {error_text}")
+
+        except aiohttp.ClientError as e:
+            raise R2ClientError(f"R2 上傳連線錯誤: {str(e)}")
+        except Exception as e:
+            raise R2ClientError(f"R2 上傳未知錯誤: {str(e)}")
 
     async def test_connection(self) -> Dict[str, Any]:
         """測試連接"""

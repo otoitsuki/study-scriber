@@ -29,8 +29,23 @@ class Settings(BaseSettings):
     # 音頻切片配置
     AUDIO_CHUNK_DURATION_SEC: int = Field(10, description="音頻切片時長（秒）")
 
+    # REST API 簡化架構配置
+    SEGMENT_DURATION: int = Field(10, description="分段錄音時長（秒）")
+    UPLOAD_MAX_SIZE: int = Field(5 * 1024 * 1024, description="檔案上傳大小限制（5MB）")
+    AUDIO_BITRATE: int = Field(128000, description="音頻位元率（128 kbps）")
+    MIME_TYPE: str = Field("audio/webm;codecs=opus", description="音頻檔案 MIME 類型")
+
+    # 上傳設定
+    UPLOAD_TIMEOUT_SEC: int = Field(30, description="上傳超時時間（秒）")
+    MAX_RETRIES: int = Field(3, description="最大重試次數")
+    RETRY_DELAY_SEC: int = Field(2, description="重試延遲時間（秒）")
+
     # 你可以依需求再加更多欄位
 
     model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()
+
+def get_settings() -> Settings:
+    """獲取應用程式設定實例"""
+    return settings

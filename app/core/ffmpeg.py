@@ -1,1131 +1,147 @@
 """
-FFmpeg 音訊轉碼服務
-提供 WebM → 16k mono PCM 轉換功能，支援進程池管理與錯誤處理
+FFmpeg 音訊轉換服務 (REST API 簡化架構)
+
+實作 WebM 到 16kHz mono PCM 的轉換，專門處理完整 10s 檔案
 """
 
 import asyncio
-import logging
-import os
 import subprocess
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from queue import Queue, Empty
-from typing import Optional, Dict, Any, List
-import ffmpeg
+import shlex
+import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class FFmpegProcess:
-    """FFmpeg 進程封裝"""
-    process: subprocess.Popen
-    created_at: float
-    last_used: float
-    usage_count: int = 0
-
-    def is_expired(self, max_age: int = 300, max_idle: int = 60) -> bool:
-        """檢查進程是否過期"""
-        current_time = time.time()
-        return (
-            current_time - self.created_at > max_age or
-            current_time - self.last_used > max_idle
-        )
-
-    def cleanup(self):
-        """清理進程資源"""
-        try:
-            if self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait()
-        except Exception as e:
-            logger.warning(f"清理 FFmpeg 進程時發生錯誤: {e}")
+# FFmpeg 命令：WebM 輸入 → 16kHz 單聲道 PCM 輸出
+FFMPEG_CMD = "ffmpeg -i pipe:0 -ac 1 -ar 16000 -f s16le pipe:1 -loglevel error"
 
 
-class FFmpegProcessPool:
-    """FFmpeg 進程池管理器"""
-
-    def __init__(self, max_processes: int = 3, max_idle_time: int = 60):
-        self.max_processes = max_processes
-        self.max_idle_time = max_idle_time
-        self.processes: Queue[FFmpegProcess] = Queue()
-        self.active_processes: Dict[int, FFmpegProcess] = {}
-        self.lock = threading.Lock()
-        self.executor = ThreadPoolExecutor(max_workers=max_processes)
-        self._cleanup_thread = threading.Thread(target=self._cleanup_expired, daemon=True)
-        self._cleanup_thread.start()
-
-    def get_process(self) -> FFmpegProcess:
-        """取得可用的 FFmpeg 進程"""
-        with self.lock:
-            # 嘗試從池中取得可用進程
-            while not self.processes.empty():
-                try:
-                    process = self.processes.get_nowait()
-                    # 檢查進程是否仍然活躍
-                    if process.process.poll() is None and not process.is_expired():
-                        process.last_used = time.time()
-                        process.usage_count += 1
-                        self.active_processes[process.process.pid] = process
-                        return process
-                    else:
-                        # 進程已終止或過期，清理它
-                        process.cleanup()
-                except Empty:
-                    break
-
-            # 如果池中沒有可用進程，創建新的
-            if len(self.active_processes) < self.max_processes:
-                process = self._create_new_process()
-                self.active_processes[process.process.pid] = process
-                return process
-
-            # 如果達到最大進程數，等待並重試
-            raise RuntimeError("FFmpeg 進程池已滿，請稍後重試")
-
-    def return_process(self, process: FFmpegProcess):
-        """歸還進程到池中"""
-        with self.lock:
-            if process.process.pid in self.active_processes:
-                del self.active_processes[process.process.pid]
-
-                # 檢查進程是否仍然可用
-                if process.process.poll() is None and not process.is_expired():
-                    self.processes.put(process)
-                else:
-                    process.cleanup()
-
-    def _create_new_process(self) -> FFmpegProcess:
-        """創建新的 FFmpeg 進程"""
-        try:
-            # 使用 ffmpeg-python 創建進程
-            process = (
-                ffmpeg
-                .input('pipe:', format='webm')
-                .output('pipe:', format='s16le', acodec='pcm_s16le', ac=1, ar=16000)
-                .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True, quiet=True)
-            )
-
-            current_time = time.time()
-            ffmpeg_process = FFmpegProcess(
-                process=process,
-                created_at=current_time,
-                last_used=current_time
-            )
-
-            logger.info(f"創建新的 FFmpeg 進程 PID: {process.pid}")
-            return ffmpeg_process
-
-        except Exception as e:
-            logger.error(f"創建 FFmpeg 進程失敗: {e}")
-            raise RuntimeError(f"無法創建 FFmpeg 進程: {e}")
-
-    def _cleanup_expired(self):
-        """清理過期的進程（後台執行緒）"""
-        while True:
-            try:
-                time.sleep(30)  # 每30秒檢查一次
-
-                with self.lock:
-                    # 清理池中的過期進程
-                    expired_processes = []
-                    temp_queue = Queue()
-
-                    while not self.processes.empty():
-                        try:
-                            process = self.processes.get_nowait()
-                            if process.is_expired():
-                                expired_processes.append(process)
-                            else:
-                                temp_queue.put(process)
-                        except Empty:
-                            break
-
-                    # 重建佇列
-                    self.processes = temp_queue
-
-                    # 清理過期進程
-                    for process in expired_processes:
-                        logger.info(f"清理過期的 FFmpeg 進程 PID: {process.process.pid}")
-                        process.cleanup()
-
-            except Exception as e:
-                logger.error(f"清理過期進程時發生錯誤: {e}")
-
-    def cleanup_all(self):
-        """清理所有進程"""
-        with self.lock:
-            # 清理活躍進程
-            for process in self.active_processes.values():
-                process.cleanup()
-            self.active_processes.clear()
-
-            # 清理池中的進程
-            while not self.processes.empty():
-                try:
-                    process = self.processes.get_nowait()
-                    process.cleanup()
-                except Empty:
-                    break
-
-        # 關閉執行緒池
-        self.executor.shutdown(wait=True)
-        logger.info("FFmpeg 進程池已清理完成")
-
-
-# 全域進程池實例
-_process_pool = None
-
-def get_process_pool() -> FFmpegProcessPool:
-    """取得全域進程池實例"""
-    global _process_pool
-    if _process_pool is None:
-        _process_pool = FFmpegProcessPool()
-    return _process_pool
-
-
-def ffmpeg_spawn() -> subprocess.Popen:
+async def webm_to_pcm(webm: bytes) -> bytes:
     """
-    建立共用 FFmpeg 轉碼子進程
+    將 WebM 音訊轉換為 PCM 格式
+
+    轉換參數：
+    - 輸入：WebM 格式音訊資料
+    - 輸出：16kHz 單聲道 signed 16-bit little-endian PCM
+    - 適用於 Azure OpenAI Whisper API
+
+    Args:
+        webm: WebM 格式的音訊二進制資料
 
     Returns:
-        subprocess.Popen: FFmpeg 進程實例
+        bytes: PCM 格式的音訊二進制資料
 
     Raises:
-        RuntimeError: 當無法創建進程時
+        RuntimeError: FFmpeg 轉換失敗時拋出
     """
     try:
-        pool = get_process_pool()
-        ffmpeg_process = pool.get_process()
-        return ffmpeg_process.process
-    except Exception as e:
-        logger.error(f"spawn FFmpeg 進程失敗: {e}")
-        raise RuntimeError(f"無法啟動 FFmpeg 進程: {e}")
-
-
-def detect_audio_format(audio_bytes: bytes) -> str:
-    """
-    檢測音檔格式，完整支援 fragmented MP4
-
-    Args:
-        audio_bytes: 音檔數據
-
-    Returns:
-        str: 檢測到的格式 (webm, mp4, fmp4, ogg, wav, unknown)
-        - mp4: 標準 MP4 格式
-        - fmp4: fragmented MP4 格式（需要特殊 FFmpeg 參數）
-    """
-    if not audio_bytes or len(audio_bytes) < 32:
-        return 'unknown'
-
-    # 擴大檢測範圍到 128 bytes 以捕獲更多格式變體
-    search_range = min(len(audio_bytes), 128)
-    header_data = audio_bytes[:search_range]
-
-    # WebM (Matroska) 以 EBML header 開頭 0x1A45DFA3
-    if audio_bytes[0:4] == b'\x1A\x45\xDF\xA3':
-        return 'webm'
-
-    # Fragmented MP4 格式檢測（優先檢測，需要特殊處理）
-    fragmented_markers = [
-        b'styp',  # Segment Type Box - fragmented MP4 的片段類型盒
-        b'moof',  # Movie Fragment Box - movie fragment 盒
-        b'sidx',  # Segment Index Box - segment index 盒
-        b'tfhd',  # Track Fragment Header Box - track fragment header
-        b'trun',  # Track Fragment Run Box - track run
-    ]
-
-    # 檢查是否包含 fragmented MP4 標記
-    has_fragmented_marker = any(marker in header_data for marker in fragmented_markers)
-
-    if has_fragmented_marker:
-        # 進一步確認是否為 MP4 容器格式
-        mp4_markers = [b'ftyp', b'mdat', b'moov']
-        has_mp4_marker = any(marker in header_data for marker in mp4_markers)
-
-        if has_mp4_marker or b'mp4' in header_data[:16]:
-            return 'fmp4'  # 確認為 fragmented MP4
-
-    # 標準 MP4/ISOBMFF 檢測
-    # 標準 MP4 在 4-8 byte 有 'ftyp'
-    if b'ftyp' in header_data:
-        # 檢查是否不包含 fragmented 標記，以區分標準 MP4
-        if not has_fragmented_marker:
-            return 'mp4'
-        else:
-            return 'fmp4'  # 包含 ftyp 但也有 fragmented 標記
-
-    # 檢測其他 MP4 相關標記
-    if b'mdat' in header_data:
-        if has_fragmented_marker:
-            return 'fmp4'
-        else:
-            return 'mp4'
-
-    # OGG 以 'OggS' 開頭
-    if audio_bytes[0:4] == b'OggS':
-        return 'ogg'
-
-    # WAV 以 'RIFF' 開頭，並在 8-12 byte 有 'WAVE'
-    if audio_bytes[0:4] == b'RIFF' and len(audio_bytes) >= 12 and audio_bytes[8:12] == b'WAVE':
-        return 'wav'
-
-    return 'unknown'
-
-
-def _generate_audio_diagnostics(audio_bytes: bytes, detected_format: str) -> str:
-    """
-    生成音檔診斷資訊，包含頭部十六進位和格式建議
-
-    Args:
-        audio_bytes: 音檔數據
-        detected_format: 檢測到的格式
-
-    Returns:
-        str: 診斷資訊字串
-    """
-    if not audio_bytes:
-        return "診斷: 音檔數據為空"
-
-    # 生成頭部十六進位輸出（前 64 bytes）
-    hex_header = audio_bytes[:64].hex(' ', 8).upper()
-
-    # 格式建議
-    format_suggestions = {
-        'fmp4': '建議: 這是 fragmented MP4 格式，需要特殊的 movflags 參數',
-        'mp4': '建議: 標準 MP4 格式，通常相容性良好',
-        'webm': '建議: WebM 格式，適合網頁播放',
-        'unknown': '建議: 無法識別格式，可能是損壞的音檔或不支援的格式'
-    }
-
-    suggestion = format_suggestions.get(detected_format, '建議: 檢查音檔是否為有效的音訊格式')
-
-    return (
-        f"音檔診斷資訊:\n"
-        f"- 檢測格式: {detected_format}\n"
-        f"- 檔案大小: {len(audio_bytes)} bytes\n"
-        f"- 頭部資料 (前64字節): {hex_header}\n"
-        f"- {suggestion}"
-    )
-
-
-def _get_error_solution_advice(error_msg: str, detected_format: str) -> str:
-    """
-    根據錯誤訊息提供具體的解決建議
-
-    Args:
-        error_msg: FFmpeg 錯誤訊息
-        detected_format: 檢測到的格式
-
-    Returns:
-        str: 解決建議
-    """
-    error_solutions = {
-        'could not find corresponding trex': (
-            "🔧 Fragmented MP4 錯誤解決方案:\n"
-            "1. 確認使用 'fmp4' 格式處理 fragmented MP4\n"
-            "2. 檢查是否使用了正確的 movflags 參數\n"
-            "3. 考慮使用 WebM 格式作為替代方案"
-        ),
-        'trun track id unknown': (
-            "🔧 Track ID 錯誤解決方案:\n"
-            "1. 使用 fflags='+genpts+igndts' 忽略錯誤時間戳\n"
-            "2. 增加 analyzeduration 和 probesize 參數\n"
-            "3. 嘗試使用 avoid_negative_ts='make_zero'"
-        ),
-        'Invalid data found when processing input': (
-            "🔧 資料格式錯誤解決方案:\n"
-            "1. 檢查音檔是否完整下載\n"
-            "2. 確認瀏覽器錄音格式設定\n"
-            "3. 嘗試不同的格式參數組合"
-        ),
-        'No such file or directory': (
-            "🔧 檔案讀取錯誤解決方案:\n"
-            "1. 確認 FFmpeg 正確安裝\n"
-            "2. 檢查音檔數據是否正確傳輸\n"
-            "3. 驗證 pipe 輸入是否正常"
-        )
-    }
-
-    # 尋找匹配的錯誤模式
-    for error_pattern, solution in error_solutions.items():
-        if error_pattern.lower() in error_msg.lower():
-            return solution
-
-    # 根據格式提供通用建議
-    format_advice = {
-        'fmp4': "建議嘗試標準 MP4 格式作為備用",
-        'mp4': "建議嘗試 WebM 格式作為備用",
-        'webm': "建議嘗試 MP4 格式作為備用",
-        'unknown': "建議檢查音檔格式是否受支援"
-    }
-
-    generic_advice = format_advice.get(detected_format, "建議嘗試其他音檔格式")
-
-    return (
-        f"🔧 通用解決方案:\n"
-        f"1. {generic_advice}\n"
-        f"2. 檢查音檔是否損壞或格式不正確\n"
-        f"3. 確認 FFmpeg 版本支援所需格式"
-    )
-
-
-def feed_ffmpeg(process: subprocess.Popen, webm_bytes: bytes) -> bytes:
-    """
-    餵送音檔數據到 FFmpeg 並獲取 PCM 輸出
-
-    Args:
-        process: FFmpeg 進程實例
-        webm_bytes: 音檔數據 (可能是 WebM, MP4 或其他格式)
-
-    Returns:
-        bytes: 轉換後的 16k mono PCM 數據
-
-    Raises:
-        RuntimeError: 當轉換失敗時
-    """
-    # 檢測音檔格式
-    detected_format = detect_audio_format(webm_bytes)
-    logger.info(f"檢測到音檔格式: {detected_format} (大小: {len(webm_bytes)} bytes)")
-
-    try:
-        # 設定逾時時間（10秒）
-        timeout = 10
-
-        # 發送音檔數據並獲取 PCM 輸出
-        pcm_data, error_output = process.communicate(input=webm_bytes, timeout=timeout)
-
-        # 檢查進程是否成功完成
-        if process.returncode != 0:
-            error_msg = error_output.decode('utf-8', errors='ignore') if error_output else "未知錯誤"
-
-            # 增強錯誤日誌，包含格式資訊
-            logger.error(f"FFmpeg 轉換失敗:")
-            logger.error(f"  - 音檔格式: {detected_format}")
-            logger.error(f"  - 音檔大小: {len(webm_bytes)} bytes")
-            logger.error(f"  - 返回碼: {process.returncode}")
-            logger.error(f"  - 錯誤訊息: {error_msg}")
-
-            # 分析常見錯誤原因
-            if "Invalid data found when processing input" in error_msg:
-                logger.error(f"  - 分析: 音檔格式 '{detected_format}' 可能不被此版本的 FFmpeg 支援或檔案損壞")
-            elif "Protocol not found" in error_msg:
-                logger.error(f"  - 分析: FFmpeg 缺少對 '{detected_format}' 格式的支援")
-            elif "No such file or directory" in error_msg:
-                logger.error(f"  - 分析: FFmpeg 無法讀取輸入流")
-
-            raise RuntimeError(f"FFmpeg 轉換失敗 (格式: {detected_format}): {error_msg}")
-
-        if not pcm_data:
-            logger.warning(f"FFmpeg 轉換結果為空 (輸入格式: {detected_format})")
-            return b''
-
-        logger.debug(f"成功轉換 {detected_format.upper()} ({len(webm_bytes)} bytes) → PCM ({len(pcm_data)} bytes)")
-        return pcm_data
-
-    except subprocess.TimeoutExpired:
-        logger.error(f"FFmpeg 轉換逾時 (格式: {detected_format}, 大小: {len(webm_bytes)} bytes)")
-        process.kill()
-        process.wait()
-        raise RuntimeError(f"FFmpeg 轉換逾時 (格式: {detected_format})")
-    except Exception as e:
-        logger.error(f"FFmpeg 轉換發生錯誤 (格式: {detected_format}): {e}")
-        raise RuntimeError(f"音訊轉換失敗 (格式: {detected_format}): {e}")
-
-
-async def feed_ffmpeg_async(webm_bytes: bytes) -> bytes:
-    """
-    非同步版本的 FFmpeg 轉換，支援智能格式重試策略
-
-    Args:
-        webm_bytes: 音檔數據 (可能是 WebM, MP4 或其他格式)
-
-    Returns:
-        bytes: 轉換後的 16k mono PCM 數據
-    """
-    detected_format = detect_audio_format(webm_bytes)
-
-    # 生成詳細的診斷資訊
-    diagnostics = _generate_audio_diagnostics(webm_bytes, detected_format)
-    logger.info(f"非同步轉換開始 - 檢測到格式: {detected_format} (大小: {len(webm_bytes)} bytes)")
-    logger.debug(f"音檔診斷詳情:\n{diagnostics}")
-
-    def _convert_with_format(input_format: str):
-        """使用指定格式進行轉換"""
-        try:
-            # 根據檢測到的格式選擇 FFmpeg 參數
-            if input_format == 'fmp4':
-                # Fragmented MP4 格式 - 需要特殊參數組合解決 trex/trun 錯誤
-                process = (
-                    ffmpeg
-                    .input('pipe:',
-                           format='mp4',
-                           # 處理 fragmented MP4 的關鍵參數
-                           movflags='+faststart+frag_keyframe',
-                           fflags='+genpts+igndts+discardcorrupt',
-                           # 增加格式探測時間和大小
-                           analyzeduration='10M',
-                           probesize='10M',
-                           # 處理時間戳問題
-                           avoid_negative_ts='make_zero')
-                    .output('pipe:',
-                           format='s16le',
-                           acodec='pcm_s16le',
-                           ac=1,
-                           ar=16000)
-                    .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True, quiet=True)
-                )
-                logger.debug(f"使用 fragmented MP4 專用參數進行轉換")
-            elif input_format == 'mp4':
-                # 標準 MP4 格式
-                process = (
-                    ffmpeg
-                    .input('pipe:', format='mp4', fflags='+genpts')
-                    .output('pipe:', format='s16le', acodec='pcm_s16le', ac=1, ar=16000)
-                    .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True, quiet=True)
-                )
-            elif input_format == 'webm':
-                # WebM 格式
-                process = (
-                    ffmpeg
-                    .input('pipe:', format='webm', fflags='+genpts')
-                    .output('pipe:', format='s16le', acodec='pcm_s16le', ac=1, ar=16000)
-                    .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True, quiet=True)
-                )
-            else:
-                # 通用格式，讓 FFmpeg 自動檢測
-                process = (
-                    ffmpeg
-                    .input('pipe:', fflags='+genpts')
-                    .output('pipe:', format='s16le', acodec='pcm_s16le', ac=1, ar=16000)
-                    .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True, quiet=True)
-                )
-
-            pcm_data, error_output = process.communicate(input=webm_bytes, timeout=10)
-
-            if process.returncode != 0:
-                error_msg = error_output.decode('utf-8', errors='ignore') if error_output else "未知錯誤"
-
-                # 生成詳細的錯誤診斷和解決建議
-                solution_advice = _get_error_solution_advice(error_msg, input_format)
-                full_error_info = (
-                    f"FFmpeg 轉換失敗 (格式: {input_format}):\n"
-                    f"錯誤訊息: {error_msg}\n"
-                    f"{solution_advice}"
-                )
-
-                logger.error(full_error_info)
-                raise RuntimeError(f"FFmpeg 轉換失敗 (格式: {input_format}): {error_msg}")
-
-            logger.debug(f"成功轉換 {input_format.upper()} → PCM ({len(pcm_data)} bytes)")
-            return pcm_data
-
-        finally:
-            # 清理臨時進程
-            try:
-                if process.poll() is None:
-                    process.terminate()
-                    process.wait(timeout=2)
-            except:
-                pass
-
-    def _convert():
-        """同步轉換函式，智能重試策略"""
-        max_retries = 3
-        retry_attempts = []
-
-        # 第一階段：嘗試檢測到的精確格式
-        try:
-            logger.info(f"階段1: 使用檢測格式 '{detected_format}' 進行轉換")
-            result = _convert_with_format(detected_format)
-            logger.info(f"檢測格式 '{detected_format}' 轉換成功")
-            return result
-        except RuntimeError as e:
-            retry_attempts.append({
-                'format': detected_format,
-                'error': str(e),
-                'stage': '精確格式'
-            })
-            logger.warning(f"檢測格式 '{detected_format}' 失敗: {e}")
-
-        # 第二階段：智能格式選擇 - 根據檢測格式選擇相關的備用格式
-        backup_strategies = {
-            'fmp4': ['mp4', 'auto'],  # fragmented MP4 優先嘗試標準 MP4
-            'mp4': ['fmp4', 'auto'],  # 標準 MP4 優先嘗試 fragmented MP4
-            'webm': ['auto', 'mp4'],  # WebM 先自動檢測，再嘗試 MP4
-            'unknown': ['auto', 'fmp4', 'mp4', 'webm']  # 未知格式嘗試所有選項
-        }
-
-        backup_formats = backup_strategies.get(detected_format, ['auto', 'fmp4', 'mp4', 'webm'])
-
-        for backup_format in backup_formats:
-            if len(retry_attempts) >= max_retries:
-                logger.warning(f"已達到最大重試次數 {max_retries}，停止嘗試")
-                break
-
-            try:
-                logger.info(f"階段2: 嘗試智能備用格式 '{backup_format}'")
-                result = _convert_with_format(backup_format)
-                logger.info(f"備用格式 '{backup_format}' 轉換成功")
-                return result
-            except RuntimeError as e:
-                retry_attempts.append({
-                    'format': backup_format,
-                    'error': str(e),
-                    'stage': '智能備用'
-                })
-                logger.warning(f"備用格式 '{backup_format}' 失敗: {e}")
-
-        # 第三階段：通用格式嘗試（如果尚未嘗試過）
-        remaining_formats = ['ogg', 'wav']  # 其他可能的格式
-
-        for fallback_format in remaining_formats:
-            if len(retry_attempts) >= max_retries:
-                break
-
-            try:
-                logger.info(f"階段3: 嘗試通用格式 '{fallback_format}'")
-                result = _convert_with_format(fallback_format)
-                logger.info(f"通用格式 '{fallback_format}' 轉換成功")
-                return result
-            except RuntimeError as e:
-                retry_attempts.append({
-                    'format': fallback_format,
-                    'error': str(e),
-                    'stage': '通用格式'
-                })
-                logger.warning(f"通用格式 '{fallback_format}' 失敗: {e}")
-
-        # 所有重試都失敗 - 生成詳細的失敗報告
-        failure_report = _generate_retry_failure_report(detected_format, retry_attempts, diagnostics)
-        logger.error(failure_report)
-
-        # 拋出包含所有重試資訊的錯誤
-        primary_error = retry_attempts[0]['error'] if retry_attempts else "未知錯誤"
-        raise RuntimeError(f"智能重試策略失敗，共嘗試 {len(retry_attempts)} 種格式。主要錯誤: {primary_error}")
-
-    # 在執行緒池中執行轉換
-    loop = asyncio.get_event_loop()
-    pool = get_process_pool()
-    return await loop.run_in_executor(pool.executor, _convert)
-
-
-def _generate_retry_failure_report(detected_format: str, retry_attempts: list, diagnostics: str) -> str:
-    """
-    生成詳細的重試失敗報告
-
-    Args:
-        detected_format: 原始檢測到的格式
-        retry_attempts: 重試嘗試記錄
-        diagnostics: 音檔診斷資訊
-
-    Returns:
-        str: 格式化的失敗報告
-    """
-    report_lines = [
-        "=== 智能重試策略失敗報告 ===",
-        f"檢測格式: {detected_format}",
-        f"總重試次數: {len(retry_attempts)}",
-        "",
-        "詳細重試記錄:"
-    ]
-
-    for i, attempt in enumerate(retry_attempts, 1):
-        report_lines.extend([
-            f"{i}. 階段: {attempt['stage']} | 格式: {attempt['format']}",
-            f"   錯誤: {attempt['error'][:100]}{'...' if len(attempt['error']) > 100 else ''}",
-            ""
-        ])
-
-    report_lines.extend([
-        "音檔診斷資訊:",
-        diagnostics,
-        "",
-        "建議解決方案:",
-        "1. 檢查音檔是否損壞或格式不支援",
-        "2. 確認 FFmpeg 安裝完整並支援相關編解碼器",
-        "3. 如果問題持續，請聯繫技術支援並提供此報告"
-    ])
-
-    return "\n".join(report_lines)
-
-
-def cleanup_ffmpeg_resources():
-    """清理 FFmpeg 資源"""
-    global _process_pool
-    if _process_pool:
-        _process_pool.cleanup_all()
-        _process_pool = None
-    logger.info("FFmpeg 資源清理完成")
-
-
-def check_format_support() -> Dict[str, bool]:
-    """
-    檢查 FFmpeg 支援的音檔格式
-
-    Returns:
-        Dict[str, bool]: 各格式的支援狀態
-    """
-    supported_formats = {}
-    test_formats = ['webm', 'mp4', 'ogg', 'wav']
-
-    for fmt in test_formats:
-        try:
-            # 測試格式支援：嘗試使用該格式作為輸入
-            result = subprocess.run(
-                ['ffmpeg', '-f', fmt, '-i', '/dev/null', '-f', 'null', '-'],
-                capture_output=True,
-                text=True,
-                timeout=3
-            )
-            # 如果不是因為檔案不存在而失敗，則表示格式被支援
-            supported_formats[fmt] = "No such file or directory" in result.stderr or result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            supported_formats[fmt] = False
-        except Exception:
-            supported_formats[fmt] = False
-
-    return supported_formats
-
-
-# 健康檢查函式
-def check_ffmpeg_health() -> Dict[str, Any]:
-    """
-    檢查 FFmpeg 服務健康狀態，包含格式支援檢測
-
-    Returns:
-        Dict: 健康狀態資訊
-    """
-    try:
-        # 檢查 FFmpeg 是否可用
-        result = subprocess.run(
-            ['ffmpeg', '-version'],
-            capture_output=True,
-            text=True,
-            timeout=5
+        logger.debug(f"🎵 [FFmpeg] 開始轉換 WebM → PCM (size: {len(webm)} bytes)")
+
+        # 建立 FFmpeg 子程序
+        proc = await asyncio.create_subprocess_exec(
+            *shlex.split(FFMPEG_CMD),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
 
-        if result.returncode != 0:
-            return {
-                "ffmpeg_available": False,
-                "status": "unhealthy",
-                "error": "FFmpeg 執行失敗",
-                "details": result.stderr
-            }
+        # 執行轉換
+        stdout, stderr = await proc.communicate(webm)
 
-        # 解析版本資訊
-        version_line = result.stdout.split('\n')[0] if result.stdout else "Unknown"
+        # 檢查轉換結果
+        if proc.returncode != 0:
+            error_msg = stderr.decode('utf-8') if stderr else "Unknown FFmpeg error"
+            logger.error(f"❌ [FFmpeg] 轉換失敗 (返回碼: {proc.returncode}): {error_msg}")
+            raise RuntimeError(f"FFmpeg convert failed: {error_msg}")
 
-        # 檢查編解碼器支援
-        codecs_result = subprocess.run(
-            ['ffmpeg', '-codecs'],
-            capture_output=True,
-            text=True,
-            timeout=3
-        )
+        if not stdout:
+            logger.error("❌ [FFmpeg] 轉換結果為空")
+            raise RuntimeError("FFmpeg convert produced no output")
 
-        # 分析重要編解碼器支援
-        codec_support = {}
-        if codecs_result.returncode == 0:
-            codecs_output = codecs_result.stdout
-            codec_support = {
-                "opus": "opus" in codecs_output,
-                "aac": "aac" in codecs_output,
-                "pcm_s16le": "pcm_s16le" in codecs_output,
-                "vorbis": "vorbis" in codecs_output
-            }
+        logger.info(f"✅ [FFmpeg] WebM → PCM 轉換成功 ({len(webm)} → {len(stdout)} bytes)")
+        return stdout
 
-        # 檢查格式支援
-        format_support = check_format_support()
-
-        # 檢查進程池狀態
-        try:
-            pool = get_process_pool()
-            with pool.lock:
-                active_count = len(pool.active_processes)
-                pool_count = pool.processes.qsize()
-        except Exception as e:
-            logger.warning(f"無法取得進程池狀態: {e}")
-            active_count = 0
-            pool_count = 0
-
-        # 檢查安裝路徑
-        try:
-            install_path = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
-        except:
-            install_path = "unknown"
-
-        return {
-            "ffmpeg_available": True,
-            "status": "healthy",
-            "version": version_line,
-            "installation_path": install_path,
-            "format_support": format_support,
-            "codec_support": codec_support,
-            "process_pool": {
-                "active_processes": active_count,
-                "pooled_processes": pool_count,
-                "max_processes": getattr(get_process_pool(), 'max_processes', 3)
-            },
-            "recommendations": _generate_health_recommendations(format_support, codec_support)
-        }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "ffmpeg_available": False,
-            "status": "unhealthy",
-            "error": "FFmpeg 檢查逾時 (可能系統負載過高)"
-        }
+    except asyncio.TimeoutError:
+        logger.error("❌ [FFmpeg] 轉換超時")
+        raise RuntimeError("FFmpeg convert timeout")
     except FileNotFoundError:
-        return {
-            "ffmpeg_available": False,
-            "status": "unhealthy",
-            "error": "FFmpeg 未安裝",
-            "install_instructions": {
-                "ubuntu": "sudo apt update && sudo apt install ffmpeg",
-                "macos": "brew install ffmpeg",
-                "docker": "RUN apt-get update && apt-get install -y ffmpeg"
-            }
-        }
+        logger.error("❌ [FFmpeg] FFmpeg 程序未找到，請確認已安裝 FFmpeg")
+        raise RuntimeError("FFmpeg not found. Please install FFmpeg.")
     except Exception as e:
-        return {
-            "ffmpeg_available": False,
-            "status": "unhealthy",
-            "error": f"檢查時發生未預期錯誤: {str(e)}"
-        }
+        logger.error(f"❌ [FFmpeg] 轉換異常: {str(e)}")
+        raise RuntimeError(f"FFmpeg convert error: {str(e)}")
 
 
-def _generate_health_recommendations(format_support: Dict[str, bool], codec_support: Dict[str, bool]) -> List[str]:
+async def validate_webm_audio(webm: bytes) -> bool:
     """
-    根據 FFmpeg 支援狀況生成建議
+    驗證 WebM 音訊檔案是否有效
+
+    使用 FFmpeg 來檢查音訊檔案的完整性和格式
 
     Args:
-        format_support: 格式支援狀況
-        codec_support: 編解碼器支援狀況
+        webm: WebM 格式的音訊二進制資料
 
     Returns:
-        List[str]: 建議列表
+        bool: 如果音訊檔案有效則返回 True
     """
-    recommendations = []
-
-    # 檢查關鍵格式支援
-    if not format_support.get('mp4', False):
-        recommendations.append("⚠️ MP4 格式不被支援，建議重新編譯 FFmpeg 或安裝完整版本")
-
-    if not format_support.get('webm', False):
-        recommendations.append("⚠️ WebM 格式不被支援，可能影響瀏覽器錄音功能")
-
-    # 檢查關鍵編解碼器
-    if not codec_support.get('opus', False):
-        recommendations.append("⚠️ Opus 編解碼器不被支援，建議安裝 libopus")
-
-    if not codec_support.get('pcm_s16le', False):
-        recommendations.append("🚨 PCM 編解碼器不被支援，這是基本要求，請檢查 FFmpeg 安裝")
-
-    # 提供最佳化建議
-    if format_support.get('mp4', False) and codec_support.get('aac', False):
-        recommendations.append("✅ 建議使用 MP4 + AAC 格式以獲得最佳兼容性")
-
-    if not recommendations:
-        recommendations.append("✅ FFmpeg 配置良好，支援所有必要的格式和編解碼器")
-
-    return recommendations
-
-
-@dataclass
-class WebMHeaderInfo:
-    """WebM EBML 檔頭資訊"""
-    has_ebml_header: bool = False
-    has_segment: bool = False
-    has_tracks: bool = False
-    has_cluster: bool = False
-    header_size: int = 0
-    segment_size: Optional[int] = None
-    track_count: int = 0
-    codec_type: Optional[str] = None
-    is_complete: bool = False
-    error_message: Optional[str] = None
-
-
-def detect_webm_header_info(webm_bytes: bytes) -> WebMHeaderInfo:
-    """
-    詳細分析 WebM EBML 檔頭結構
-
-    Args:
-        webm_bytes: WebM 檔案數據
-
-    Returns:
-        WebMHeaderInfo: 檔頭分析結果
-    """
-    info = WebMHeaderInfo()
-
-    if not webm_bytes or len(webm_bytes) < 4:
-        info.error_message = "數據長度不足"
-        return info
-
     try:
-        offset = 0
-        data_len = len(webm_bytes)
+        # 使用 FFmpeg 驗證模式（不產生輸出，只檢查格式）
+        validate_cmd = "ffmpeg -v error -i pipe:0 -f null -"
 
-        # 1. 檢測 EBML Header (0x1A45DFA3)
-        if webm_bytes[0:4] != b'\x1A\x45\xDF\xA3':
-            info.error_message = "缺少 EBML Header 標記"
-            return info
-
-        info.has_ebml_header = True
-        offset = 4
-
-        # 2. 解析 EBML Header 長度
-        header_length, header_len_bytes = _parse_ebml_element_size(webm_bytes, offset)
-        if header_length is None:
-            info.error_message = "無法解析 EBML Header 長度"
-            return info
-
-        offset += header_len_bytes + header_length
-
-        # 3. 尋找 Segment 元素 (0x18538067)
-        segment_offset = _find_ebml_element(webm_bytes, b'\x18\x53\x80\x67', offset)
-        if segment_offset == -1:
-            info.error_message = "缺少 Segment 元素"
-            return info
-
-        info.has_segment = True
-        offset = segment_offset + 4
-
-        # 4. 解析 Segment 長度
-        segment_length, segment_len_bytes = _parse_ebml_element_size(webm_bytes, offset)
-        if segment_length is not None:
-            info.segment_size = segment_length
-
-        offset += segment_len_bytes
-        segment_data_start = offset
-
-        # 5. 在 Segment 內尋找 Tracks 元素 (0x1654AE6B)
-        tracks_offset = _find_ebml_element(webm_bytes, b'\x16\x54\xAE\x6B', segment_data_start)
-        if tracks_offset != -1:
-            info.has_tracks = True
-
-            # 分析 track 數量和編解碼器類型
-            tracks_info = _analyze_tracks_element(webm_bytes, tracks_offset)
-            info.track_count = tracks_info.get('track_count', 0)
-            info.codec_type = tracks_info.get('codec_type')
-
-        # 6. 尋找第一個 Cluster 元素 (0x1F43B675)
-        cluster_offset = _find_ebml_element(webm_bytes, b'\x1F\x43\xB6\x75', segment_data_start)
-        if cluster_offset != -1:
-            info.has_cluster = True
-            # 檔頭大小計算到第一個 Cluster 為止
-            info.header_size = cluster_offset
-        else:
-            # 如果沒有 Cluster，至少計算到目前位置
-            info.header_size = offset
-
-        # 7. 判斷檔頭是否完整
-        info.is_complete = (
-            info.has_ebml_header and
-            info.has_segment and
-            info.has_tracks and
-            info.track_count > 0 and
-            info.header_size > 0
+        proc = await asyncio.create_subprocess_exec(
+            *shlex.split(validate_cmd),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
 
-        logger.debug(f"WebM 檔頭分析結果: EBML={info.has_ebml_header}, Segment={info.has_segment}, "
-                    f"Tracks={info.has_tracks}, Cluster={info.has_cluster}, "
-                    f"檔頭大小={info.header_size}, 完整性={info.is_complete}")
+        stdout, stderr = await proc.communicate(webm)
+
+        if proc.returncode == 0:
+            logger.debug("✅ [FFmpeg] WebM 音訊檔案驗證通過")
+            return True
+        else:
+            error_msg = stderr.decode('utf-8') if stderr else "Unknown validation error"
+            logger.warning(f"⚠️ [FFmpeg] WebM 音訊檔案驗證失敗: {error_msg}")
+            return False
 
     except Exception as e:
-        info.error_message = f"檔頭解析錯誤: {str(e)}"
-        logger.error(f"WebM 檔頭分析異常: {e}")
-
-    return info
-
-
-def is_webm_header_complete(webm_bytes: bytes) -> bool:
-    """
-    判斷 WebM 檔頭是否完整
-
-    Args:
-        webm_bytes: WebM 檔案數據
-
-    Returns:
-        bool: True 表示檔頭完整，False 表示檔頭不完整或缺失
-    """
-    if not webm_bytes or len(webm_bytes) < 32:
+        logger.warning(f"⚠️ [FFmpeg] 音訊檔案驗證異常: {str(e)}")
         return False
 
-    header_info = detect_webm_header_info(webm_bytes)
-    return header_info.is_complete
 
-
-def _parse_ebml_element_size(data: bytes, offset: int) -> tuple[Optional[int], int]:
+async def get_audio_info(webm: bytes) -> Optional[dict]:
     """
-    解析 EBML 變長整數編碼的元素大小
+    獲取音訊檔案資訊
 
     Args:
-        data: 字節數據
-        offset: 起始偏移量
+        webm: WebM 格式的音訊二進制資料
 
     Returns:
-        tuple: (size, consumed_bytes) - 元素大小和消耗的字節數
-    """
-    if offset >= len(data):
-        return None, 0
-
-    first_byte = data[offset]
-    if first_byte == 0:
-        return None, 0
-
-    # 計算長度編碼的字節數（根據第一個字節的前導零位數）
-    width = 1
-    mask = 0x80
-
-    while width <= 8 and (first_byte & mask) == 0:
-        width += 1
-        mask >>= 1
-
-    if width > 8 or offset + width > len(data):
-        return None, 0
-
-    # 移除長度標記位並計算實際值
-    size = first_byte & (mask - 1)
-
-    for i in range(1, width):
-        size = (size << 8) | data[offset + i]
-
-    return size, width
-
-
-def _find_ebml_element(data: bytes, element_id: bytes, start_offset: int = 0) -> int:
-    """
-    在 EBML 數據中尋找指定的元素 ID
-
-    Args:
-        data: 字節數據
-        element_id: 要尋找的元素 ID
-        start_offset: 搜尋起始位置
-
-    Returns:
-        int: 元素位置，-1 表示未找到
-    """
-    search_end = min(len(data) - len(element_id) + 1, start_offset + 2048)  # 限制搜尋範圍
-
-    for i in range(start_offset, search_end):
-        if data[i:i + len(element_id)] == element_id:
-            return i
-
-    return -1
-
-
-def _analyze_tracks_element(data: bytes, tracks_offset: int) -> dict:
-    """
-    分析 Tracks 元素，提取音軌資訊
-
-    Args:
-        data: 字節數據
-        tracks_offset: Tracks 元素的偏移量
-
-    Returns:
-        dict: 包含 track_count 和 codec_type 的字典
-    """
-    result = {'track_count': 0, 'codec_type': None}
-
-    try:
-        offset = tracks_offset + 4  # 跳過 Tracks ID
-
-        # 解析 Tracks 長度
-        tracks_length, len_bytes = _parse_ebml_element_size(data, offset)
-        if tracks_length is None:
-            return result
-
-        offset += len_bytes
-        tracks_end = min(offset + tracks_length, len(data))
-
-        # 統計 TrackEntry 元素 (0xAE)
-        track_entry_count = 0
-        current_offset = offset
-
-        logger.debug(f"開始分析 Tracks 元素，範圍: {current_offset}-{tracks_end}")
-
-        while current_offset < tracks_end - 1:  # 確保有足夠的字節
-            # 尋找 TrackEntry (0xAE) - 單字節 ID
-            if data[current_offset] == 0xAE:
-                track_entry_count += 1
-                logger.debug(f"找到 TrackEntry at offset {current_offset}")
-
-                # 分析 Codec ID (在 TrackEntry 內)
-                if result['codec_type'] is None:
-                    # 解析 TrackEntry 長度
-                    entry_length, entry_len_bytes = _parse_ebml_element_size(data, current_offset + 1)
-                    if entry_length is not None:
-                        entry_end = min(current_offset + 1 + entry_len_bytes + entry_length, tracks_end)
-                        codec_info = _extract_codec_type(data, current_offset, entry_end)
-                        if codec_info:
-                            result['codec_type'] = codec_info
-                            logger.debug(f"找到 codec 類型: {codec_info}")
-
-                # 跳過當前 TrackEntry
-                current_offset += 1
-            else:
-                current_offset += 1
-
-        result['track_count'] = track_entry_count
-        logger.debug(f"Tracks 分析結果: track_count={track_entry_count}, codec_type={result['codec_type']}")
-
-    except Exception as e:
-        logger.debug(f"分析 Tracks 元素時發生錯誤: {e}")
-
-    return result
-
-
-def _extract_codec_type(data: bytes, track_entry_offset: int, max_offset: int) -> Optional[str]:
-    """
-    從 TrackEntry 中提取編解碼器類型
-
-    Args:
-        data: 字節數據
-        track_entry_offset: TrackEntry 的偏移量
-        max_offset: 最大搜尋偏移量
-
-    Returns:
-        Optional[str]: 編解碼器類型（如 'opus', 'vorbis'）
+        dict: 包含音訊資訊的字典，如果失敗則返回 None
     """
     try:
-        # 尋找 CodecID 元素 (0x86)
-        codec_id_offset = _find_ebml_element(data, b'\x86', track_entry_offset)
-        if codec_id_offset == -1 or codec_id_offset >= max_offset:
-            return None
+        # 使用 ffprobe 獲取音訊資訊
+        probe_cmd = "ffprobe -v quiet -print_format json -show_format -show_streams pipe:0"
 
-        offset = codec_id_offset + 1
+        proc = await asyncio.create_subprocess_exec(
+            *shlex.split(probe_cmd),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
 
-        # 解析 CodecID 字串長度
-        codec_id_length, len_bytes = _parse_ebml_element_size(data, offset)
-        if codec_id_length is None or offset + len_bytes + codec_id_length > len(data):
-            return None
+        stdout, stderr = await proc.communicate(webm)
 
-        offset += len_bytes
-
-        # 提取 CodecID 字串，去除空字節
-        codec_id_bytes = data[offset:offset + codec_id_length]
-        # 過濾掉空字節並解碼
-        codec_id_str = codec_id_bytes.rstrip(b'\x00').decode('utf-8', errors='ignore')
-
-        logger.debug(f"提取到 CodecID: '{codec_id_str}'")
-
-        # 根據 CodecID 字串判斷編解碼器類型
-        if 'opus' in codec_id_str.lower():
-            return 'opus'
-        elif 'vorbis' in codec_id_str.lower():
-            return 'vorbis'
-        elif 'pcm' in codec_id_str.lower():
-            return 'pcm'
+        if proc.returncode == 0 and stdout:
+            import json
+            info = json.loads(stdout.decode('utf-8'))
+            logger.debug(f"📊 [FFprobe] 音訊資訊: {info}")
+            return info
         else:
-            return codec_id_str.lower()
+            logger.warning("⚠️ [FFprobe] 無法獲取音訊資訊")
+            return None
 
     except Exception as e:
-        logger.debug(f"提取編解碼器類型時發生錯誤: {e}")
+        logger.warning(f"⚠️ [FFprobe] 獲取音訊資訊異常: {str(e)}")
         return None

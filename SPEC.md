@@ -5,12 +5,10 @@
 
 - React 18 with TypeScript
 - Next.js for framework
-- Vite for build tooling
-- Vitest for test
+- Next-test-utils for test
 - MSW for mocking backend API in frontend test
 - Tailwind CSS + shadcn/ui components
 - Zustand-like context for state management
-- React Router for navigation
 - Zod 4, therefore the imports should be `from "zod/v4"`, you may fetch `https://zod.dev/v4/changelog` if you are unsure how to write.
 
 ```ts
@@ -44,7 +42,7 @@ z.looseObject({ name: z.string() });
 ## File Structure
 
 - Frontend File organization
-  - Components in `frontend/components/`
+  - Components in `frontend/components/(ui)/`
   - Custom hooks in `frontend/hooks/`
   - Utilities in `frontend/lib/`
   - Type definitions in `frontend/types/`

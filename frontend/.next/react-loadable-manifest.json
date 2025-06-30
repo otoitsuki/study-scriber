@@ -1,7 +1,15 @@
 {
   "app/page.tsx -> ../lib/transcript-manager": {
     "id": "app/page.tsx -> ../lib/transcript-manager",
-    "files": []
+    "files": [
+      "static/chunks/_app-pages-browser_lib_transcript-manager_ts.js"
+    ]
+  },
+  "lib/app-store-zustand.ts -> ./services/recording-flow-service": {
+    "id": "lib/app-store-zustand.ts -> ./services/recording-flow-service",
+    "files": [
+      "static/chunks/_app-pages-browser_lib_services_recording-flow-service_ts.js"
+    ]
   },
   "study-scriber.tsx -> react-simplemde-editor": {
     "id": "study-scriber.tsx -> react-simplemde-editor",

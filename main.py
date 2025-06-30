@@ -16,6 +16,7 @@ import logging
 from app.db.database import auto_init_database, check_database_connection, check_tables_exist, get_database_stats, get_database_mode
 from app.api.sessions import router as sessions_router
 from app.api.notes import router as notes_router
+from app.api.segments import router as segments_router
 from app.ws.upload_audio import router as upload_audio_router
 from app.ws.transcript_feed import router as transcript_feed_router
 from app.core.ffmpeg import check_ffmpeg_health
@@ -85,6 +86,7 @@ app.add_middleware(
 # 註冊路由
 app.include_router(sessions_router)
 app.include_router(notes_router)
+app.include_router(segments_router)
 app.include_router(upload_audio_router)
 app.include_router(transcript_feed_router)
 

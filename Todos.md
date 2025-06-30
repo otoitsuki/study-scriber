@@ -13,9 +13,9 @@
 
 ### Phase 1: 後端 REST API 建立
 
-- [ ] **1.1 建立 segments API 路由**
-  - 📁 路徑：`app/api/segments.py` (新檔案)
-  - 🎯 實作 `POST /api/segment` 端點
+- [x] **1.1 建立 segments API 路由**
+  - ✅ 📁 路徑：`app/api/segments.py` 已建立
+  - ✅ 🎯 實作 `POST /api/segment` 端點
   ```python
   async def upload_segment(
       sid: UUID,
@@ -24,28 +24,31 @@
   ) -> dict
   ```
 
-- [ ] **1.2 實作檔案驗證與處理**
-  - 檔案大小限制：≤ 5MB
-  - MIME 類型檢查：`audio/webm`
-  - seq 唯一性驗證：`(session_id, seq)` UNIQUE
+- [x] **1.2 實作檔案驗證與處理**
+  - ✅ 檔案大小限制：≤ 5MB
+  - ✅ MIME 類型檢查：`audio/webm`
+  - ✅ seq 唯一性驗證：`(session_id, seq)` UNIQUE
+  - ✅ WebM 檔案格式驗證
 
-- [ ] **1.3 實作背景轉錄任務**
-  - 使用 FastAPI `BackgroundTasks`
-  - 流程：WebM → PCM (FFmpeg) → Whisper API → 儲存 → 廣播
+- [x] **1.3 實作背景轉錄任務**
+  - ✅ 使用 FastAPI `BackgroundTasks`
+  - ✅ 流程：WebM → R2 儲存 → DB 記錄 → FFmpeg → Whisper API → 廣播
   ```python
   async def process_and_transcribe(sid, seq, webm_blob):
       # 背景執行，不阻塞上傳回應
   ```
 
-- [ ] **1.4 更新儲存服務**
-  - 修改 `services.storage` 支援完整檔案儲存
-  - 保持 Cloudflare R2 + DB 雙重儲存
+- [x] **1.4 更新儲存服務**
+  - ✅ 整合 Cloudflare R2 儲存
+  - ✅ 資料庫 `audio_files` 表記錄
+  - ✅ 完整檔案儲存支援
 
 ### Phase 2: 前端錄音重構
 
-- [ ] **2.1 重構 MediaRecorder 邏輯**
-  - 移除 SegmentedAudioRecorder 複雜邏輯
-  - 改用標準 `MediaRecorder` + `timeslice=10000`
+- [x] **2.1 重構 MediaRecorder 邏輯**
+  - ✅ 移除 SegmentedAudioRecorder 複雜邏輯
+  - ✅ 改用標準 `MediaRecorder` + `timeslice=10000`
+  - ✅ 創建 `SimpleAudioRecorder` 類別
   ```typescript
   const recorder = new MediaRecorder(stream, {
     mimeType: 'audio/webm;codecs=opus',
@@ -55,9 +58,10 @@
   recorder.start(10_000);  // 10 秒自動切片
   ```
 
-- [ ] **2.2 實作 REST API 上傳**
-  - 替換 WebSocket 為 `fetch` POST
-  - 實作上傳錯誤處理和重試
+- [x] **2.2 實作 REST API 上傳**
+  - ✅ 替換 WebSocket 為 `fetch` POST
+  - ✅ 實作上傳錯誤處理和重試
+  - ✅ 創建 `RestAudioUploader` 類別
   ```typescript
   async function uploadSegment(seq: number, blob: Blob) {
     const form = new FormData();
@@ -67,15 +71,17 @@
   }
   ```
 
-- [ ] **2.3 實作失敗檔案暫存**
-  - 使用 IndexedDB 暫存失敗的檔案
-  - 提供重新上傳機制
-  - Toast 提示使用者暫存狀態
+- [x] **2.3 實作失敗檔案暫存**
+  - ✅ 使用 IndexedDB 暫存失敗的檔案
+  - ✅ 提供重新上傳機制
+  - ✅ UI 提示使用者暫存狀態
 
-- [ ] **2.4 更新狀態管理**
-  - 移除 ack/missing 相關狀態
-  - 簡化錄音狀態機
-  - 保持 WebSocket transcript_feed 不變
+- [x] **2.4 更新狀態管理**
+  - ✅ 移除 ack/missing 相關狀態
+  - ✅ 簡化錄音狀態機
+  - ✅ 創建 `SimpleRecordingService`
+  - ✅ 加入功能開關 `useSimpleRecordingService`
+  - ✅ 保持 WebSocket transcript_feed 不變
 
 ### Phase 3: 後端清理與優化
 

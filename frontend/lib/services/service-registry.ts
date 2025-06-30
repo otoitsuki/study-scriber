@@ -3,9 +3,11 @@
 import { serviceContainer } from './service-container'
 import { SessionService } from './session-service'
 import { RecordingService } from './recording-service'
+import { SimpleRecordingService } from './simple-recording-service'
 import { TranscriptService } from './transcript-service'
 import { RecordingFlowService } from './recording-flow-service'
 import { SERVICE_KEYS } from './interfaces'
+import { isFeatureEnabled } from '../feature-flags'
 
 /**
  * 服務註冊管理
@@ -33,9 +35,14 @@ export class ServiceRegistry {
             serviceContainer.registerSingleton(SERVICE_KEYS.SESSION_SERVICE, () => new SessionService())
             console.log('✅ [ServiceRegistry] SessionService 註冊完成')
 
-            // 註冊 RecordingService
-            serviceContainer.registerSingleton(SERVICE_KEYS.RECORDING_SERVICE, () => new RecordingService())
-            console.log('✅ [ServiceRegistry] RecordingService 註冊完成')
+            // 註冊 RecordingService（根據功能開關選擇）
+            if (isFeatureEnabled('useSimpleRecordingService')) {
+                serviceContainer.registerSingleton(SERVICE_KEYS.RECORDING_SERVICE, () => new SimpleRecordingService())
+                console.log('✅ [ServiceRegistry] SimpleRecordingService 註冊完成 (Phase 2)')
+            } else {
+                serviceContainer.registerSingleton(SERVICE_KEYS.RECORDING_SERVICE, () => new RecordingService())
+                console.log('✅ [ServiceRegistry] RecordingService 註冊完成 (Legacy)')
+            }
 
             // 註冊 TranscriptService
             serviceContainer.registerSingleton(SERVICE_KEYS.TRANSCRIPT_SERVICE, () => new TranscriptService())
