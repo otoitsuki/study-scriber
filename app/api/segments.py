@@ -108,13 +108,14 @@ async def process_and_transcribe(sid: UUID, seq: int, webm_blob: bytes):
 
         # 2. 記錄到資料庫 audio_files 表
         supabase = get_supabase_client()
+        app_settings = get_settings()
         audio_file_data = {
             "session_id": str(sid),
             "chunk_sequence": seq,
             "r2_key": blob_path,
             "r2_bucket": r2_client.bucket_name,
             "file_size": len(webm_blob),
-            "duration_seconds": settings.AUDIO_CHUNK_DURATION_SEC  # 從環境變數讀取切片時長
+            "duration_seconds": app_settings.AUDIO_CHUNK_DURATION_SEC  # 從環境變數讀取切片時長
         }
 
         audio_response = supabase.table("audio_files").insert(audio_file_data).execute()
@@ -166,7 +167,4 @@ async def _mark_segment_error(sid: UUID, seq: int, error_message: str):
         logger.error(f"記錄切片錯誤失敗: {e}")
 
 
-def get_settings() -> Settings:
-    """獲取應用程式設定"""
-    from app.core.config import settings
-    return settings
+
