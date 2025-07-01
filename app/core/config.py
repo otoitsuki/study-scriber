@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     MAX_RETRIES: int = Field(3, description="最大重試次數")
     RETRY_DELAY_SEC: int = Field(2, description="重試延遲時間（秒）")
 
+    # 滑動視窗 Rate Limiting 配置
+    USE_SLIDING_WINDOW_RATE_LIMIT: bool = Field(False, description="啟用滑動視窗頻率限制")
+    SLIDING_WINDOW_MAX_REQUESTS: int = Field(3, description="滑動視窗內最大請求數")
+    SLIDING_WINDOW_SECONDS: int = Field(60, description="滑動視窗時間（秒）")
+
     # 你可以依需求再加更多欄位
 
     model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")

@@ -78,6 +78,33 @@ if PROMETHEUS_AVAILABLE:
         "Current number of concurrent transcription jobs"
     )
 
+    # 滑動視窗專用指標
+    SLIDING_WINDOW_PERMITS = prom.Gauge(
+        "sliding_window_available_permits",
+        "Available permits in sliding window rate limiter"
+    )
+
+    SLIDING_WINDOW_ACTIVE_REQUESTS = prom.Gauge(
+        "sliding_window_active_requests",
+        "Current active requests in sliding window"
+    )
+
+    SLIDING_WINDOW_QUEUE_TIME = prom.Summary(
+        "sliding_window_queue_seconds",
+        "Time spent waiting for sliding window permit"
+    )
+
+    API_QUOTA_UTILIZATION = prom.Gauge(
+        "azure_api_quota_utilization_percent",
+        "Azure API quota utilization percentage"
+    )
+
+    RATE_LIMITER_TYPE = prom.Gauge(
+        "rate_limiter_type",
+        "Type of rate limiter in use (0=traditional, 1=sliding_window)",
+        ["limiter_type"]
+    )
+
     logger.info("📊 [Metrics] Prometheus 監控指標已初始化")
 else:
     # 如果 Prometheus 不可用，創建空的佔位符
@@ -95,6 +122,11 @@ else:
     QUEUE_PROCESSED_TOTAL = NoOpMetric()
     QUEUE_WAIT_SECONDS = NoOpMetric()
     CONCURRENT_JOBS_GAUGE = NoOpMetric()
+    SLIDING_WINDOW_PERMITS = NoOpMetric()
+    SLIDING_WINDOW_ACTIVE_REQUESTS = NoOpMetric()
+    SLIDING_WINDOW_QUEUE_TIME = NoOpMetric()
+    API_QUOTA_UTILIZATION = NoOpMetric()
+    RATE_LIMITER_TYPE = NoOpMetric()
 
 # 全域效能監控開關
 ENABLE_PERFORMANCE_LOGGING = os.getenv("ENABLE_PERFORMANCE_LOGGING", "true").lower() == "true"
@@ -161,6 +193,169 @@ class RateLimitHandler:
         if self._delay > 0:
             logger.info(f"✅ [RateLimitHandler] 重置延遲：{self._delay}s → 0s")
             self._delay = 0
+
+# 滑動視窗頻率限制處理器
+class SlidingWindowRateLimiter:
+    """滑動視窗頻率限制處理器 - 精確控制 API 配額使用"""
+
+    def __init__(self, max_requests: int = 3, window_seconds: int = 60):
+        """
+        初始化滑動視窗頻率限制器
+
+        Args:
+            max_requests: 滑動視窗內最大請求數（預設 3）
+            window_seconds: 滑動視窗時間長度（預設 60 秒）
+        """
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.semaphore = Semaphore(max_requests)
+        self.active_requests = 0
+        self.total_acquired = 0
+        self.total_released = 0
+        self._lock = asyncio.Lock()  # 保護統計數據的一致性
+
+        logger.info(f"🪟 [SlidingWindow] 初始化完成：{max_requests} requests/{window_seconds}s")
+
+    async def acquire(self) -> None:
+        """
+        取得 API 呼叫許可
+
+        使用 semaphore 控制併發數，並通過 call_later 實現滑動視窗自動釋放
+        """
+        logger.debug(f"🎫 [SlidingWindow] 請求許可，當前活躍: {self.active_requests}/{self.max_requests}")
+
+        # 記錄等待開始時間（用於 Prometheus 指標）
+        wait_start_time = time.time()
+
+        # 等待 semaphore 許可
+        await self.semaphore.acquire()
+
+        # 計算等待時間並更新 Prometheus 指標
+        wait_duration = time.time() - wait_start_time
+        SLIDING_WINDOW_QUEUE_TIME.observe(wait_duration)
+
+        # 更新統計數據（使用鎖保護）
+        async with self._lock:
+            self.active_requests += 1
+            self.total_acquired += 1
+
+        # 更新 Prometheus 指標
+        SLIDING_WINDOW_ACTIVE_REQUESTS.set(self.active_requests)
+        SLIDING_WINDOW_PERMITS.set(self.max_requests - self.active_requests)
+
+        # 更新配額利用率指標
+        utilization = (self.active_requests / self.max_requests) * 100
+        API_QUOTA_UTILIZATION.set(utilization)
+
+        # 安排 window_seconds 後自動釋放許可
+        try:
+            loop = asyncio.get_event_loop()
+            loop.call_later(self.window_seconds, self._release_permit)
+            logger.debug(f"✅ [SlidingWindow] 許可已取得，活躍請求: {self.active_requests}, 將在 {self.window_seconds}s 後自動釋放")
+        except Exception as e:
+            # 如果 call_later 失敗，立即釋放許可避免死鎖
+            logger.error(f"❌ [SlidingWindow] call_later 設定失敗: {e}")
+            self.semaphore.release()
+            async with self._lock:
+                self.active_requests = max(0, self.active_requests - 1)
+            # 回滾 Prometheus 指標
+            SLIDING_WINDOW_ACTIVE_REQUESTS.set(self.active_requests)
+            SLIDING_WINDOW_PERMITS.set(self.max_requests - self.active_requests)
+            utilization = (self.active_requests / self.max_requests) * 100
+            API_QUOTA_UTILIZATION.set(utilization)
+            raise
+
+    def _release_permit(self) -> None:
+        """
+        釋放許可（私有方法，由 call_later 調用）
+
+        注意：此方法在事件循環的回調中執行，必須是同步的
+        """
+        try:
+            self.semaphore.release()
+
+            # 更新統計數據（注意：此處無法使用 async lock）
+            # 使用原子操作確保一致性
+            self.active_requests = max(0, self.active_requests - 1)
+            self.total_released += 1
+
+            # 更新 Prometheus 指標
+            SLIDING_WINDOW_ACTIVE_REQUESTS.set(self.active_requests)
+            SLIDING_WINDOW_PERMITS.set(self.max_requests - self.active_requests)
+
+            # 更新配額利用率指標
+            utilization = (self.active_requests / self.max_requests) * 100
+            API_QUOTA_UTILIZATION.set(utilization)
+
+            logger.debug(f"🎫 [SlidingWindow] 許可已自動釋放，活躍請求: {self.active_requests}")
+        except Exception as e:
+            logger.error(f"❌ [SlidingWindow] 釋放許可時發生錯誤: {e}")
+
+    async def wait(self) -> None:
+        """
+        等待許可（相容於 RateLimitHandler 介面）
+
+        此方法提供與現有 RateLimitHandler.wait() 相同的介面
+        """
+        await self.acquire()
+
+    def get_stats(self) -> dict:
+        """
+        獲取滑動視窗統計資訊
+
+        Returns:
+            dict: 包含當前狀態的統計資訊
+        """
+        return {
+            'type': 'sliding_window',
+            'max_requests': self.max_requests,
+            'window_seconds': self.window_seconds,
+            'active_requests': self.active_requests,
+            'available_permits': self.max_requests - self.active_requests,
+            'total_acquired': self.total_acquired,
+            'total_released': self.total_released,
+            'utilization_percent': (self.active_requests / self.max_requests) * 100 if self.max_requests > 0 else 0,
+            'is_at_capacity': self.active_requests >= self.max_requests
+        }
+
+    def reset(self) -> None:
+        """
+        重置統計數據（保持與 RateLimitHandler 介面一致）
+
+        注意：此方法不會影響當前的 semaphore 狀態或活躍請求
+        """
+        logger.info(f"🔄 [SlidingWindow] 重置統計數據")
+        self.total_acquired = 0
+        self.total_released = 0
+
+    def backoff(self) -> None:
+        """
+        退避處理（相容於 RateLimitHandler 介面）
+
+        對於滑動視窗 Rate Limiter，退避實際上是由自動排隊機制處理，
+        此方法主要用於記錄和統計目的
+        """
+        logger.warning(f"🚦 [SlidingWindow] 遇到 429 錯誤，滑動視窗將自動處理退避")
+
+    @property
+    def _delay(self) -> int:
+        """
+        模擬延遲屬性（相容於 RateLimitHandler 介面）
+
+        對於滑動視窗，"延遲"概念是基於可用許可數量計算的預估等待時間
+        """
+        if self.active_requests >= self.max_requests:
+            # 如果已達容量上限，估算需要等待的時間
+            return max(1, self.window_seconds // 4)  # 估算等待時間
+        return 0
+
+    def __str__(self) -> str:
+        """字串表示"""
+        return f"SlidingWindowRateLimiter({self.max_requests}/{self.window_seconds}s, active={self.active_requests})"
+
+    def __repr__(self) -> str:
+        """詳細字串表示"""
+        return f"SlidingWindowRateLimiter(max_requests={self.max_requests}, window_seconds={self.window_seconds}, active_requests={self.active_requests})"
 
 # Task 3: 轉錄任務佇列管理器
 class TranscriptionQueueManager:
@@ -346,9 +541,32 @@ class TranscriptionQueueManager:
                 return False
 
         except RateLimitError as e:
-            logger.warning(f"🚦 [QueueManager] 頻率限制：session={session_id}, chunk={chunk_sequence}, error={e}")
-            # 429 錯誤不算失敗，會被重新排隊
-            raise e
+            logger.warning(f"🚦 [頻率限制] Chunk {chunk_sequence} 遇到 429 錯誤：{str(e)}")
+            rate_limit.backoff()
+
+            # Task 5: 記錄 429 錯誤
+            WHISPER_REQ_TOTAL.labels(status="rate_limit", deployment=self.deployment_name).inc()
+
+            # 根據 Rate Limiter 類型構建適當的錯誤訊息
+            if isinstance(rate_limit, SlidingWindowRateLimiter):
+                # 滑動視窗模式：基於可用許可數量提供資訊
+                stats = rate_limit.get_stats()
+                if stats['is_at_capacity']:
+                    error_msg = f"API 配額已滿（{stats['active_requests']}/{stats['max_requests']}），請等待約 {rate_limit._delay}s"
+                else:
+                    error_msg = f"API 頻率限制，滑動視窗排隊處理中（{stats['available_permits']} 個許可可用）"
+            else:
+                # 傳統指數退避模式
+                error_msg = f"API 頻率限制，將在 {rate_limit._delay}s 後重試"
+
+            # 廣播頻率限制錯誤到前端
+            await self._broadcast_transcription_error(
+                session_id,
+                chunk_sequence,
+                "rate_limit_error",
+                error_msg
+            )
+            return None
         except Exception as e:
             logger.error(f"❌ [QueueManager] 轉錄失敗：session={session_id}, chunk={chunk_sequence}, error={e}")
             return False
@@ -537,8 +755,36 @@ MAX_RETRIES = 3  # 最大重試次數
 # 全域集合追蹤已廣播 active 相位的 session
 _active_phase_sent: Set[str] = set()
 
-# 全域頻率限制處理器
-rate_limit = RateLimitHandler()
+# Rate Limiter 工廠函數
+def get_rate_limiter():
+    """
+    Rate Limiter 工廠函數 - 根據配置選擇適當的頻率限制策略
+
+    Returns:
+        RateLimitHandler 或 SlidingWindowRateLimiter 實例
+    """
+    if settings.USE_SLIDING_WINDOW_RATE_LIMIT:
+        logger.info(f"🪟 [配置] 使用滑動視窗頻率限制：{settings.SLIDING_WINDOW_MAX_REQUESTS} requests/{settings.SLIDING_WINDOW_SECONDS}s")
+
+        # 更新 Rate Limiter 類型指標
+        RATE_LIMITER_TYPE.labels(limiter_type="sliding_window").set(1)
+        RATE_LIMITER_TYPE.labels(limiter_type="traditional").set(0)
+
+        return SlidingWindowRateLimiter(
+            max_requests=settings.SLIDING_WINDOW_MAX_REQUESTS,
+            window_seconds=settings.SLIDING_WINDOW_SECONDS
+        )
+    else:
+        logger.info("🚦 [配置] 使用傳統指數退避頻率限制")
+
+        # 更新 Rate Limiter 類型指標
+        RATE_LIMITER_TYPE.labels(limiter_type="traditional").set(1)
+        RATE_LIMITER_TYPE.labels(limiter_type="sliding_window").set(0)
+
+        return RateLimitHandler()
+
+# 全域頻率限制處理器（動態選擇）
+rate_limit = get_rate_limiter()
 
 # Task 3: 全域隊列管理器
 queue_manager = TranscriptionQueueManager()
@@ -607,7 +853,7 @@ class SimpleAudioTranscriptionService:
         try:
             with PerformanceTimer(f"Process chunk {chunk_sequence} for session {session_id}"):
                 session_id_str = str(session_id)
-                logger.info(f"🚀 [WebM 直接轉錄] 開始處理音訊切片 {chunk_sequence} (session: {session_id}, size: {len(webm_data)} bytes)")
+                logger.info(f"�� [WebM 直接轉錄] 開始處理音訊切片 {chunk_sequence} (session: {session_id}, size: {len(webm_data)} bytes)")
 
                 # 步驟 1: 驗證和修復 WebM 數據（整合檔頭修復邏輯）
                 processed_webm_data = await self._validate_and_repair_webm_data(session_id, chunk_sequence, webm_data)
@@ -915,12 +1161,24 @@ class SimpleAudioTranscriptionService:
             # Task 5: 記錄 429 錯誤
             WHISPER_REQ_TOTAL.labels(status="rate_limit", deployment=self.deployment_name).inc()
 
+            # 根據 Rate Limiter 類型構建適當的錯誤訊息
+            if isinstance(rate_limit, SlidingWindowRateLimiter):
+                # 滑動視窗模式：基於可用許可數量提供資訊
+                stats = rate_limit.get_stats()
+                if stats['is_at_capacity']:
+                    error_msg = f"API 配額已滿（{stats['active_requests']}/{stats['max_requests']}），請等待約 {rate_limit._delay}s"
+                else:
+                    error_msg = f"API 頻率限制，滑動視窗排隊處理中（{stats['available_permits']} 個許可可用）"
+            else:
+                # 傳統指數退避模式
+                error_msg = f"API 頻率限制，將在 {rate_limit._delay}s 後重試"
+
             # 廣播頻率限制錯誤到前端
             await self._broadcast_transcription_error(
                 session_id,
                 chunk_sequence,
                 "rate_limit_error",
-                f"API 頻率限制，將在 {rate_limit._delay}s 後重試"
+                error_msg
             )
             return None
 
