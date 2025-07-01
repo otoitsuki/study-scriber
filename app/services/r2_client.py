@@ -12,6 +12,7 @@ from uuid import UUID
 import requests
 from dotenv import load_dotenv
 from supabase import Client
+from app.core.config import settings
 
 # 載入環境變數
 load_dotenv()
@@ -209,7 +210,7 @@ class R2Client:
                 "r2_key": r2_key,
                 "r2_bucket": self.bucket_name,
                 "file_size": len(blob_data),
-                "duration_seconds": 5.0  # 預設每個切片為 5 秒
+                "duration_seconds": settings.AUDIO_CHUNK_DURATION_SEC  # 從環境變數讀取切片時長
             }
 
             db_response = supabase_client.table("audio_files").insert(audio_file_record).execute()

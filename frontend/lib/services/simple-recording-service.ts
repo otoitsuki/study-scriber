@@ -4,6 +4,7 @@ import { BaseService } from './base-service'
 import { IRecordingService, RecordingState } from './interfaces'
 import { AdvancedAudioRecorder, AudioSegment, checkAdvancedAudioRecordingSupport } from '../advanced-audio-recorder'
 import { RestAudioUploader, UploadSegmentResponse } from '../rest-audio-uploader'
+import { getAudioChunkIntervalMs } from '../config'
 
 /**
  * SimpleRecordingService - 簡化錄音管理服務
@@ -108,7 +109,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
             // 步驟 1: 初始化音頻錄製器
             this.logInfo('步驟 1: 初始化進階音頻錄製器 (Advanced Audio Recorder)')
             this.audioRecorder = new AdvancedAudioRecorder({
-                segmentDuration: 10000, // 10 秒切片
+                segmentDuration: getAudioChunkIntervalMs(), // 從環境變數讀取切片時長
                 mimeType: 'audio/webm;codecs=opus',
                 audioBitsPerSecond: 128000 // 128 kbps
             })

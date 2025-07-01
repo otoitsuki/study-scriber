@@ -114,7 +114,7 @@ async def process_and_transcribe(sid: UUID, seq: int, webm_blob: bytes):
             "r2_key": blob_path,
             "r2_bucket": r2_client.bucket_name,
             "file_size": len(webm_blob),
-            "duration_seconds": 10.0  # 固定 10 秒切片
+            "duration_seconds": settings.AUDIO_CHUNK_DURATION_SEC  # 從環境變數讀取切片時長
         }
 
         audio_response = supabase.table("audio_files").insert(audio_file_data).execute()

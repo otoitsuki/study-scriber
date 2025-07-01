@@ -5,6 +5,7 @@ import { AckMissingMessage } from '../lib/websocket'
 import { SegmentedAudioRecorder, AudioSegment } from '../lib/segmented-audio-recorder'
 import { audioUploader } from '../lib/stream/audio-uploader'
 import { transcriptManager, TranscriptMessage } from '../lib/transcript-manager'
+import { getAudioChunkIntervalMs } from '../lib/config'
 
 interface UseRecordingReturn {
   isRecording: boolean
@@ -185,7 +186,7 @@ export function useRecording(): UseRecordingReturn {
       // 步驟 1: 建立分段式音檔錄製器
       console.log('🎤 [useRecording] 步驟 1: 初始化分段式音檔錄製器')
       const segmentedRecorder = new SegmentedAudioRecorder({
-        segmentDuration: 10000, // 10 秒切片
+        segmentDuration: getAudioChunkIntervalMs(), // 從環境變數讀取切片時長
         mimeType: 'audio/webm;codecs=opus',
         audioBitsPerSecond: 64000 // 64 kbps
       })

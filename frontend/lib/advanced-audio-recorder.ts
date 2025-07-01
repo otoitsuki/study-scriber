@@ -1,5 +1,7 @@
 "use client"
 
+import { getAudioChunkIntervalMs } from './config'
+
 /**
  * AdvancedAudioRecorder - 進階分段音訊錄製器
  *
@@ -7,10 +9,11 @@
  * 解決 MediaRecorder.start(timeslice) 只在第一個段落包含完整 container header 的問題
  *
  * 核心策略：
- * - 每10秒重新創建 MediaRecorder 實例
+ * - 可配置時間重新創建 MediaRecorder 實例
  * - 使用預建策略：提前創建下一個 MediaRecorder，避免建立延遲
  * - 無縫角色轉換：stop→start 間隙 ≈ 1-3ms
  * - 確保每個段落都包含完整 WebM EBML header
+ * - 支援環境變數配置切片時間
  */
 
 export interface AudioSegment {
@@ -27,9 +30,9 @@ export interface AdvancedAudioRecorderConfig {
 }
 
 const DEFAULT_CONFIG: AdvancedAudioRecorderConfig = {
-    segmentDuration: 10000, // 10 秒切片
+    segmentDuration: getAudioChunkIntervalMs(), // 從環境變數讀取切片時長
     mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: 128000, // 128 kbps for 10s chunks
+    audioBitsPerSecond: 128000, // 128 kbps for configurable chunks
 }
 
 export class AdvancedAudioRecorder {

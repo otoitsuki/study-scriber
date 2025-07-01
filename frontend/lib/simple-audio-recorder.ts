@@ -1,16 +1,19 @@
 "use client"
 
+import { getAudioChunkIntervalMs } from './config'
+
 /**
  * SimpleAudioRecorder - 簡化音訊錄製器
  *
  * Phase 2 重構：移除複雜的 SegmentedAudioRecorder 邏輯
- * 改用標準 MediaRecorder + timeslice=10000 模式
+ * 改用標準 MediaRecorder + timeslice 模式（可配置）
  *
  * 特點：
- * - 使用 MediaRecorder.start(10000) 自動切片
+ * - 使用 MediaRecorder.start(timeslice) 自動切片
  * - 每個段落包含完整 WebM Header
  * - 簡化錯誤處理
  * - 移除遞歸啟動/停止複雜性
+ * - 支援環境變數配置切片時間
  */
 
 export interface AudioSegment {
@@ -27,9 +30,9 @@ export interface SimpleAudioRecorderConfig {
 }
 
 const DEFAULT_CONFIG: SimpleAudioRecorderConfig = {
-    segmentDuration: 10000, // 10 秒切片
+    segmentDuration: getAudioChunkIntervalMs(), // 從環境變數讀取切片時長
     mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: 128000, // 128 kbps for 10s chunks
+    audioBitsPerSecond: 128000, // 128 kbps for configurable chunks
 }
 
 export class SimpleAudioRecorder {

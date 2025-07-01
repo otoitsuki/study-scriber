@@ -22,9 +22,9 @@ export interface AudioSegment {
 
 // 預設配置
 const DEFAULT_CONFIG: SegmentedAudioRecorderConfig = {
-    segmentDuration: 10000, // 10 秒切片（統一配置）
+    segmentDuration: getAudioChunkIntervalMs(), // 從環境變數讀取切片時長
     mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: 64000, // 64 kbps for 10s chunks（降低位元率）
+    audioBitsPerSecond: 64000, // 64 kbps for configurable chunks（降低位元率）
 }
 
 /**
