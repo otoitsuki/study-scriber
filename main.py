@@ -9,9 +9,16 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from datetime import datetime
 import logging
+
+# Task 5: Prometheus 監控支援
+try:
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
 
 from app.db.database import auto_init_database, check_database_connection, check_tables_exist, get_database_stats, get_database_mode
 from app.api.sessions import router as sessions_router
@@ -22,8 +29,7 @@ from app.ws.transcript_feed import router as transcript_feed_router
 from app.core.ffmpeg import check_ffmpeg_health
 from app.core.config import settings
 from app.core.container import container
-from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
-from openai import AzureOpenAI
+from app.services.azure_openai_v2 import SimpleAudioTranscriptionService, initialize_transcription_service_v2, queue_manager
 
 # 配置日誌
 logging.basicConfig(level=settings.LOG_LEVEL, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -41,23 +47,36 @@ async def lifespan(app: FastAPI):
     check_ffmpeg_health()
     await check_database_connection()
 
-    # 初始化並註冊服務
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    deployment = os.getenv("WHISPER_DEPLOYMENT_NAME")
-    if api_key and endpoint and deployment:
-        azure_client = AzureOpenAI(api_key=api_key, api_version="2024-06-01", azure_endpoint=endpoint)
-        transcription_service = SimpleAudioTranscriptionService(azure_client, deployment)
-        container.register(SimpleAudioTranscriptionService, lambda: transcription_service)
-        logger.info("✅ Transcription service initialized and registered.")
-    else:
-        logger.warning("Transcription service not initialized due to missing Azure credentials.")
+    # Task 1 & 2: 初始化並註冊異步轉錄服務
+    try:
+        transcription_service = await initialize_transcription_service_v2()
+        if transcription_service:
+            container.register(SimpleAudioTranscriptionService, lambda: transcription_service)
+            logger.info("✅ 異步轉錄服務初始化並註冊成功")
+        else:
+            logger.warning("⚠️ 轉錄服務未初始化：Azure OpenAI 環境變數缺失")
+    except Exception as e:
+        logger.error(f"❌ 轉錄服務初始化失敗: {e}")
 
+    # Task 3: 啟動隊列管理器
+    try:
+        await queue_manager.start_workers(num_workers=2)
+        logger.info("✅ 轉錄隊列管理器啟動成功")
+    except Exception as e:
+        logger.error(f"❌ 隊列管理器啟動失敗: {e}")
 
     yield
 
     # 關閉時執行
     logger.info("🔄 StudyScriber 正在關閉...")
+
+    # Task 3: 停止隊列管理器
+    try:
+        await queue_manager.stop_workers()
+        logger.info("✅ 轉錄隊列管理器已停止")
+    except Exception as e:
+        logger.warning(f"⚠️ 隊列管理器停止時發生錯誤: {e}")
+
     try:
         service_instance = container.resolve(SimpleAudioTranscriptionService)
         if service_instance:
@@ -255,6 +274,55 @@ async def performance_stats():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"無法取得效能統計: {str(e)}")
+
+
+@app.get("/debug/queue")
+async def debug_queue():
+    """Task 3 & 4: 除錯端點 - 檢查隊列狀態"""
+    try:
+        stats = queue_manager.get_stats()
+        return {
+            "status": "success",
+            "queue_stats": stats,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "queue_stats": {
+                "error": str(e)
+            }
+        }
+
+
+@app.get("/metrics")
+async def metrics():
+    """Task 5: Prometheus 監控指標端點"""
+    if not PROMETHEUS_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Prometheus metrics not available - prometheus-client not installed"
+        )
+
+    try:
+        # 生成 Prometheus 格式的監控指標
+        metrics_data = generate_latest()
+        return Response(
+            content=metrics_data,
+            media_type=CONTENT_TYPE_LATEST,
+            headers={
+                "Content-Type": CONTENT_TYPE_LATEST,
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate metrics: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate metrics: {str(e)}"
+        )
 
 
 # 全域例外處理器

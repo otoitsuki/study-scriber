@@ -23,6 +23,8 @@ dependencies = [
     "openai",
     "aiofiles",
     "python-multipart",
+    # Task 5: 監控依賴
+    "prometheus-client",
     # 測試依賴
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",

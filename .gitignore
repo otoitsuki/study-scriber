@@ -12,4 +12,4 @@ node_modules
 test/
 tests/
 test-results/
-.next/
+*/.next/

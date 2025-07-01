@@ -239,109 +239,17 @@
 
 ### 🔥 修復任務 (最高優先級)
 
-- [ ] **Task 1: 修改 RestAudioUploader 將 HTTP 409 視為冪等成功**
-  - 📁 檔案：`frontend/lib/rest-audio-uploader.ts`
-  - 🎯 修改 `uploadSegment()` 方法錯誤處理邏輯
-  - 📋 實作細節：
-    ```typescript
-    if (!response.ok) {
-        if (response.status === 409) {
-            // 409 視為冪等成功
-            console.log(`✅ [RestAudioUploader] 段落 #${sequence} 已存在，視為上傳成功`)
-            const successResponse = { ack: sequence, size: blob.size, status: 'success' as const }
-            this.onUploadSuccessCallback?.(sequence, successResponse)
-            return successResponse
-        }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
-    ```
-  - ✅ 驗證標準：上傳重複序號時返回成功響應，觸發成功回調
-
-- [ ] **Task 2: 修改 SessionService 強制創建新會話策略**
-  - 📁 檔案：`frontend/lib/services/session-service.ts`
-  - 🎯 修改 `ensureRecordingSession()` 方法為強制新建策略
-  - 📋 實作細節：
-    ```typescript
-    async ensureRecordingSession(title?: string, content?: string): Promise<SessionResponse> {
-        // 1. 檢查並完成任何現有活躍會話
-        const existingSession = await this.checkActiveSession()
-        if (existingSession) {
-            await this.finishSession(existingSession.id)
-        }
-        
-        // 2. 強制創建新會話
-        return await this.createRecordingSession(title, content)
-    }
-    ```
-  - ✅ 驗證標準：每次都創建新會話，舊會話被正確完成
-
-- [ ] **Task 3: 在錄音器中添加序號重置機制**
-  - 📁 檔案：`frontend/lib/advanced-audio-recorder.ts`, `frontend/lib/rest-audio-uploader.ts`
-  - 🎯 添加 `resetSequence()` 方法，確保新會話時序號從 0 開始
-  - 📋 實作細節：
-    ```typescript
-    // AdvancedAudioRecorder
-    resetSequence(): void {
-        this.sequence = 0
-        console.log('🔄 [AdvancedAudioRecorder] 序號已重置為 0')
-    }
-    
-    // RestAudioUploader
-    resetSequence(): void {
-        this.uploadQueue.clear()
-        this.retryCount.clear()
-        console.log('🔄 [RestAudioUploader] 上傳狀態已重置')
-    }
-    ```
-  - 🔗 依賴：Task 2 (SessionService 修改)
-  - ✅ 驗證標準：新錄音開始時序號確實從 0 開始
-
-- [ ] **Task 4: 測試和驗證修復效果**
-  - 🎯 全面測試修復後的逐字稿功能
-  - 📋 測試場景：
-    - **基本功能**：新錄音 → 會話創建 → 音頻上傳 → 逐字稿生成
-    - **序號衝突**：驗證 409 錯誤被正確處理為成功
-    - **邊緣情況**：快速停止/重啟、網路中斷、瀏覽器重新整理
-    - **回歸測試**：確保不影響其他現有功能
-  - 🔗 依賴：Task 1, 2, 3 全部完成
-  - ✅ 驗證標準：逐字稿正常產生，控制台無 409 錯誤，音頻上傳成功率 100%
-
-### 📊 修復策略優勢
-- **最小侵入性**：只修改前端邏輯，保持後端 API 不變
-- **冪等處理**：409 錯誤變為成功，消除重試開銷
-- **狀態一致**：強制新會話確保序號從 0 開始
-- **向後兼容**：不影響其他功能模塊
-
-### ⏱️ 預估時間
-- Task 1: 2-3 小時
-- Task 2: 2-3 小時  
-- Task 3: 1-2 小時
-- Task 4: 2-4 小時
-- **總計：7-12 小時**
-
----
-
-## 🚨 緊急修復：逐字稿更新停止問題 (2024-12-30)
-
-### 問題分析
-**根本原因**：Azure OpenAI Whisper API 頻率限制 (429 錯誤) 導致逐字稿更新停止
-- 現象：`HTTP 429 Too Many Requests` 頻繁出現，重試間隔從 7 秒激增到 39 秒
-- 根因：缺乏流量控制，處理速度跟不上音頻產生速度，造成積壓
-- 影響：轉錄任務堆積，逐字稿無法持續更新，用戶體驗嚴重受影響
-
-### 🔥 修復任務 (最高優先級)
-
-- [ ] **Task 1: Azure OpenAI 客戶端優化**
-  - 📁 檔案：`app/services/azure_openai_v2.py`
+- [x] **Task 1: Azure OpenAI 客戶端優化** ✅ **已完成**
+  - 📁 檔案：`app/services/azure_openai_v2.py`, `main.py`
   - 🎯 升級為異步客戶端，優化 timeout 和重試配置
   - 📋 實作細節：
     ```python
-    from openai import AsyncAzureOpenAI
+    from openai import AsyncAzureOpenAI, RateLimitError
     from httpx import Timeout
     
     TIMEOUT = Timeout(connect=5, read=55, write=30, pool=5)
     
-    def get_client() -> AsyncAzureOpenAI:
+    def get_azure_openai_client() -> Optional[AsyncAzureOpenAI]:
         return AsyncAzureOpenAI(
             api_key=settings.AZURE_OPENAI_API_KEY,
             azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
@@ -350,11 +258,17 @@
             max_retries=2,  # 由 5 次降到 2 次，避免積壓
         )
     
-    client = get_client()
+    client = get_azure_openai_client()
     ```
   - ✅ 驗證標準：客戶端超時配置生效，重試次數減少
+  - 🎯 **實作狀況**：
+    - ✅ 升級為 `AsyncAzureOpenAI` 異步客戶端
+    - ✅ 配置優化的 timeout：connect=5s, read=55s, write=30s, pool=5s
+    - ✅ 減少重試次數從 5 次到 2 次
+    - ✅ 更新 `main.py` 使用 `initialize_transcription_service_v2()` 初始化
+    - ✅ 所有 `_transcribe_audio()` 調用改為 `await` 異步調用
 
-- [ ] **Task 2: 智能頻率限制處理**
+- [x] **Task 2: 智能頻率限制處理** ✅ **已完成**
   - 📁 檔案：`app/services/azure_openai_v2.py`
   - 🎯 實作自定義退避策略，避免過長等待
   - 📋 實作細節：
@@ -388,13 +302,20 @@
             )
             rate_limit.reset()
             return resp
-        except openai.RateLimitError:
+        except RateLimitError:
             rate_limit.backoff()
             raise
     ```
   - ✅ 驗證標準：429 錯誤時智能退避，成功時重置延遲
+  - 🎯 **實作狀況**：
+    - ✅ 實作 `RateLimitHandler` 類別，支援指數退避 (5s → 10s → 20s → 40s → 60s)
+    - ✅ 全域 `rate_limit` 實例，所有轉錄請求共享
+    - ✅ `_transcribe_audio()` 方法整合智能等待：`await rate_limit.wait()`
+    - ✅ 成功時重置延遲：`rate_limit.reset()`
+    - ✅ 429 錯誤時退避並廣播錯誤：`rate_limit.backoff()`
+    - ✅ 完整日誌記錄和前端錯誤通知機制
 
-- [ ] **Task 3: 併發控制 & 任務優先級**
+- [x] **Task 3: 併發控制 & 任務優先級**
   - 📁 檔案：`app/services/azure_openai_v2.py`
   - 🎯 實作優先級隊列和併發控制，確保順序處理
   - 📋 實作細節：
@@ -422,7 +343,7 @@
     ```
   - ✅ 驗證標準：一次只有 1 個 Whisper API 呼叫，失敗任務高優先級重試
 
-- [ ] **Task 4: 積壓檢測 & 前端通知**
+- [x] **Task 4: 積壓檢測 & 前端通知**
   - 📁 檔案：`app/services/azure_openai_v2.py`, `app/ws/transcript_feed.py`
   - 🎯 監控隊列積壓，及時通知前端用戶
   - 📋 實作細節：
@@ -449,7 +370,7 @@
     ```
   - ✅ 驗證標準：積壓超閾值觸發 WebSocket 通知，前端顯示橙色 Banner
 
-- [ ] **Task 5: 監控與日誌優化**
+- [x] **Task 5: 監控與日誌優化** ✅ **已完成**
   - 📁 檔案：`app/services/azure_openai_v2.py`, `app/main.py`, `pyproject.toml`
   - 🎯 整合 Prometheus 監控，提供詳細的效能指標
   - 📋 實作細節：
@@ -486,6 +407,19 @@
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
     ```
   - ✅ 驗證標準：`/metrics` 端點可被 curl 存取，顯示 `whisper_req_total`、`whisper_backlog_size` 等指標
+  - 🎯 **實作狀況**：
+    - ✅ 添加 `prometheus-client` 依賴到 `pyproject.toml`
+    - ✅ 實作完整的 Prometheus 監控指標：
+      - `whisper_requests_total`: 轉錄請求計數器 (按狀態/部署分類)
+      - `whisper_latency_seconds`: 轉錄延遲指標
+      - `whisper_backlog_size`: 隊列積壓大小
+      - `queue_processed_total`: 隊列處理統計
+      - `queue_wait_seconds`: 隊列等待時間
+      - `concurrent_transcription_jobs`: 併發任務數量
+    - ✅ 整合 metrics 到 `_transcribe_audio()` 方法中
+    - ✅ 整合 metrics 到隊列管理器中
+    - ✅ 在 `main.py` 中添加 `/metrics` 端點
+    - ✅ 實作優雅降級機制 (NoOpMetric 類別) 當 Prometheus 不可用時
 
 ### 📊 修復策略優勢
 - **智能流量控制**：避免 API 頻率限制，維持穩定處理速度

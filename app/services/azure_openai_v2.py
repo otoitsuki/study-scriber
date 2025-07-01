@@ -15,8 +15,18 @@ from typing import Dict, Optional, Any, Set
 from uuid import UUID
 import json
 import os
+from asyncio import PriorityQueue, Semaphore
 
-from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI, RateLimitError
+from httpx import Timeout
+
+# Task 5: Prometheus 監控依賴
+try:
+    import prometheus_client as prom
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    logger.warning("prometheus-client 未安裝，監控指標將被停用")
 
 from ..db.database import get_supabase_client
 from app.core.config import settings
@@ -27,8 +37,77 @@ from app.services.r2_client import R2Client
 
 logger = logging.getLogger(__name__)
 
+# Task 5: Prometheus 監控指標
+if PROMETHEUS_AVAILABLE:
+    # 轉錄請求計數器
+    WHISPER_REQ_TOTAL = prom.Counter(
+        "whisper_requests_total",
+        "Total Whisper API requests",
+        ["status", "deployment"]
+    )
+
+    # 轉錄延遲指標
+    WHISPER_LATENCY_SECONDS = prom.Summary(
+        "whisper_latency_seconds",
+        "Whisper API latency",
+        ["deployment"]
+    )
+
+    # 隊列積壓指標
+    WHISPER_BACKLOG_GAUGE = prom.Gauge(
+        "whisper_backlog_size",
+        "Current queue backlog size"
+    )
+
+    # 隊列處理統計
+    QUEUE_PROCESSED_TOTAL = prom.Counter(
+        "queue_processed_total",
+        "Total processed jobs",
+        ["status"]
+    )
+
+    # 隊列等待時間
+    QUEUE_WAIT_SECONDS = prom.Summary(
+        "queue_wait_seconds",
+        "Time jobs spend waiting in queue"
+    )
+
+    # 併發處理數量
+    CONCURRENT_JOBS_GAUGE = prom.Gauge(
+        "concurrent_transcription_jobs",
+        "Current number of concurrent transcription jobs"
+    )
+
+    logger.info("📊 [Metrics] Prometheus 監控指標已初始化")
+else:
+    # 如果 Prometheus 不可用，創建空的佔位符
+    class NoOpMetric:
+        def inc(self, *args, **kwargs): pass
+        def set(self, *args, **kwargs): pass
+        def time(self): return self
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def labels(self, *args, **kwargs): return self
+
+    WHISPER_REQ_TOTAL = NoOpMetric()
+    WHISPER_LATENCY_SECONDS = NoOpMetric()
+    WHISPER_BACKLOG_GAUGE = NoOpMetric()
+    QUEUE_PROCESSED_TOTAL = NoOpMetric()
+    QUEUE_WAIT_SECONDS = NoOpMetric()
+    CONCURRENT_JOBS_GAUGE = NoOpMetric()
+
 # 全域效能監控開關
 ENABLE_PERFORMANCE_LOGGING = os.getenv("ENABLE_PERFORMANCE_LOGGING", "true").lower() == "true"
+
+# Task 1: 優化的 timeout 配置
+TIMEOUT = Timeout(connect=5, read=55, write=30, pool=5)
+
+# Task 3: 併發控制與任務優先級配置
+MAX_CONCURRENT_TRANSCRIPTIONS = 1  # 單並發保證順序
+QUEUE_HIGH_PRIORITY = 0  # 重試任務高優先級
+QUEUE_NORMAL_PRIORITY = 1  # 正常任務
+MAX_QUEUE_SIZE = 100  # 最大隊列大小
+QUEUE_TIMEOUT_SECONDS = 300  # 隊列超時（5分鐘）
 
 class PerformanceTimer:
     """效能計時器"""
@@ -57,6 +136,399 @@ class PerformanceTimer:
             return self.end_time - self.start_time
         return 0.0
 
+# Task 2: 智能頻率限制處理器
+class RateLimitHandler:
+    """智能頻率限制處理器 - 避免過長等待"""
+
+    def __init__(self):
+        self._delay = 0
+        logger.info("🚦 [RateLimitHandler] 頻率限制處理器已初始化")
+
+    async def wait(self):
+        """等待當前延遲時間"""
+        if self._delay:
+            logger.info(f"⏳ [RateLimitHandler] 等待 {self._delay}s 避免頻率限制")
+            await asyncio.sleep(self._delay)
+
+    def backoff(self):
+        """增加退避延遲（指數退避，最大 60 秒）"""
+        previous_delay = self._delay
+        self._delay = min((self._delay or 5) * 2, 60)  # 最大 60 秒
+        logger.warning(f"📈 [RateLimitHandler] 退避延遲：{previous_delay}s → {self._delay}s")
+
+    def reset(self):
+        """重置延遲（API 呼叫成功時）"""
+        if self._delay > 0:
+            logger.info(f"✅ [RateLimitHandler] 重置延遲：{self._delay}s → 0s")
+            self._delay = 0
+
+# Task 3: 轉錄任務佇列管理器
+class TranscriptionQueueManager:
+    """優先級隊列管理器 - 確保順序處理並避免積壓"""
+
+    def __init__(self):
+        # 優先級隊列 (priority, timestamp, job_data)
+        self.queue: PriorityQueue = PriorityQueue(maxsize=MAX_QUEUE_SIZE)
+        # 併發控制信號量
+        self.semaphore = Semaphore(MAX_CONCURRENT_TRANSCRIPTIONS)
+        # Worker 任務
+        self.workers: list[asyncio.Task] = []
+        # Task 4: 積壓監控任務
+        self.backlog_monitor_task: Optional[asyncio.Task] = None
+        # 統計數據
+        self.total_processed = 0
+        self.total_failed = 0
+        self.total_retries = 0
+        # Task 4: 積壓閾值和監控間隔
+        self.backlog_threshold = 30  # 超過 5 分鐘積壓 (30 任務 × 10秒)
+        self.monitor_interval = 10  # 每 10 秒檢查一次
+        self.last_backlog_alert = 0  # 上次積壓警報時間
+        self.backlog_alert_cooldown = 60  # 積壓警報冷卻時間（秒）
+        # 運行狀態
+        self.is_running = False
+
+        logger.info(f"🎯 [QueueManager] 初始化完成：max_concurrent={MAX_CONCURRENT_TRANSCRIPTIONS}, max_queue={MAX_QUEUE_SIZE}")
+
+    async def start_workers(self, num_workers: int = 2):
+        """啟動 Worker 任務"""
+        if self.is_running:
+            logger.warning("⚠️ [QueueManager] Workers already running")
+            return
+
+        self.is_running = True
+        logger.info(f"🚀 [QueueManager] 啟動 {num_workers} 個 Workers")
+
+        # 啟動工作線程
+        for i in range(num_workers):
+            worker_task = asyncio.create_task(self._worker(f"Worker-{i+1}"))
+            self.workers.append(worker_task)
+
+        # Task 4: 啟動積壓監控
+        self.backlog_monitor_task = asyncio.create_task(self._backlog_monitor())
+        logger.info("📊 [QueueManager] 積壓監控已啟動")
+
+    async def stop_workers(self):
+        """停止所有 Workers"""
+        if not self.is_running:
+            return
+
+        logger.info("⏹️ [QueueManager] 停止所有 Workers")
+        self.is_running = False
+
+        # Task 4: 停止積壓監控
+        if self.backlog_monitor_task:
+            self.backlog_monitor_task.cancel()
+            try:
+                await self.backlog_monitor_task
+            except asyncio.CancelledError:
+                pass
+
+        # 取消所有 worker 任務
+        for worker in self.workers:
+            worker.cancel()
+
+        # 等待所有任務完成
+        await asyncio.gather(*self.workers, return_exceptions=True)
+        self.workers.clear()
+
+    async def enqueue_job(self, session_id: UUID, chunk_sequence: int, webm_data: bytes, priority: int = QUEUE_NORMAL_PRIORITY):
+        """將轉錄任務加入隊列"""
+        timestamp = time.time()
+        job_data = {
+            'session_id': session_id,
+            'chunk_sequence': chunk_sequence,
+            'webm_data': webm_data,
+            'timestamp': timestamp,
+            'retry_count': 0
+        }
+
+        try:
+            # 使用 put_nowait 避免阻塞，如果隊列滿了會拋出異常
+            self.queue.put_nowait((priority, timestamp, job_data))
+
+            # Task 5: 更新隊列大小指標
+            queue_size = self.queue.qsize()
+            WHISPER_BACKLOG_GAUGE.set(queue_size)
+
+            priority_name = "HIGH" if priority == QUEUE_HIGH_PRIORITY else "NORMAL"
+            logger.info(f"📥 [QueueManager] 任務已入隊：session={session_id}, chunk={chunk_sequence}, priority={priority_name}, queue_size={queue_size}")
+
+        except asyncio.QueueFull:
+            logger.error(f"❌ [QueueManager] 隊列已滿 ({MAX_QUEUE_SIZE})，丟棄任務：session={session_id}, chunk={chunk_sequence}")
+            # 可以考慮廣播隊列滿的錯誤到前端
+            await self._broadcast_queue_full_error(session_id, chunk_sequence)
+            raise Exception(f"Transcription queue is full ({MAX_QUEUE_SIZE}), please try again later")
+
+    async def _worker(self, worker_name: str):
+        """Worker 協程 - 處理隊列中的任務"""
+        logger.info(f"👷 [QueueManager] {worker_name} 開始工作")
+
+        while self.is_running:
+            try:
+                # 等待任務
+                try:
+                    priority, timestamp, job_data = await asyncio.wait_for(
+                        self.queue.get(),
+                        timeout=1.0  # 1秒超時，讓 worker 能定期檢查運行狀態
+                    )
+                except asyncio.TimeoutError:
+                    continue  # 超時後繼續檢查運行狀態
+
+                # 檢查任務是否過期
+                age = time.time() - timestamp
+                if age > QUEUE_TIMEOUT_SECONDS:
+                    logger.warning(f"⏰ [QueueManager] {worker_name} 丟棄過期任務：age={age:.1f}s, session={job_data['session_id']}, chunk={job_data['chunk_sequence']}")
+                    self.queue.task_done()
+                    continue
+
+                # Task 5: 記錄隊列等待時間
+                wait_time = time.time() - timestamp
+                QUEUE_WAIT_SECONDS.observe(wait_time)
+
+                # 獲取併發控制權
+                async with self.semaphore:
+                    session_id = job_data['session_id']
+                    chunk_sequence = job_data['chunk_sequence']
+
+                    logger.info(f"🔧 [QueueManager] {worker_name} 處理任務：session={session_id}, chunk={chunk_sequence}, age={age:.1f}s, wait={wait_time:.1f}s")
+
+                    try:
+                        # 執行轉錄
+                        success = await self._process_transcription_job(job_data)
+
+                        if success:
+                            self.total_processed += 1
+                            # Task 5: 記錄成功處理的任務
+                            QUEUE_PROCESSED_TOTAL.labels(status="success").inc()
+                            logger.info(f"✅ [QueueManager] {worker_name} 任務完成：session={session_id}, chunk={chunk_sequence}")
+                        else:
+                            # 處理失敗，決定是否重試
+                            # Task 5: 記錄失敗處理的任務
+                            QUEUE_PROCESSED_TOTAL.labels(status="failed").inc()
+                            await self._handle_job_failure(job_data, worker_name)
+
+                    except Exception as e:
+                        logger.error(f"💥 [QueueManager] {worker_name} 任務異常：session={session_id}, chunk={chunk_sequence}, error={e}")
+                        # Task 5: 記錄異常處理的任務
+                        QUEUE_PROCESSED_TOTAL.labels(status="exception").inc()
+                        await self._handle_job_failure(job_data, worker_name)
+
+                # 標記任務完成
+                self.queue.task_done()
+
+            except Exception as e:
+                logger.error(f"💥 [QueueManager] {worker_name} Worker 異常：{e}")
+                await asyncio.sleep(1)  # 短暫休息後繼續
+
+        logger.info(f"👷 [QueueManager] {worker_name} 停止工作")
+
+    async def _process_transcription_job(self, job_data: dict) -> bool:
+        """處理單個轉錄任務"""
+        session_id = job_data['session_id']
+        chunk_sequence = job_data['chunk_sequence']
+        webm_data = job_data['webm_data']
+
+        try:
+            # 獲取轉錄服務
+            service = await initialize_transcription_service_v2()
+            if not service:
+                logger.error(f"❌ [QueueManager] 轉錄服務不可用：session={session_id}, chunk={chunk_sequence}")
+                return False
+
+            # 執行轉錄
+            result = await service._transcribe_audio(webm_data, session_id, chunk_sequence)
+            if result:
+                # 儲存並廣播結果
+                await service._save_and_push_result(session_id, chunk_sequence, result)
+                return True
+            else:
+                logger.warning(f"⚠️ [QueueManager] 轉錄無結果：session={session_id}, chunk={chunk_sequence}")
+                return False
+
+        except RateLimitError as e:
+            logger.warning(f"🚦 [QueueManager] 頻率限制：session={session_id}, chunk={chunk_sequence}, error={e}")
+            # 429 錯誤不算失敗，會被重新排隊
+            raise e
+        except Exception as e:
+            logger.error(f"❌ [QueueManager] 轉錄失敗：session={session_id}, chunk={chunk_sequence}, error={e}")
+            return False
+
+    async def _handle_job_failure(self, job_data: dict, worker_name: str):
+        """處理任務失敗"""
+        session_id = job_data['session_id']
+        chunk_sequence = job_data['chunk_sequence']
+        retry_count = job_data.get('retry_count', 0)
+
+        if retry_count < 3:  # 最多重試 3 次
+            job_data['retry_count'] = retry_count + 1
+            self.total_retries += 1
+
+            # 重新排隊（高優先級）
+            await self.enqueue_job(
+                session_id,
+                chunk_sequence,
+                job_data['webm_data'],
+                priority=QUEUE_HIGH_PRIORITY
+            )
+
+            logger.info(f"🔄 [QueueManager] {worker_name} 重新排隊：session={session_id}, chunk={chunk_sequence}, retry={retry_count + 1}")
+        else:
+            self.total_failed += 1
+            logger.error(f"❌ [QueueManager] {worker_name} 任務最終失敗：session={session_id}, chunk={chunk_sequence}, max_retries_exceeded")
+
+            # 廣播最終失敗通知
+            await self._broadcast_final_failure(session_id, chunk_sequence)
+
+    async def _broadcast_queue_full_error(self, session_id: UUID, chunk_sequence: int):
+        """廣播隊列滿錯誤"""
+        try:
+            error_data = {
+                "type": "transcription_error",
+                "error_type": "queue_full",
+                "message": f"轉錄隊列已滿 ({MAX_QUEUE_SIZE})，請稍後重試",
+                "session_id": str(session_id),
+                "chunk_sequence": chunk_sequence,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            await transcript_manager.broadcast(
+                json.dumps(error_data),
+                str(session_id)
+            )
+        except Exception as e:
+            logger.error(f"Failed to broadcast queue full error: {e}")
+
+    async def _broadcast_final_failure(self, session_id: UUID, chunk_sequence: int):
+        """廣播最終失敗通知"""
+        try:
+            error_data = {
+                "type": "transcription_error",
+                "error_type": "final_failure",
+                "message": f"段落 {chunk_sequence} 轉錄最終失敗，已達最大重試次數",
+                "session_id": str(session_id),
+                "chunk_sequence": chunk_sequence,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            await transcript_manager.broadcast(
+                json.dumps(error_data),
+                str(session_id)
+            )
+        except Exception as e:
+            logger.error(f"Failed to broadcast final failure: {e}")
+
+    # Task 4: 積壓監控器
+    async def _backlog_monitor(self):
+        """積壓監控協程 - 定期檢查隊列積壓並通知前端"""
+        logger.info("📊 [BacklogMonitor] 積壓監控開始")
+
+        while self.is_running:
+            try:
+                queue_size = self.queue.qsize()
+                current_time = time.time()
+
+                # 檢查是否超過積壓閾值
+                if queue_size > self.backlog_threshold:
+                    # 檢查冷卻時間，避免頻繁通知
+                    if current_time - self.last_backlog_alert > self.backlog_alert_cooldown:
+                        await self._broadcast_backlog_alert(queue_size)
+                        self.last_backlog_alert = current_time
+                        logger.warning(f"⚠️ [BacklogMonitor] 隊列積壓警報：queue_size={queue_size}, threshold={self.backlog_threshold}")
+
+                # 記錄隊列狀態（調試用）
+                if queue_size > 0:
+                    logger.debug(f"📊 [BacklogMonitor] 隊列狀態：size={queue_size}, processed={self.total_processed}, failed={self.total_failed}")
+
+                # 等待下次檢查
+                await asyncio.sleep(self.monitor_interval)
+
+            except Exception as e:
+                logger.error(f"💥 [BacklogMonitor] 監控異常：{e}")
+                await asyncio.sleep(self.monitor_interval)
+
+        logger.info("📊 [BacklogMonitor] 積壓監控停止")
+
+    async def _broadcast_backlog_alert(self, queue_size: int):
+        """廣播積壓警報到所有活躍會話"""
+        try:
+            # 計算預估等待時間
+            estimated_wait_minutes = (queue_size * 12) // 60  # 假設每個任務平均 12 秒
+
+            alert_data = {
+                "event": "stt_backlog",
+                "type": "backlog_alert",
+                "queue_size": queue_size,
+                "threshold": self.backlog_threshold,
+                "estimated_wait_minutes": estimated_wait_minutes,
+                "message": f"轉錄隊列積壓：{queue_size} 個任務等待處理，預估延遲 {estimated_wait_minutes} 分鐘",
+                "timestamp": datetime.utcnow().isoformat(),
+                "level": "warning" if queue_size < self.backlog_threshold * 2 else "critical"
+            }
+
+            # 廣播到所有活躍連接
+            active_connections = getattr(transcript_manager, 'active_connections', {})
+            if active_connections:
+                broadcast_message = json.dumps(alert_data)
+
+                # 廣播到所有會話
+                for session_id in list(active_connections.keys()):
+                    try:
+                        await transcript_manager.broadcast(broadcast_message, session_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to broadcast backlog alert to session {session_id}: {e}")
+
+                logger.info(f"📢 [BacklogMonitor] 積壓警報已廣播到 {len(active_connections)} 個會話")
+            else:
+                logger.debug("📢 [BacklogMonitor] 無活躍會話，跳過積壓警報廣播")
+
+        except Exception as e:
+            logger.error(f"Failed to broadcast backlog alert: {e}")
+
+    async def _broadcast_queue_recovery(self, queue_size: int):
+        """廣播隊列恢復正常通知"""
+        try:
+            recovery_data = {
+                "event": "stt_recovery",
+                "type": "queue_recovery",
+                "queue_size": queue_size,
+                "message": f"轉錄隊列已恢復正常：當前 {queue_size} 個任務",
+                "timestamp": datetime.utcnow().isoformat(),
+                "level": "info"
+            }
+
+            # 廣播到所有活躍連接
+            active_connections = getattr(transcript_manager, 'active_connections', {})
+            if active_connections:
+                broadcast_message = json.dumps(recovery_data)
+
+                for session_id in list(active_connections.keys()):
+                    try:
+                        await transcript_manager.broadcast(broadcast_message, session_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to broadcast recovery to session {session_id}: {e}")
+
+                logger.info(f"📢 [BacklogMonitor] 恢復通知已廣播到 {len(active_connections)} 個會話")
+
+        except Exception as e:
+            logger.error(f"Failed to broadcast queue recovery: {e}")
+
+    def get_stats(self) -> dict:
+        """獲取隊列統計信息"""
+        queue_size = self.queue.qsize()
+        return {
+            'queue_size': queue_size,
+            'max_queue_size': MAX_QUEUE_SIZE,
+            'total_processed': self.total_processed,
+            'total_failed': self.total_failed,
+            'total_retries': self.total_retries,
+            'workers_count': len(self.workers),
+            'is_running': self.is_running,
+            # Task 4: 積壓監控統計
+            'backlog_threshold': self.backlog_threshold,
+            'is_backlogged': queue_size > self.backlog_threshold,
+            'monitor_interval': self.monitor_interval,
+            'last_backlog_alert': self.last_backlog_alert,
+            'estimated_wait_seconds': queue_size * 12 if queue_size > 0 else 0
+        }
+
 # 配置常數
 CHUNK_DURATION = settings.AUDIO_CHUNK_DURATION_SEC  # 從配置讀取切片時長
 PROCESSING_TIMEOUT = 30  # 處理超時（秒）
@@ -65,10 +537,16 @@ MAX_RETRIES = 3  # 最大重試次數
 # 全域集合追蹤已廣播 active 相位的 session
 _active_phase_sent: Set[str] = set()
 
+# 全域頻率限制處理器
+rate_limit = RateLimitHandler()
+
+# Task 3: 全域隊列管理器
+queue_manager = TranscriptionQueueManager()
+
 class SimpleAudioTranscriptionService:
     """簡化的音訊轉錄服務"""
 
-    def __init__(self, azure_client: AzureOpenAI, deployment_name: str):
+    def __init__(self, azure_client: AsyncAzureOpenAI, deployment_name: str):
         self.client = azure_client
         self.deployment_name = deployment_name
         self.processing_tasks: Dict[str, asyncio.Task] = {}
@@ -101,7 +579,7 @@ class SimpleAudioTranscriptionService:
 
     async def process_audio_chunk(self, session_id: UUID, chunk_sequence: int, webm_data: bytes) -> bool:
         """
-        處理單一音訊切片
+        處理單一音訊切片 - Task 3: 使用隊列系統
 
         Args:
             session_id: 會話 ID
@@ -109,25 +587,20 @@ class SimpleAudioTranscriptionService:
             webm_data: WebM 音訊數據
 
         Returns:
-            bool: 處理是否成功
+            bool: 處理是否成功（入隊成功即視為成功）
         """
-        task_key = f"{session_id}_{chunk_sequence}"
+        try:
+            logger.info(f"🚀 [TranscriptionService] 提交轉錄任務：session={session_id}, chunk={chunk_sequence}, size={len(webm_data)} bytes")
 
-        # 避免重複處理
-        if task_key in self.processing_tasks:
-            logger.debug(f"Chunk {chunk_sequence} already being processed for session {session_id}")
+            # Task 3: 將任務提交到隊列而非直接處理
+            await queue_manager.enqueue_job(session_id, chunk_sequence, webm_data)
+
+            # 返回 True 表示成功提交到隊列
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ [TranscriptionService] 提交任務失敗：session={session_id}, chunk={chunk_sequence}, error={e}")
             return False
-
-        # 建立處理任務
-        task = asyncio.create_task(
-            self._process_chunk_async(session_id, chunk_sequence, webm_data)
-        )
-        self.processing_tasks[task_key] = task
-
-        # 清理完成的任務
-        task.add_done_callback(lambda t: self.processing_tasks.pop(task_key, None))
-
-        return True
 
     async def _process_chunk_async(self, session_id: UUID, chunk_sequence: int, webm_data: bytes):
         """非同步處理音訊切片 (WebM 直接轉錄架構 v2 + 檔頭修復)"""
@@ -377,51 +850,93 @@ class SimpleAudioTranscriptionService:
             return None
 
     async def _transcribe_audio(self, webm_data: bytes, session_id: UUID, chunk_sequence: int) -> Optional[Dict[str, Any]]:
-        """使用 Azure OpenAI Whisper 直接轉錄 WebM 音訊 (架構優化 v2)"""
+        """使用 Azure OpenAI Whisper 直接轉錄 WebM 音訊 (架構優化 v2 + 智能頻率限制處理)"""
+
+        # Task 2: 智能頻率限制處理 - 等待當前延遲
+        await rate_limit.wait()
+
+        # Task 5: 記錄併發處理數量
+        CONCURRENT_JOBS_GAUGE.inc()
+
         try:
-            with PerformanceTimer(f"Whisper WebM transcription for chunk {chunk_sequence}"):
-                # 建立 WebM 格式臨時檔案 (無需 FFmpeg 轉換)
-                with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
-                    temp_file.write(webm_data)
-                    temp_file.flush()
+            # Task 5: 監控轉錄延遲
+            with WHISPER_LATENCY_SECONDS.labels(deployment=self.deployment_name).time():
+                with PerformanceTimer(f"Whisper WebM transcription for chunk {chunk_sequence}"):
+                    # 建立 WebM 格式臨時檔案 (無需 FFmpeg 轉換)
+                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
+                        temp_file.write(webm_data)
+                        temp_file.flush()
 
-                    try:
-                        # 直接使用 WebM 檔案呼叫 Whisper API
-                        with open(temp_file.name, 'rb') as audio_file:
-                            transcript = self.client.audio.transcriptions.create(
-                                model=self.deployment_name,
-                                file=audio_file,
-                                language="zh",
-                                response_format="text"
-                            )
+                        try:
+                            # Task 1: 使用異步客戶端直接呼叫 Whisper API
+                            with open(temp_file.name, 'rb') as audio_file:
+                                transcript = await self.client.audio.transcriptions.create(
+                                    model=self.deployment_name,
+                                    file=audio_file,
+                                    language="zh",
+                                    response_format="text"
+                                )
 
-                        # 清理臨時檔案
-                        Path(temp_file.name).unlink(missing_ok=True)
+                            # 清理臨時檔案
+                            Path(temp_file.name).unlink(missing_ok=True)
 
-                        if not transcript or not transcript.strip():
-                            logger.debug(f"Empty transcript for chunk {chunk_sequence}")
-                            return None
+                            if not transcript or not transcript.strip():
+                                logger.debug(f"Empty transcript for chunk {chunk_sequence}")
+                                # Task 5: 記錄空轉錄
+                                WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
+                                return None
 
-                        logger.info(f"🎯 [WebM 直接轉錄] 成功處理 chunk {chunk_sequence} (格式: WebM → Whisper API)")
+                            # Task 2: API 呼叫成功，重置頻率限制延遲
+                            rate_limit.reset()
 
-                        return {
-                            'text': transcript.strip(),
-                            'chunk_sequence': chunk_sequence,
-                            'session_id': str(session_id),
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'language': 'zh-TW',
-                            'duration': CHUNK_DURATION
-                        }
+                            # Task 5: 記錄成功的轉錄請求
+                            WHISPER_REQ_TOTAL.labels(status="success", deployment=self.deployment_name).inc()
 
-                    finally:
-                        # 確保清理臨時檔案
-                        Path(temp_file.name).unlink(missing_ok=True)
+                            logger.info(f"🎯 [WebM 直接轉錄] 成功處理 chunk {chunk_sequence} (格式: WebM → Whisper API)")
+
+                            return {
+                                'text': transcript.strip(),
+                                'chunk_sequence': chunk_sequence,
+                                'session_id': str(session_id),
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'language': 'zh-TW',
+                                'duration': CHUNK_DURATION
+                            }
+
+                        finally:
+                            # 確保清理臨時檔案
+                            Path(temp_file.name).unlink(missing_ok=True)
+
+        except RateLimitError as e:
+            # Task 2: 智能處理 429 錯誤
+            logger.warning(f"🚦 [頻率限制] Chunk {chunk_sequence} 遇到 429 錯誤：{str(e)}")
+            rate_limit.backoff()
+
+            # Task 5: 記錄 429 錯誤
+            WHISPER_REQ_TOTAL.labels(status="rate_limit", deployment=self.deployment_name).inc()
+
+            # 廣播頻率限制錯誤到前端
+            await self._broadcast_transcription_error(
+                session_id,
+                chunk_sequence,
+                "rate_limit_error",
+                f"API 頻率限制，將在 {rate_limit._delay}s 後重試"
+            )
+            return None
 
         except Exception as e:
             logger.error(f"WebM direct transcription failed for chunk {chunk_sequence}: {e}")
+
+            # Task 5: 記錄失敗的轉錄請求
+            WHISPER_REQ_TOTAL.labels(status="error", deployment=self.deployment_name).inc()
+
             # 廣播 Whisper API 錯誤到前端
             await self._broadcast_transcription_error(session_id, chunk_sequence, "whisper_api_error", f"Azure OpenAI Whisper WebM 轉錄失敗: {str(e)}")
             return None
+
+        finally:
+            # Task 5: 減少併發處理數量
+            CONCURRENT_JOBS_GAUGE.dec()
 
     async def _save_and_push_result(self, session_id: UUID, chunk_sequence: int, transcript_result: Dict[str, Any]):
         """儲存轉錄結果並推送到前端"""
@@ -530,14 +1045,28 @@ class SimpleAudioTranscriptionService:
 _transcription_service_v2: Optional[SimpleAudioTranscriptionService] = None
 
 
-def get_azure_openai_client() -> Optional[AzureOpenAI]:
-    """根據環境變數建立 AzureOpenAI 用戶端，缺值時回傳 None。"""
+def get_azure_openai_client() -> Optional[AsyncAzureOpenAI]:
+    """Task 1: 建立異步 AzureOpenAI 用戶端，包含優化的 timeout 和重試配置"""
     api_key = os.getenv("AZURE_OPENAI_API_KEY")
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     if not api_key or not endpoint:
+        logger.warning("⚠️ [客戶端初始化] Azure OpenAI 環境變數缺失")
         return None
-    # 使用預設 API 版本即可
-    return AzureOpenAI(api_key=api_key, api_version="2024-06-01", azure_endpoint=endpoint)
+
+    # Task 1: 創建異步客戶端，包含 timeout 和減少重試次數
+    client = AsyncAzureOpenAI(
+        api_key=api_key,
+        azure_endpoint=endpoint,
+        api_version="2024-06-01",
+        timeout=TIMEOUT,
+        max_retries=2,  # 由 5 次降到 2 次，避免積壓
+    )
+
+    logger.info("✅ [客戶端初始化] AsyncAzureOpenAI 客戶端已創建")
+    logger.info(f"   - Timeout: connect={TIMEOUT.connect}s, read={TIMEOUT.read}s")
+    logger.info(f"   - Max retries: 2 (優化後)")
+
+    return client
 
 
 def get_whisper_deployment_name() -> Optional[str]:
@@ -558,7 +1087,7 @@ async def initialize_transcription_service_v2() -> Optional[SimpleAudioTranscrip
         return None
 
     _transcription_service_v2 = SimpleAudioTranscriptionService(client, deployment)
-    logger.info("✅ Transcription service v2 initialized")
+    logger.info("✅ Transcription service v2 initialized with async client")
     return _transcription_service_v2
 
 
