@@ -372,7 +372,9 @@ DEBUG=true
 
 ## 🔗 相關連結
 
+- **[🔧 音頻切片配置指南](AUDIO_CHUNK_CONFIG.md)** - 環境變數配置錄音切片時間
 - [專案需求文件 (PRD)](PRD.md)
+- [技術規格書 (SPEC)](SPEC.md)
 - [測試報告](T1_T4_Test_Final_Report.md)
 - [開發任務清單](Todos.md)
 - [Supabase 官方文件](https://supabase.com/docs)
