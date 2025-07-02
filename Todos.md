@@ -41,52 +41,34 @@
     - ✅ 保持與現有架構完全相容
   - ✅ 驗證標準：無縫切換、錯誤處理一致、Prometheus 指標正常、介面相容性完整
 
-- [x] **Task 4: 新增滑動視窗專用 Prometheus 監控指標**
-  - 📁 檔案：`app/services/azure_openai_v2.py` Prometheus 指標區段
-  - 🎯 擴展現有的 Prometheus 監控系統，新增滑動視窗專用指標
-  - 📋 監控指標：
-    ```python
-    SLIDING_WINDOW_PERMITS = prom.Gauge("滑動視窗可用許可數量")
-    SLIDING_WINDOW_ACTIVE_REQUESTS = prom.Gauge("滑動視窗活躍請求數")
-    SLIDING_WINDOW_QUEUE_TIME = prom.Summary("滑動視窗等待時間")
-    API_QUOTA_UTILIZATION = prom.Gauge("Azure API 配額利用率百分比")
-    RATE_LIMITER_TYPE = prom.Gauge("Rate Limiter 類型指標")
-    ```
-  - 🔄 整合功能：
-    - ✅ 在 `SlidingWindowRateLimiter.acquire()` 中新增指標更新和等待時間測量
-    - ✅ 在 `_release_permit()` 中更新釋放後的指標狀態
-    - ✅ 在 `get_rate_limiter()` 工廠函數中追蹤當前使用的 Rate Limiter 類型
-    - ✅ 完整的 NoOpMetric 模式支援，確保沒有 Prometheus 也能運行
-  - ✅ 驗證標準：Prometheus 指標正確匯出、滑動視窗許可數量追蹤準確、API 配額利用率計算正確、NoOpMetric 模式無錯誤
+- [x] **Task 4: 修改 _transcribe_audio 方法使用 verbose_json 並實作過濾**
+  - 📁 檔案：`app/services/azure_openai_v2.py`
+  - 🎯 修改 `_transcribe_audio` 方法，將 `response_format` 改為 "verbose_json"
+  - 📋 功能：
+    - 使用 `_keep` 函數過濾幻覺段落
+    - 增加詳細的日誌記錄
+    - 更新監控指標
+  - 🔄 依賴：Task 3 完成
+  - 🆔 TaskID: `f9e4060d-f2ec-4882-9529-211b1f9aca64`
+  - ✅ 驗證標準：API 調用正確、過濾功能運作、日誌完整
+  - 🎉 **已完成**：成功修改 `_transcribe_audio` 方法支援 `verbose_json` 格式，整合 `_keep` 函數過濾幻覺段落，添加詳細的段落過濾統計日誌（總數、保留、過濾），增強轉錄結果包含段落統計資訊，並通過 7 個完整的單元測試，涵蓋成功過濾、全段落過濾、空段落、API 錯誤、頻率限制、日誌記錄和 Prometheus 指標更新等情況
 
-- [ ] **Task 5: 改善前端積壓通知和延遲估算顯示**
-  - 📁 檔案：`frontend/lib/websocket.ts`, `frontend/components/queue-status-banner.tsx`
-  - 🎯 改進 `stt_backlog` 事件處理，實作精確延遲估算 UI
-  - 📋 UI 改進：
-    - 顯示隊列大小和預估等待時間
-    - 新增隊列狀態 Banner 組件
-    - 支援 `stt_recovery` 事件隱藏通知
-  - ✅ 驗證標準：通知準確顯示、UI 一致性、使用者體驗良好
+- [x] **Task 5: 為 _keep 函數和過濾邏輯撰寫單元測試**
+  - 📁 檔案：測試檔案 (遵循專案測試結構)
+  - 🎯 為新實作的 `_keep` 函數和修改後的 `_transcribe_audio` 方法撰寫完整的單元測試
+  - 📋 功能：使用用戶提供的測試範例，確保過濾邏輯在各種邊界條件下都能正確運作
+  - 🔄 依賴：Task 4 完成
+  - 🆔 TaskID: `bfbd159c-8774-4a17-a984-cb7fa388c359`
+  - ✅ 驗證標準：遵循 TDD 原則，測試覆蓋完整
+  - 🎉 **已完成**：完整的測試已在 Task 3 和 Task 4 中實作完成 - Task 3 包含 `_keep` 函數的 9 個完整測試（涵蓋有效段落、高靜音機率、低置信度、高重複比率、邊界值、缺少欄位、Prometheus 計數器、多重過濾條件、自定義門檻值），Task 4 包含 `_transcribe_audio` verbose_json 功能的 7 個完整測試（涵蓋成功過濾、全段落過濾、空段落、API 錯誤、頻率限制、日誌記錄、Prometheus 指標更新）
 
-- [ ] **Task 6: 實作完整測試套件和 A/B 測試機制**
-  - 📁 檔案：`tests/test_sliding_window_rate_limiter.py`, CI 整合
-  - 🎯 建立完整測試覆蓋和 A/B 測試監控機制
-  - 📋 測試覆蓋：
-    - 單元測試：`call_later()` 時序行為、semaphore 控制
-    - 整合測試：與 `TranscriptionQueueManager` 整合
-    - 效能測試：新舊策略延遲比較
-  - ✅ 驗證標準：測試覆蓋率 >90%、A/B 測試機制、CI 整合
-
----
-
-### Backlog: 後端清理與優化
-
-- [ ] **1. 移除舊 WebSocket 上傳**
-  - 刪除 `app/ws/upload_audio.py`
-  - 移除相關路由註冊
-  - 清理 ack/missing 邏輯
-
-- [ ] **2. 簡化轉錄服務**
-  - 移除串流處理複雜邏輯
-  - 專注於單檔處理優化
-  - 保留 Whisper 429 重試機制
+- [x] **Task 6: 更新 .env.example 檔案添加過濾門檻配置範例**
+  - 📁 檔案：`.env.example`
+  - 🎯 在 Azure OpenAI 區段新增 Whisper 段落過濾門檻的配置範例和詳細說明
+  - 📋 功能：
+    - 提供清楚的中文註解說明各參數用途和建議值
+    - 讓使用者可以直接複製到自己的 .env 檔案中
+  - 🔄 依賴：Task 1 完成
+  - 🆔 TaskID: `e609aecd-faa9-4b2c-bd39-cf97042f4256`
+  - ✅ 驗證標準：文件清楚易懂、配置範例實用
+  - 🎉 **已完成**：在 `.env.example` 檔案中新增完整的「Whisper 幻覺過濾設定」區段，包含三個過濾參數（`FILTER_NO_SPEECH=0.8`、`FILTER_LOGPROB=-1.0`、`FILTER_COMPRESSION=2.4`）的詳細中文說明，涵蓋參數用途、數值範圍、建議值和實際效果，讓使用者能夠輕鬆理解和配置幻覺過濾功能

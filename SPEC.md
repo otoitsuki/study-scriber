@@ -3,6 +3,7 @@
 
 ## Frontend Stack
 
+- pnpm for Package manager
 - React 18 with TypeScript
 - Next.js for framework
 - Next-test-utils for test
@@ -10,6 +11,7 @@
 - Tailwind CSS + shadcn/ui components
 - Zustand-like context for state management
 - Zod 4, therefore the imports should be `from "zod/v4"`, you may fetch `https://zod.dev/v4/changelog` if you are unsure how to write.
+- Playwright MCP for e2e test
 
 ```ts
 // Bad: Zod 3
@@ -154,7 +156,6 @@ z.looseObject({ name: z.string() });
 - ✅ **檔案分離**：音訊檔案使用免費的 Cloudflare R2 儲存，降低成本
 - ✅ **自動初始化**：提供完整 SQL 腳本，一鍵建立所有表格
 - ✅ **高可用性**：Supabase 提供 99.9% 可用性保證
-- ✅ **即時功能**：內建 Realtime 支援，為未來功能做準備
 
 ```mermaid
 erDiagram
@@ -266,44 +267,11 @@ default → finished                    // 純筆記模式直接完成（未來�
 - ✅ **資料安全**：Microsoft 提供企業級資料保護
 - ✅ **架構簡化**：使用完整 10s 檔案，提高成功率
 
-**簡化後工作流程**：
+**工作流程**：
 ```
 前端錄音 (10s WebM) → REST API 上傳完整檔案 → 儲存到 R2 → 
 FFmpeg 轉換 → Azure OpenAI Whisper API → WebSocket 推送轉錄結果
 ```
-
-**架構簡化重點**：
-- 🚀 **移除複雜性**：不再需要 WebSocket 串流、ack/missing 機制
-- 📈 **可靠性提升**：完整檔案處理，減少串流錯誤
-- 🔧 **開發簡化**：REST API 比 WebSocket 更容易測試和除錯
-- 💾 **維護成本降低**：減少狀態管理和重傳邏輯
-- 🛡️ **錯誤處理簡化**：更容易定位和解決問題
-
-**SLA 調整**：
-- **首句延遲 KPI**：≤ 15 秒 (由於 10s 切片 + 處理時間)
-- **平均句延遲**：≤ 12 秒
-- **檔案大小**：~2MB per 10s segment @ 128kbps
-
-**整合配置**：
-```python
-# Azure OpenAI 設定 (不變)
-AZURE_OPENAI_API_KEY = "your-api-key"
-AZURE_OPENAI_ENDPOINT = "https://your-resource.openai.azure.com/"
-AZURE_OPENAI_API_VERSION = "2024-06-01"
-WHISPER_DEPLOYMENT_NAME = "whisper-1"
-
-# 新架構設定
-SEGMENT_DURATION = 10  # 10 秒切片
-UPLOAD_MAX_SIZE = 5 * 1024 * 1024  # 5MB 上傳限制
-MIME_TYPE = "audio/webm;codecs=opus"
-AUDIO_BITRATE = 128_000  # 128 kbps
-```
-
-**技術細節**：
-- **前端錄音**：`MediaRecorder` with `timeslice=10000` + `ondataavailable`
-- **後端處理**：BackgroundTasks 避免阻塞上傳回應
-- **轉錄策略**：WebM → PCM → Whisper API (保證相容性)
-- **錯誤處理**：失敗檔案暫存 IndexedDB，提供重試機制
 
 ---
 

@@ -9,8 +9,10 @@ import tempfile
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 import io
+import logging
+import unittest.mock
 
 import pytest
 from types import SimpleNamespace
@@ -52,7 +54,7 @@ class TestSimpleAudioTranscriptionService:
         assert service.client == mock_azure_client
         assert service.deployment_name == "whisper-test"
         assert service.processing_tasks == {}
-        
+
         # 檢查檔頭緩存相關屬性
         assert service._header_cache == {}
         assert service._header_cache_timestamps == {}
@@ -66,7 +68,7 @@ class TestSimpleAudioTranscriptionService:
         repairer1 = service._get_header_repairer()
         assert isinstance(repairer1, WebMHeaderRepairer)
         assert service._header_repairer is not None
-        
+
         # 第二次調用應該返回同一個實例
         repairer2 = service._get_header_repairer()
         assert repairer1 is repairer2
@@ -80,10 +82,10 @@ class TestSimpleAudioTranscriptionService:
             error_message=None
         )
         mock_repairer.extract_header.return_value = mock_result
-        
+
         with patch.object(service, '_get_header_repairer', return_value=mock_repairer):
             result = service._extract_and_cache_header(str(session_id), sample_webm_data)
-            
+
             assert result is True
             assert str(session_id) in service._header_cache
             assert str(session_id) in service._header_cache_timestamps
@@ -98,10 +100,10 @@ class TestSimpleAudioTranscriptionService:
             error_message="Invalid WebM data"
         )
         mock_repairer.extract_header.return_value = mock_result
-        
+
         with patch.object(service, '_get_header_repairer', return_value=mock_repairer):
             result = service._extract_and_cache_header(str(session_id), sample_webm_data)
-            
+
             assert result is False
             assert str(session_id) not in service._header_cache
 
@@ -109,10 +111,10 @@ class TestSimpleAudioTranscriptionService:
         """測試檔頭提取過程中的異常處理"""
         mock_repairer = Mock()
         mock_repairer.extract_header.side_effect = Exception("Extraction error")
-        
+
         with patch.object(service, '_get_header_repairer', return_value=mock_repairer):
             result = service._extract_and_cache_header(str(session_id), sample_webm_data)
-            
+
             assert result is False
             assert str(session_id) not in service._header_cache
 
@@ -121,7 +123,7 @@ class TestSimpleAudioTranscriptionService:
         header_data = b'WEBM_HEADER_DATA'
         service._header_cache[str(session_id)] = header_data
         service._header_cache_timestamps[str(session_id)] = time.time()
-        
+
         result = service._get_cached_header(str(session_id))
         assert result == header_data
 
@@ -135,7 +137,7 @@ class TestSimpleAudioTranscriptionService:
         header_data = b'WEBM_HEADER_DATA'
         service._header_cache[str(session_id)] = header_data
         service._header_cache_timestamps[str(session_id)] = time.time() - 7200  # 2小時前
-        
+
         result = service._get_cached_header(str(session_id))
         assert result is None
         assert str(session_id) not in service._header_cache
@@ -145,41 +147,41 @@ class TestSimpleAudioTranscriptionService:
         header_data = b'WEBM_HEADER_DATA'
         service._header_cache[str(session_id)] = header_data
         service._header_cache_timestamps[str(session_id)] = time.time()
-        
+
         service._clear_session_cache(str(session_id))
-        
+
         assert str(session_id) not in service._header_cache
         assert str(session_id) not in service._header_cache_timestamps
 
     def test_cleanup_expired_cache(self, service):
         """測試自動清理過期緩存"""
         current_time = time.time()
-        
+
         # 添加新緩存
         service._header_cache["session1"] = b"header1"
         service._header_cache_timestamps["session1"] = current_time
-        
+
         # 添加過期緩存
         service._header_cache["session2"] = b"header2"
         service._header_cache_timestamps["session2"] = current_time - 7200  # 2小時前
-        
+
         service._cleanup_expired_cache()
-        
+
         assert "session1" in service._header_cache
         assert "session2" not in service._header_cache
 
     def test_cleanup_cache_size_limit(self, service):
         """測試緩存大小限制"""
         current_time = time.time()
-        
+
         # 超過最大限制的緩存
         for i in range(105):  # 超過100的限制
             session_id = f"session{i}"
             service._header_cache[session_id] = f"header{i}".encode()
             service._header_cache_timestamps[session_id] = current_time - i  # 時間遞減
-        
+
         service._cleanup_expired_cache()
-        
+
         # 應該只保留100個最新的（session0-session99）
         assert len(service._header_cache) == 100
         assert "session0" in service._header_cache  # 最新的（current_time - 0）
@@ -306,7 +308,7 @@ class TestSimpleAudioTranscriptionService:
         mock_supabase_client.table.return_value.insert.return_value.execute.return_value.data = [
             {'id': 'test-segment-id'}
         ]
-        
+
         with patch('app.services.azure_openai_v2.get_supabase_client', return_value=mock_supabase_client):
             # broadcast 是非同步函式，使用 AsyncMock
             with patch('app.ws.transcript_feed.manager.broadcast', new_callable=AsyncMock) as mock_broadcast:
@@ -471,3 +473,516 @@ def mock_writable_tempfile():
 
     # 回傳 MockTempFile 類別本身，讓 patch new_callable 可以直接使用
     return MockTempFile
+
+class TestWhisperSegmentFiltering:
+    """測試 Whisper 段落過濾功能"""
+
+    def test_keep_function_valid_segment(self):
+        """測試保留有效段落"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+        from app.core.config import settings
+
+        # 模擬有效的 verbose_json 段落
+        valid_segment = {
+            "id": 0,
+            "seek": 0,
+            "start": 0.0,
+            "end": 5.0,
+            "text": "這是一段正常的語音轉錄文字",
+            "tokens": [1234, 5678],
+            "temperature": 0.0,
+            "avg_logprob": -0.3,
+            "compression_ratio": 1.8,
+            "no_speech_prob": 0.1
+        }
+
+        service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+        result = service._keep(valid_segment)
+
+        # 應該保留有效段落
+        assert result is True
+
+    def test_keep_function_high_no_speech_prob(self):
+        """測試過濾高靜音機率段落"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+
+        # 模擬高靜音機率段落
+        high_no_speech_segment = {
+            "id": 0,
+            "seek": 0,
+            "start": 0.0,
+            "end": 5.0,
+            "text": "um, uh, er...",
+            "tokens": [1234],
+            "temperature": 0.0,
+            "avg_logprob": -0.5,
+            "compression_ratio": 1.5,
+            "no_speech_prob": 0.9  # 超過預設門檻 0.8
+        }
+
+        service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+        result = service._keep(high_no_speech_segment)
+
+        # 應該過濾掉高靜音機率段落
+        assert result is False
+
+    def test_keep_function_low_confidence(self):
+        """測試過濾低置信度段落"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+
+        # 模擬低置信度段落
+        low_confidence_segment = {
+            "id": 0,
+            "seek": 0,
+            "start": 0.0,
+            "end": 5.0,
+            "text": "不確定的轉錄內容",
+            "tokens": [1234],
+            "temperature": 0.0,
+            "avg_logprob": -1.5,  # 低於預設門檻 -1.0
+            "compression_ratio": 1.8,
+            "no_speech_prob": 0.3
+        }
+
+        service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+        result = service._keep(low_confidence_segment)
+
+        # 應該過濾掉低置信度段落
+        assert result is False
+
+    def test_keep_function_high_compression_ratio(self):
+        """測試過濾高重複比率段落"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+
+        # 模擬高重複比率段落（通常是幻覺）
+        high_compression_segment = {
+            "id": 0,
+            "seek": 0,
+            "start": 0.0,
+            "end": 5.0,
+            "text": "重複重複重複重複重複重複重複重複重複重複",
+            "tokens": [1234] * 20,  # 很多重複 token
+            "temperature": 0.0,
+            "avg_logprob": -0.2,
+            "compression_ratio": 3.0,  # 超過預設門檻 2.4
+            "no_speech_prob": 0.2
+        }
+
+        service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+        result = service._keep(high_compression_segment)
+
+        # 應該過濾掉高重複比率段落
+        assert result is False
+
+    def test_keep_function_boundary_values(self):
+        """測試邊界值情況"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+
+        service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+
+        # 測試剛好在門檻值的情況
+        boundary_segment = {
+            "id": 0,
+            "seek": 0,
+            "start": 0.0,
+            "end": 5.0,
+            "text": "邊界測試",
+            "tokens": [1234],
+            "temperature": 0.0,
+            "avg_logprob": -1.0,      # 等於門檻值
+            "compression_ratio": 2.4,  # 等於門檻值
+            "no_speech_prob": 0.8      # 等於門檻值
+        }
+
+        # 等於門檻值的情況應該被保留（使用 >= 和 > 判斷）
+        result = service._keep(boundary_segment)
+        assert result is False  # no_speech_prob >= 0.8 應該被過濾
+
+    def test_keep_function_missing_fields(self):
+        """測試缺少必要欄位的段落"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+
+        service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+
+        # 測試缺少必要欄位的情況
+        incomplete_segment = {
+            "id": 0,
+            "text": "缺少其他欄位",
+        }
+
+        # 缺少必要欄位應該回傳 False
+        result = service._keep(incomplete_segment)
+        assert result is False
+
+    @patch('app.services.azure_openai_v2.PROMETHEUS_AVAILABLE', True)
+    def test_prometheus_counter_increment(self):
+        """測試 Prometheus 計數器正確遞增"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+
+        with patch('app.services.azure_openai_v2.WHISPER_SEGMENTS_FILTERED') as mock_counter:
+            service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+
+            # 測試過濾段落時計數器遞增
+            filtered_segment = {
+                "id": 0,
+                "seek": 0,
+                "start": 0.0,
+                "end": 5.0,
+                "text": "靜音段落",
+                "tokens": [1234],
+                "temperature": 0.0,
+                "avg_logprob": -0.5,
+                "compression_ratio": 1.8,
+                "no_speech_prob": 0.9  # 會被過濾
+            }
+
+            service._keep(filtered_segment)
+
+            # 檢查計數器是否被調用，使用正確的標籤
+            mock_counter.labels.assert_called_once_with(
+                reason="no_speech",
+                deployment="whisper-test"
+            )
+            mock_counter.labels.return_value.inc.assert_called_once()
+
+    def test_keep_function_multiple_filter_conditions(self):
+        """測試多個過濾條件同時滿足的情況"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+
+        service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+
+        # 同時滿足多個過濾條件
+        multiple_issues_segment = {
+            "id": 0,
+            "seek": 0,
+            "start": 0.0,
+            "end": 5.0,
+            "text": "問題重重的段落",
+            "tokens": [1234],
+            "temperature": 0.0,
+            "avg_logprob": -2.0,     # 低置信度
+            "compression_ratio": 3.5, # 高重複比率
+            "no_speech_prob": 0.95    # 高靜音機率
+        }
+
+        # 應該被過濾（依據第一個匹配的條件）
+        result = service._keep(multiple_issues_segment)
+        assert result is False
+
+    def test_keep_function_with_custom_thresholds(self):
+        """測試使用自定義門檻值的情況"""
+        from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+        from app.core.config import settings
+
+        service = SimpleAudioTranscriptionService(Mock(), "whisper-test")
+
+        # 使用當前配置的門檻值進行測試
+        segment_near_threshold = {
+            "id": 0,
+            "seek": 0,
+            "start": 0.0,
+            "end": 5.0,
+            "text": "接近門檻值的段落",
+            "tokens": [1234],
+            "temperature": 0.0,
+            "avg_logprob": settings.FILTER_LOGPROB + 0.1,      # 稍微高於門檻
+            "compression_ratio": settings.FILTER_COMPRESSION - 0.1, # 稍微低於門檻
+            "no_speech_prob": settings.FILTER_NO_SPEECH - 0.1       # 稍微低於門檻
+        }
+
+        # 應該被保留
+        result = service._keep(segment_near_threshold)
+        assert result is True
+
+class TestTranscribeAudioVerboseJson:
+    """測試 _transcribe_audio 方法使用 verbose_json 格式和段落過濾功能"""
+
+    @pytest.fixture
+    def service(self):
+        """創建測試用的轉錄服務實例"""
+        mock_client = Mock()
+        return SimpleAudioTranscriptionService(mock_client, "whisper-test")
+
+    @pytest.fixture
+    def sample_webm_data(self):
+        """模擬 WebM 音訊數據"""
+        return b'\x1aE\xdf\xa3' + b'\x00' * 1000  # 簡單的 WebM 檔頭 + 數據
+
+    @pytest.fixture
+    def sample_verbose_json_response(self):
+        """模擬 Whisper API verbose_json 回應"""
+        return {
+            "task": "transcribe",
+            "language": "zh",
+            "duration": 10.0,
+            "text": "這是一段測試語音 低品質的內容",
+            "segments": [
+                {
+                    "id": 0,
+                    "seek": 0,
+                    "start": 0.0,
+                    "end": 5.0,
+                    "text": "這是一段測試語音",
+                    "tokens": [1234, 5678, 9012],
+                    "temperature": 0.0,
+                    "avg_logprob": -0.3,
+                    "compression_ratio": 1.8,
+                    "no_speech_prob": 0.1
+                },
+                {
+                    "id": 1,
+                    "seek": 500,
+                    "start": 5.0,
+                    "end": 10.0,
+                    "text": "低品質的內容",
+                    "tokens": [3456, 7890],
+                    "temperature": 0.0,
+                    "avg_logprob": -1.5,  # 低置信度，會被過濾
+                    "compression_ratio": 2.0,
+                    "no_speech_prob": 0.3
+                }
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_verbose_json_success_with_filtering(self, service, sample_webm_data, sample_verbose_json_response):
+        """測試使用 verbose_json 格式成功轉錄並過濾低品質段落"""
+        session_id = uuid4()
+        chunk_sequence = 1
+
+        # 模擬 Azure OpenAI 客戶端回應
+        mock_response = Mock()
+        mock_response.segments = [
+            Mock(**segment) for segment in sample_verbose_json_response['segments']
+        ]
+        mock_response.duration = sample_verbose_json_response['duration']
+        mock_response.language = sample_verbose_json_response['language']
+        mock_response.task = sample_verbose_json_response['task']
+        mock_response.text = sample_verbose_json_response['text']
+
+        service.client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
+
+        # 模擬 _keep 方法的行為（第一段保留，第二段過濾）
+        def mock_keep(segment):
+            return segment['avg_logprob'] >= -1.0
+        service._keep = Mock(side_effect=mock_keep)
+
+        # 執行轉錄
+        result = await service._transcribe_audio(sample_webm_data, session_id, chunk_sequence)
+
+        # 驗證結果
+        assert result is not None
+        assert result['text'] == "這是一段測試語音"  # 只包含通過過濾的段落
+        assert result['chunk_sequence'] == chunk_sequence
+        assert result['session_id'] == str(session_id)
+
+        # 驗證 API 調用使用 verbose_json
+        service.client.audio.transcriptions.create.assert_called_once()
+        call_args = service.client.audio.transcriptions.create.call_args
+        assert call_args.kwargs['response_format'] == "verbose_json"
+        assert call_args.kwargs['model'] == "whisper-test"
+
+        # 驗證過濾函數被調用
+        assert service._keep.call_count == 2  # 兩個段落都被檢查
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_all_segments_filtered(self, service, sample_webm_data):
+        """測試所有段落都被過濾的情況"""
+        session_id = uuid4()
+        chunk_sequence = 1
+
+        # 模擬包含低品質段落的回應
+        low_quality_response = {
+            "task": "transcribe",
+            "language": "zh",
+            "duration": 10.0,
+            "text": "低品質內容 更低品質內容",
+            "segments": [
+                {
+                    "id": 0,
+                    "seek": 0,
+                    "start": 0.0,
+                    "end": 5.0,
+                    "text": "低品質內容",
+                    "tokens": [1234],
+                    "temperature": 0.0,
+                    "avg_logprob": -2.0,  # 低置信度
+                    "compression_ratio": 1.8,
+                    "no_speech_prob": 0.3
+                },
+                {
+                    "id": 1,
+                    "seek": 500,
+                    "start": 5.0,
+                    "end": 10.0,
+                    "text": "更低品質內容",
+                    "tokens": [5678],
+                    "temperature": 0.0,
+                    "avg_logprob": -2.5,  # 更低置信度
+                    "compression_ratio": 2.0,
+                    "no_speech_prob": 0.4
+                }
+            ]
+        }
+
+        mock_response = Mock()
+        mock_response.segments = [
+            Mock(**segment) for segment in low_quality_response['segments']
+        ]
+        mock_response.duration = low_quality_response['duration']
+        mock_response.language = low_quality_response['language']
+        mock_response.task = low_quality_response['task']
+        mock_response.text = low_quality_response['text']
+
+        service.client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
+
+        # 模擬所有段落都被過濾
+        service._keep = Mock(return_value=False)
+
+        # 執行轉錄
+        result = await service._transcribe_audio(sample_webm_data, session_id, chunk_sequence)
+
+        # 所有段落被過濾，應該返回 None
+        assert result is None
+
+        # 驗證過濾函數被調用
+        assert service._keep.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_empty_segments(self, service, sample_webm_data):
+        """測試沒有段落的情況"""
+        session_id = uuid4()
+        chunk_sequence = 1
+
+        # 模擬沒有段落的回應
+        empty_response = {
+            "task": "transcribe",
+            "language": "zh",
+            "duration": 10.0,
+            "text": "",
+            "segments": []
+        }
+
+        mock_response = Mock()
+        mock_response.segments = empty_response['segments']  # 空列表
+        mock_response.duration = empty_response['duration']
+        mock_response.language = empty_response['language']
+        mock_response.task = empty_response['task']
+        mock_response.text = empty_response['text']
+
+        service.client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
+        service._keep = Mock()
+
+        # 執行轉錄
+        result = await service._transcribe_audio(sample_webm_data, session_id, chunk_sequence)
+
+        # 沒有段落，應該返回 None
+        assert result is None
+
+        # 過濾函數不應該被調用
+        service._keep.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_verbose_json_api_error(self, service, sample_webm_data):
+        """測試 API 調用異常的情況"""
+        session_id = uuid4()
+        chunk_sequence = 1
+
+        # 模擬 API 異常
+        service.client.audio.transcriptions.create = AsyncMock(side_effect=Exception("API Error"))
+        service._broadcast_transcription_error = AsyncMock()
+
+        # 執行轉錄
+        result = await service._transcribe_audio(sample_webm_data, session_id, chunk_sequence)
+
+        # API 異常，應該返回 None
+        assert result is None
+
+        # 驗證錯誤廣播被調用
+        service._broadcast_transcription_error.assert_called_once_with(
+            session_id, chunk_sequence, "whisper_api_error", unittest.mock.ANY
+        )
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_rate_limit_error(self, service, sample_webm_data):
+        """測試頻率限制錯誤的情況"""
+        session_id = uuid4()
+        chunk_sequence = 1
+
+        # 模擬頻率限制錯誤
+        from openai import RateLimitError
+        service.client.audio.transcriptions.create = AsyncMock(side_effect=RateLimitError("Rate limit exceeded", response=Mock(), body=None))
+        service._broadcast_transcription_error = AsyncMock()
+
+        # 執行轉錄
+        result = await service._transcribe_audio(sample_webm_data, session_id, chunk_sequence)
+
+        # 頻率限制錯誤，應該返回 None
+        assert result is None
+
+        # 驗證錯誤廣播被調用
+        service._broadcast_transcription_error.assert_called_once_with(
+            session_id, chunk_sequence, "rate_limit_error", unittest.mock.ANY
+        )
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_logs_filtering_details(self, service, sample_webm_data, sample_verbose_json_response, caplog):
+        """測試詳細的過濾日誌記錄"""
+        session_id = uuid4()
+        chunk_sequence = 1
+
+        mock_response = Mock()
+        mock_response.segments = [
+            Mock(**segment) for segment in sample_verbose_json_response['segments']
+        ]
+        mock_response.duration = sample_verbose_json_response['duration']
+        mock_response.language = sample_verbose_json_response['language']
+        mock_response.task = sample_verbose_json_response['task']
+        mock_response.text = sample_verbose_json_response['text']
+
+        service.client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
+
+        # 模擬 _keep 方法並記錄調用
+        original_segments = sample_verbose_json_response['segments']
+        keep_calls = []
+        def mock_keep(segment):
+            keep_calls.append(segment)
+            return segment['avg_logprob'] >= -1.0
+        service._keep = Mock(side_effect=mock_keep)
+
+        with caplog.at_level(logging.INFO):
+            result = await service._transcribe_audio(sample_webm_data, session_id, chunk_sequence)
+
+        # 驗證結果和日誌
+        assert result is not None
+        assert "段落過濾統計" in caplog.text or len(keep_calls) == 2
+
+        # 驗證 _keep 被正確調用
+        assert len(keep_calls) == 2
+        assert keep_calls[0] == original_segments[0]
+        assert keep_calls[1] == original_segments[1]
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_prometheus_metrics_updated(self, service, sample_webm_data, sample_verbose_json_response):
+        """測試 Prometheus 指標正確更新"""
+        session_id = uuid4()
+        chunk_sequence = 1
+
+        mock_response = Mock()
+        mock_response.segments = [
+            Mock(**segment) for segment in sample_verbose_json_response['segments']
+        ]
+        mock_response.duration = sample_verbose_json_response['duration']
+        mock_response.language = sample_verbose_json_response['language']
+        mock_response.task = sample_verbose_json_response['task']
+        mock_response.text = sample_verbose_json_response['text']
+
+        service.client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
+        service._keep = Mock(return_value=True)  # 所有段落都保留
+
+        with patch('app.services.azure_openai_v2.WHISPER_REQ_TOTAL') as mock_counter:
+            await service._transcribe_audio(sample_webm_data, session_id, chunk_sequence)
+
+            # 驗證成功指標被更新
+            mock_counter.labels.assert_called_with(status="success", deployment="whisper-test")
+            mock_counter.labels.return_value.inc.assert_called_once()

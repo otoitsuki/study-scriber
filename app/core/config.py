@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator
 import os
 
 # 根據執行環境決定要讀取的 .env 檔案。
@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_VERSION: str = "2024-02-01"
     WHISPER_DEPLOYMENT_NAME: str = ""
+    WHISPER_LANGUAGE: str = Field("zh", description="Whisper 轉錄語言代碼")
     R2_ACCOUNT_ID: str = ""
     R2_BUCKET_NAME: str = "studyscriber"
     R2_API_TOKEN: str = ""
@@ -44,6 +45,23 @@ class Settings(BaseSettings):
     USE_SLIDING_WINDOW_RATE_LIMIT: bool = Field(False, description="啟用滑動視窗頻率限制")
     SLIDING_WINDOW_MAX_REQUESTS: int = Field(3, description="滑動視窗內最大請求數")
     SLIDING_WINDOW_SECONDS: int = Field(60, description="滑動視窗時間（秒）")
+
+    # Whisper 段落過濾門檻參數
+    FILTER_NO_SPEECH: float = Field(
+        0.8,
+        description="靜音檢測門檻：no_speech_prob 超過此值的段落將被過濾（0.0-1.0）",
+        ge=0.0,
+        le=1.0
+    )
+    FILTER_LOGPROB: float = Field(
+        -1.0,
+        description="置信度過濾門檻：avg_logprob 低於此值的段落將被過濾（負值）"
+    )
+    FILTER_COMPRESSION: float = Field(
+        2.4,
+        description="重複內容檢測門檻：compression_ratio 超過此值的段落將被過濾（正值）",
+        gt=0.0
+    )
 
     # 你可以依需求再加更多欄位
 

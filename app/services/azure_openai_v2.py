@@ -105,6 +105,13 @@ if PROMETHEUS_AVAILABLE:
         ["limiter_type"]
     )
 
+    # 段落過濾指標
+    WHISPER_SEGMENTS_FILTERED = prom.Counter(
+        "whisper_segments_filtered_total",
+        "Total number of segments filtered by quality checks",
+        ["reason", "deployment"]
+    )
+
     logger.info("📊 [Metrics] Prometheus 監控指標已初始化")
 else:
     # 如果 Prometheus 不可用，創建空的佔位符
@@ -127,6 +134,7 @@ else:
     SLIDING_WINDOW_QUEUE_TIME = NoOpMetric()
     API_QUOTA_UTILIZATION = NoOpMetric()
     RATE_LIMITER_TYPE = NoOpMetric()
+    WHISPER_SEGMENTS_FILTERED = NoOpMetric()
 
 # 全域效能監控開關
 ENABLE_PERFORMANCE_LOGGING = os.getenv("ENABLE_PERFORMANCE_LOGGING", "true").lower() == "true"
@@ -140,6 +148,10 @@ QUEUE_HIGH_PRIORITY = 0  # 重試任務高優先級
 QUEUE_NORMAL_PRIORITY = 1  # 正常任務
 MAX_QUEUE_SIZE = 100  # 最大隊列大小
 QUEUE_TIMEOUT_SECONDS = 300  # 隊列超時（5分鐘）
+
+# Task 4: 音訊段落配置
+CHUNK_DURATION = 10  # 每個音訊段落的時長（秒）
+PROCESSING_TIMEOUT = 60  # 處理超時時間（秒）
 
 class PerformanceTimer:
     """效能計時器"""
@@ -797,6 +809,78 @@ class SimpleAudioTranscriptionService:
         self.deployment_name = deployment_name
         self.processing_tasks: Dict[str, asyncio.Task] = {}
 
+    def _keep(self, segment: dict) -> bool:
+        """
+        根據 Whisper verbose_json 回應判斷是否保留轉錄段落
+
+        使用 no_speech_prob、avg_logprob、compression_ratio 等指標過濾幻覺內容
+
+        Args:
+            segment: Whisper verbose_json 格式的段落資料
+
+        Returns:
+            bool: True 表示保留段落，False 表示過濾掉
+        """
+        try:
+            # 檢查必要欄位是否存在
+            required_fields = ['no_speech_prob', 'avg_logprob', 'compression_ratio']
+            for field in required_fields:
+                if field not in segment:
+                    logger.warning(f"🔍 [段落過濾] 段落缺少必要欄位 '{field}'，過濾掉")
+                    WHISPER_SEGMENTS_FILTERED.labels(
+                        reason="missing_field",
+                        deployment=self.deployment_name
+                    ).inc()
+                    return False
+
+            # 提取過濾指標
+            no_speech_prob = segment['no_speech_prob']
+            avg_logprob = segment['avg_logprob']
+            compression_ratio = segment['compression_ratio']
+
+            # 過濾條件 1: 靜音檢測 - no_speech_prob 過高
+            if no_speech_prob >= settings.FILTER_NO_SPEECH:
+                logger.debug(f"🔇 [段落過濾] 靜音機率過高: {no_speech_prob:.3f} >= {settings.FILTER_NO_SPEECH}")
+                WHISPER_SEGMENTS_FILTERED.labels(
+                    reason="no_speech",
+                    deployment=self.deployment_name
+                ).inc()
+                return False
+
+            # 過濾條件 2: 置信度檢測 - avg_logprob 過低
+            if avg_logprob < settings.FILTER_LOGPROB:
+                logger.debug(f"📉 [段落過濾] 置信度過低: {avg_logprob:.3f} < {settings.FILTER_LOGPROB}")
+                WHISPER_SEGMENTS_FILTERED.labels(
+                    reason="low_confidence",
+                    deployment=self.deployment_name
+                ).inc()
+                return False
+
+            # 過濾條件 3: 重複內容檢測 - compression_ratio 過高
+            if compression_ratio > settings.FILTER_COMPRESSION:
+                logger.debug(f"🔄 [段落過濾] 重複比率過高: {compression_ratio:.3f} > {settings.FILTER_COMPRESSION}")
+                WHISPER_SEGMENTS_FILTERED.labels(
+                    reason="high_compression",
+                    deployment=self.deployment_name
+                ).inc()
+                return False
+
+            # 所有檢查通過，保留段落
+            logger.debug(f"✅ [段落過濾] 段落品質良好，保留")
+            logger.debug(f"   - 靜音機率: {no_speech_prob:.3f} < {settings.FILTER_NO_SPEECH}")
+            logger.debug(f"   - 置信度: {avg_logprob:.3f} >= {settings.FILTER_LOGPROB}")
+            logger.debug(f"   - 重複比率: {compression_ratio:.3f} <= {settings.FILTER_COMPRESSION}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ [段落過濾] 過濾邏輯異常: {e}")
+            # 異常情況下預設過濾掉，避免產出錯誤內容
+            WHISPER_SEGMENTS_FILTERED.labels(
+                reason="filter_error",
+                deployment=self.deployment_name
+            ).inc()
+            return False
+
     # def _get_header_repairer(self) -> WebMHeaderRepairer:
     #     """延遲初始化 WebM 檔頭修復器 - 已停用，不再需要檔頭修復"""
     #     if self._header_repairer is None:
@@ -1096,7 +1180,7 @@ class SimpleAudioTranscriptionService:
             return None
 
     async def _transcribe_audio(self, webm_data: bytes, session_id: UUID, chunk_sequence: int) -> Optional[Dict[str, Any]]:
-        """使用 Azure OpenAI Whisper 直接轉錄 WebM 音訊 (架構優化 v2 + 智能頻率限制處理)"""
+        """使用 Azure OpenAI Whisper 直接轉錄 WebM 音訊 (verbose_json + 段落過濾)"""
 
         # Task 2: 智能頻率限制處理 - 等待當前延遲
         await rate_limit.wait()
@@ -1114,21 +1198,68 @@ class SimpleAudioTranscriptionService:
                         temp_file.flush()
 
                         try:
-                            # Task 1: 使用異步客戶端直接呼叫 Whisper API
+                            # Task 4: 使用 verbose_json 格式以獲取詳細段落資訊
                             with open(temp_file.name, 'rb') as audio_file:
                                 transcript = await self.client.audio.transcriptions.create(
                                     model=self.deployment_name,
                                     file=audio_file,
-                                    language="zh",
-                                    response_format="text"
+                                    language=settings.WHISPER_LANGUAGE,
+                                    response_format="verbose_json"
                                 )
 
                             # 清理臨時檔案
                             Path(temp_file.name).unlink(missing_ok=True)
 
-                            if not transcript or not transcript.strip():
-                                logger.debug(f"Empty transcript for chunk {chunk_sequence}")
+                            # Task 4: 處理 verbose_json 回應和段落過濾
+                            if not transcript or not hasattr(transcript, 'segments') or not transcript.segments:
+                                logger.debug(f"💭 [段落過濾] Chunk {chunk_sequence} 無段落數據")
                                 # Task 5: 記錄空轉錄
+                                WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
+                                return None
+
+                            # Task 4: 使用 _keep 函數過濾段落
+                            filtered_segments = []
+                            total_segments = len(transcript.segments)
+                            logger.info(f"🔍 [段落過濾] Chunk {chunk_sequence} 開始過濾，總段落數: {total_segments}")
+
+                            for i, segment in enumerate(transcript.segments):
+                                # 將 segment 轉換為字典以供 _keep 函數處理
+                                segment_dict = {
+                                    'id': getattr(segment, 'id', i),
+                                    'seek': getattr(segment, 'seek', 0),
+                                    'start': getattr(segment, 'start', 0.0),
+                                    'end': getattr(segment, 'end', 0.0),
+                                    'text': getattr(segment, 'text', ''),
+                                    'tokens': getattr(segment, 'tokens', []),
+                                    'temperature': getattr(segment, 'temperature', 0.0),
+                                    'avg_logprob': getattr(segment, 'avg_logprob', 0.0),
+                                    'compression_ratio': getattr(segment, 'compression_ratio', 0.0),
+                                    'no_speech_prob': getattr(segment, 'no_speech_prob', 0.0)
+                                }
+
+                                if self._keep(segment_dict):
+                                    filtered_segments.append(segment_dict)
+                                    logger.debug(f"✅ [段落過濾] 段落 {i} 保留: '{segment_dict['text'][:30]}...'")
+                                else:
+                                    logger.debug(f"❌ [段落過濾] 段落 {i} 過濾: '{segment_dict['text'][:30]}...'")
+
+                            # Task 4: 檢查過濾結果
+                            kept_count = len(filtered_segments)
+                            filtered_count = total_segments - kept_count
+
+                            logger.info(f"📊 [段落過濾統計] Chunk {chunk_sequence}: 總數={total_segments}, 保留={kept_count}, 過濾={filtered_count}")
+
+                            if not filtered_segments:
+                                logger.warning(f"⚠️ [段落過濾] Chunk {chunk_sequence} 所有段落都被過濾，返回空結果")
+                                # 記錄為空轉錄（所有段落被過濾）
+                                WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
+                                return None
+
+                            # Task 4: 合併保留的段落文字
+                            combined_text = ' '.join(segment['text'].strip() for segment in filtered_segments).strip()
+
+                            if not combined_text:
+                                logger.warning(f"⚠️ [段落過濾] Chunk {chunk_sequence} 合併後文字為空")
                                 WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
                                 return None
 
@@ -1138,15 +1269,19 @@ class SimpleAudioTranscriptionService:
                             # Task 5: 記錄成功的轉錄請求
                             WHISPER_REQ_TOTAL.labels(status="success", deployment=self.deployment_name).inc()
 
-                            logger.info(f"🎯 [WebM 直接轉錄] 成功處理 chunk {chunk_sequence} (格式: WebM → Whisper API)")
+                            logger.info(f"🎯 [WebM 直接轉錄] 成功處理 chunk {chunk_sequence} (格式: WebM → Whisper API verbose_json)")
+                            logger.info(f"📝 [過濾結果] 最終文字: '{combined_text[:100]}{'...' if len(combined_text) > 100 else ''}'")
 
                             return {
-                                'text': transcript.strip(),
+                                'text': combined_text,
                                 'chunk_sequence': chunk_sequence,
                                 'session_id': str(session_id),
                                 'timestamp': datetime.utcnow().isoformat(),
                                 'language': 'zh-TW',
-                                'duration': CHUNK_DURATION
+                                'duration': getattr(transcript, 'duration', CHUNK_DURATION),
+                                'segments_total': total_segments,
+                                'segments_kept': kept_count,
+                                'segments_filtered': filtered_count
                             }
 
                         finally:
