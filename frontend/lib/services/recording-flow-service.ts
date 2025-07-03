@@ -107,6 +107,16 @@ export class RecordingFlowService extends BaseService {
       // 步驟 4: 開始錄音
       this.logInfo('步驟 4: 開始錄音')
       await this.recordingService.startRecording(this.currentSession.id)
+
+      // 通知全域狀態：設置錄音開始時間，啟動計時器
+      try {
+        const setRecordingStart = (await import('../app-store-zustand')).useAppStore.getState().setRecordingStart
+        setRecordingStart(Date.now())
+        console.log('🕐 [RecordingFlowService] 已透過 AppStore 設置錄音開始時間')
+      } catch (e) {
+        console.warn('⚠️ [RecordingFlowService] 無法設置錄音開始時間:', e)
+      }
+
       this.logSuccess('錄音啟動成功')
 
       // 標記流程為活躍

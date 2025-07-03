@@ -99,10 +99,39 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
      * 開始錄音
      */
     async startRecording(sessionId: string): Promise<void> {
-        this.sessionId = sessionId
-        await this.ensureStarted()
-        this.timerStart = Date.now()
-        this.initMediaRecorder()
+        try {
+            this.logInfo(`開始錄音 - sessionId: ${sessionId}`)
+
+            // 如果已經在錄音，先停止
+            if (this.recordingState.isRecording) {
+                this.logWarning('已在錄音中，先停止現有錄音')
+                await this.stopRecording()
+            }
+
+            this.sessionId = sessionId
+            this.recordingState.currentSessionId = sessionId
+
+            // 請求麥克風權限
+            await this.ensureStarted()
+
+            // 初始化錄音器和上傳器
+            await this.initMediaRecorder()
+
+            // 更新狀態
+            this.recordingState.isRecording = true
+            this.recordingState.error = null
+
+            // 啟動計時器
+            this.timerStart = Date.now()
+            this.startRecordingTimer()
+
+            this.logSuccess(`錄音已開始 - sessionId: ${sessionId}`)
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : '開始錄音失敗'
+            this.recordingState.error = errorMessage
+            this.handleError('開始錄音', error)
+            throw error
+        }
     }
 
     /**
@@ -215,7 +244,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
     /**
      * 處理音頻段落
      */
-    private async handleAudioSegment(segment: AudioSegment): Promise<void> {
+    private async handleAudioSegment(segment: any): Promise<void> {
         console.log('🎤 [SimpleRecordingService] 收到音頻段落', {
             sequence: segment.sequence,
             size: segment.blob.size,
@@ -223,11 +252,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
             timestamp: new Date().toISOString()
         })
 
-        this.logInfo('收到音頻段落', {
-            sequence: segment.sequence,
-            size: segment.blob.size,
-            duration: segment.duration
-        })
+        this.logInfo(`收到音頻段落 - sequence: ${segment.sequence}, size: ${segment.blob.size}, duration: ${segment.duration}`)
 
         // 使用 REST API 上傳
         if (this.audioUploader) {
@@ -238,7 +263,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
                 console.log(`⚠️ [SimpleRecordingService] 段落 #${segment.sequence} 上傳處理中`)
             }
         } else {
-            this.logWarning('音頻上傳器未初始化', { sequence: segment.sequence })
+            this.logWarning(`音頻上傳器未初始化 - sequence: ${segment.sequence}`)
         }
     }
 
@@ -384,8 +409,61 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
         if (!this.stream) await this.start()
     }
 
-    private initMediaRecorder() {
-        // ...
+    /**
+     * 初始化 MediaRecorder 和相關元件
+     */
+    private async initMediaRecorder(): Promise<void> {
+        try {
+            this.logInfo('初始化 MediaRecorder')
+
+            if (!this.stream) {
+                throw new Error('音訊串流未初始化')
+            }
+
+            if (!this.sessionId) {
+                throw new Error('Session ID 未設定')
+            }
+
+            // 創建音頻錄製器
+            const chunkInterval = (await import('../config')).getAudioChunkIntervalMs()
+            const { AdvancedAudioRecorder } = await import('../advanced-audio-recorder')
+            this.audioRecorder = new AdvancedAudioRecorder({
+                segmentDuration: chunkInterval,
+                mimeType: 'audio/webm;codecs=opus',
+                audioBitsPerSecond: 128000
+            })
+
+            // 設定錄製器事件（錯誤處理）
+            this.setupAudioRecorderEvents()
+
+            // 創建上傳器
+            const { RestAudioUploader } = await import('../rest-audio-uploader')
+            this.audioUploader = new RestAudioUploader()
+            this.audioUploader.setSessionId(this.sessionId)
+
+            // 設定上傳器事件
+            this.setupUploaderEvents()
+
+            // 開始錄音並傳入段落處理 callback
+            await this.audioRecorder.start(async (segment) => {
+                await this.handleAudioSegment(segment)
+            })
+
+            this.logSuccess(`MediaRecorder 初始化完成並開始錄音 - sessionId: ${this.sessionId}, chunkInterval: ${chunkInterval}ms`)
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : '未知錯誤'
+            this.logWarning(`初始化 MediaRecorder 失敗: ${errorMessage}`)
+            throw error
+        }
+    }
+
+    // 若有 sessionId 變動需求，可加上：
+    private updateSessionId(newSessionId: string): void {
+        this.sessionId = newSessionId
+        this.recordingState.currentSessionId = newSessionId
+        if (this.audioUploader) {
+            this.audioUploader.setSessionId(newSessionId)
+        }
     }
 }
 
