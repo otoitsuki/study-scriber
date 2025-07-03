@@ -4,6 +4,8 @@ import { BaseService } from './base-service'
 import { serviceContainer } from './service-container'
 import { SERVICE_KEYS, type ISessionService, type IRecordingService, type ITranscriptService, type TranscriptMessage } from './interfaces'
 import type { SessionResponse } from '../api'
+import { useAppStore } from '../app-store-zustand'
+const setAppState = useAppStore.getState().setState
 
 /**
  * 錄音流程管理服務
@@ -65,11 +67,23 @@ export class RecordingFlowService extends BaseService {
     this.logInfo('開始錄音流程', { title, content, startTs })
 
     try {
-      // 檢查是否已有活躍流程
-      if (this.isFlowActive) {
-        this.logWarning('錄音流程已啟動，先停止現有流程')
-        await this.stopRecordingFlow()
+      // ① 先拿權限
+      if (!(await this.recordingService.requestPermission())) {
+        setAppState('default')
+        throw new Error('麥克風權限被拒')
       }
+
+      // ② 建 Session（POST /session）
+      const session = await this.sessionService.createRecordingSession()
+      if (!session) {
+        setAppState('default')
+        throw new Error('建立 Session 失敗')
+      }
+
+      // ③ 啟動錄音／WS／計時器
+      await this.recordingService.start(session.id)
+      await this.transcriptService.start(session.id)
+      setAppState('recording_waiting')
 
       // 步驟 1: 確保錄音會話存在（傳遞開始時間戳）
       this.logInfo('步驟 1: 確保錄音會話')
@@ -122,7 +136,6 @@ export class RecordingFlowService extends BaseService {
       return this.currentSession
 
     } catch (error) {
-      // 錯誤時清理資源
       await this.cleanupFlowResources()
       this.handleError('開始錄音流程', error)
       throw error

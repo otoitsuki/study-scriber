@@ -177,3 +177,139 @@ make restart
 - 📊 **保留企業級功能**：錯誤處理、監控、段落過濾
 - 🔄 **可快速回滾**：如遇問題可立即恢復單並發
 - 📝 **效果監控**：Prometheus指標可即時觀測優化效果
+
+## 🔥 緊急問題：Waiting 狀態計時器不更新 & 無法轉換到 Active 狀態
+
+### 🚨 問題描述
+用戶報告錄音進入 Waiting 狀態後：
+1. **計時器不會動** - 錄音時間顯示停滯，不會每秒更新
+2. **不會進到 active 狀態** - 無法從 `recording_waiting` 轉換到 `recording_active` 狀態顯示逐字稿
+
+### 🔍 問題根源分析
+**基於代碼深度分析的發現：**
+
+#### 1. 計時器問題（useRecordingNew.ts:174）
+- **原因**：錄音時間更新依賴於 `stateCheckInterval` 每秒檢查 `recordingService.getRecordingState()` 並更新 Context
+- **問題點**：這個 interval 只在 `startRecording` 成功時建立，如果錄音啟動流程中任何步驟失敗，計時器就不會建立或運行
+- **影響**：UI 上的錄音時間停滯不動，用戶無法看到錄音進度
+
+#### 2. 狀態轉換問題（useRecordingNew.ts:96-103）
+- **原因**：從 `recording_waiting` 轉換到 `recording_active` 需要觸發 `FIRST_TRANSCRIPT_RECEIVED` 事件
+- **觸發條件**：收到 WebSocket 的 `active` phase 訊息或第一個逐字稿片段
+- **問題點**：如果 WebSocket 連接失敗或沒有收到相應訊息，狀態轉換就不會發生
+- **影響**：用戶一直停留在 waiting 狀態，看不到任何逐字稿內容
+
+#### 3. 架構依賴問題
+- **複雜依賴鏈**：startRecording → RecordingService → TranscriptService → WebSocket → 狀態轉換
+- **單點失敗**：任何一個環節失敗都會導致整個流程停滯
+- **缺乏容錯**：沒有超時機制或重試邏輯來處理異常情況
+
+### 📋 修復任務清單
+
+#### Task 1: 診斷並修復錄音計時器不更新問題
+- **檔案**：`frontend/hooks/use-recording-new.ts`
+- **目標**：確保錄音計時器在所有情況下都能正常運行
+- **關鍵修復點**：
+  - 檢查 line 174 處的 `stateCheckInterval` 建立邏輯
+  - 確保即使 `startRecording` 部分失敗，計時器也能正確運行
+  - 添加容錯機制和錯誤處理
+  - 增強日誌記錄來追蹤計時器狀態
+- **驗證標準**：
+  - 進入 recording_waiting 狀態後，計時器應該立即開始更新
+  - 即使錄音啟動過程中出現錯誤，計時器仍應顯示正確時間
+  - 控制台應有清晰的日誌記錄計時器狀態
+  - UI 上的錄音時間應每秒更新一次
+- **狀態**：⏳ 待執行
+
+#### Task 2: 修復狀態轉換問題 - recording_waiting 到 recording_active
+- **檔案**：`frontend/hooks/use-recording-new.ts`、`frontend/hooks/use-transcript-new.ts`
+- **目標**：確保 `FIRST_TRANSCRIPT_RECEIVED` 事件能正確觸發
+- **關鍵修復點**：
+  - 檢查 line 96-103 中的 `handleTranscript` 邏輯
+  - 確保 WebSocket 連接正常且能收到 active phase 訊息
+  - 添加超時機制，如果長時間沒收到 active 訊息，自動觸發狀態轉換
+  - 增強 WebSocket 連接的錯誤處理和重試機制
+  - 檢查狀態機的轉換條件是否正確
+- **驗證標準**：
+  - 開始錄音後，應能正確從 recording_waiting 轉換到 recording_active
+  - 如果 WebSocket 連接失敗，應有適當的錯誤處理和重試
+  - 如果長時間沒收到逐字稿，應有超時機制觸發狀態轉換
+  - 狀態轉換過程應有清晰的日誌記錄
+  - 轉換到 recording_active 後，應能正確顯示逐字稿內容
+- **依賴**：Task 1 完成
+- **狀態**：⏳ 待執行
+
+#### Task 3: 增強錯誤處理和診斷工具
+- **檔案**：`frontend/hooks/use-recording-new.ts`、`frontend/lib/state-machine.ts`
+- **目標**：添加詳細的診斷工具幫助追蹤問題
+- **關鍵功能**：
+  - 在 useRecordingNew.ts 中添加詳細的日誌記錄
+  - 在瀏覽器控制台添加調試介面
+  - 使用狀態機的調試功能來檢查轉換條件
+  - 添加 WebSocket 連接狀態的實時監控
+  - 創建問題診斷的便利方法
+- **驗證標準**：
+  - 控制台應有清晰的日誌記錄所有關鍵事件
+  - 開發者工具中應有便利的調試介面
+  - 能夠實時監控 WebSocket 連接狀態
+  - 狀態機轉換過程應有詳細記錄
+  - 錯誤發生時應有足夠的診斷信息
+- **依賴**：Task 1, Task 2 完成
+- **狀態**：⏳ 待執行
+
+#### Task 4: 測試和驗證修復結果
+- **檔案**：整體系統測試
+- **目標**：全面驗證修復效果
+- **測試範圍**：
+  - 測試正常錄音流程：開始錄音 → 等待狀態 → 活躍狀態 → 停止錄音
+  - 測試錯誤場景：WebSocket 連接失敗、麥克風權限拒絕、網路斷線等
+  - 驗證計時器在各種情況下的準確性
+  - 確認狀態轉換的時機和條件
+  - 測試逐字稿的正確接收和顯示
+- **驗證標準**：
+  - 錄音計時器應在所有場景下正常工作
+  - 狀態轉換應準確及時
+  - 逐字稿應正確接收和顯示
+  - 錯誤處理應恰當且用戶友好
+  - 整個錄音流程應穩定可靠
+- **依賴**：前面所有任務完成
+- **狀態**：⏳ 待執行
+
+### 🎯 修復優先順序
+1. **Task 1** - 先解決計時器問題（基礎功能）
+2. **Task 2** - 修復狀態轉換邏輯（核心功能）
+3. **Task 3** - 增強診斷工具（開發支援）
+4. **Task 4** - 全面測試驗證（品質保證）
+
+### 🔧 技術債務記錄
+- **現有架構過度複雜**：錄音功能涉及太多層級和依賴
+- **缺乏容錯機制**：沒有適當的超時和重試邏輯
+- **診斷工具不足**：問題發生時難以快速定位原因
+- **狀態管理複雜**：Context + 狀態機 + 服務層的多重狀態管理
+
+### 💡 長期改進建議
+- 簡化錄音功能的架構層級
+- 增加更多的容錯和重試機制
+- 建立完整的錯誤監控和預警系統
+- 考慮重構狀態管理邏輯
+
+## 🛠️ 錄音流程穩定性修正（依用戶建議細化）
+
+### Task 1: 計時器立即啟動與正確清除
+- [x] hooks/use-recording-new.ts
+  - [x] 按下 startRecording 時立即建立 interval
+  - [x] stopRecording 時正確清除 interval
+  - [x] 狀態管理用全域 ref，確保唯一
+  - [x] 使用 useRef 保持穩定引用，避免 re-render 時丟失
+  - [x] 在 useEffect cleanup 中清理計時器
+
+### Task 2: waiting→active 20 秒超時保險
+- [ ] 進入 waiting 狀態時設置 20 秒 timeout
+- [ ] 收到第一句逐字稿或 active phase 時清除 timeout
+- [ ] 超時自動 setState('recording_active') 並記錄警告
+
+### Task 3: WebSocket 失敗自動進 active
+- [ ] ws.onclose 時判斷狀態
+- [ ] 若在 waiting 狀態，toast 提示並 setState('recording_active')
+
+---

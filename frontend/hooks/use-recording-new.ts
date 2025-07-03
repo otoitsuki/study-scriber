@@ -38,13 +38,30 @@ export function useRecordingNew(): UseRecordingNewReturn {
   const transcriptServiceRef = useRef<ITranscriptService | null>(null)
   const currentSessionIdRef = useRef<string | null>(null)
 
+  // 全域唯一錄音計時器 - 使用 useRef 保持穩定引用
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const recordingStartedAtRef = useRef<number | null>(null)
+
+  // waiting→active 超時保險
+  const waitingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   console.log('🔄 [useRecordingNew] Hook 初始化 (適配器層)，功能開關狀態:', {
     useNewStateManagement: isFeatureEnabled('useNewStateManagement'),
     useNewRecordingHook: isFeatureEnabled('useNewRecordingHook'),
     contextState: context.appData.state,
     contextIsRecording: context.appData.isRecording,
     contextRecordingTime: context.appData.recordingTime,
+    timestamp: new Date().toISOString()
   })
+
+  // 清除 waiting 超時
+  const clearWaitingTimeout = useCallback(() => {
+    if (waitingTimeoutRef.current) {
+      clearTimeout(waitingTimeoutRef.current)
+      waitingTimeoutRef.current = null
+      console.log('⏰ [useRecordingNew] Waiting 超時已清除')
+    }
+  }, [])
 
   // 初始化服務實例
   const initializeServices = useCallback(() => {
@@ -93,6 +110,8 @@ export function useRecordingNew(): UseRecordingNewReturn {
     // 處理 active phase 訊息（重要：這會觸發狀態轉換）
     if (transcript.type === 'active' || transcript.phase === 'active') {
       console.log('🚀 [useRecordingNew] 收到 active phase 訊息，轉錄開始')
+      // 清除 waiting 超時
+      clearWaitingTimeout()
       // 使用狀態機觸發轉換
       const result = context.transition('FIRST_TRANSCRIPT_RECEIVED')
       if (result?.success) {
@@ -139,6 +158,8 @@ export function useRecordingNew(): UseRecordingNewReturn {
     console.log('✅ [useRecordingNew] 逐字稿已添加到 Context')
 
     if (isFirstTranscript) {
+      // 清除 waiting 超時
+      clearWaitingTimeout()
       const result = context.transition('FIRST_TRANSCRIPT_RECEIVED')
       if (result?.success) {
         console.log('✅ [useRecordingNew] 收到第一個逐字稿片段，狀態機轉換: recording_waiting → recording_active')
@@ -146,7 +167,7 @@ export function useRecordingNew(): UseRecordingNewReturn {
         console.warn('⚠️ [useRecordingNew] 狀態機轉換失敗:', result?.error)
       }
     }
-  }, [context])
+  }, [context, clearWaitingTimeout])
 
   // 開始錄音 - 使用服務層
   const startRecording = useCallback(async (sessionId: string): Promise<void> => {
@@ -156,66 +177,102 @@ export function useRecordingNew(): UseRecordingNewReturn {
       setLocalTranscriptCompleted(false)
       currentSessionIdRef.current = sessionId
 
-      console.log('🎤 [useRecordingNew] 開始錄音流程 (適配器層):', { sessionId })
+      // 立即啟動計時器
+      if (recTimerRef.current) {
+        clearInterval(recTimerRef.current)
+        recTimerRef.current = null
+      }
+      recordingStartedAtRef.current = Date.now()
+      context.setRecordingTime(0)
+      recTimerRef.current = setInterval(() => {
+        if (recordingStartedAtRef.current) {
+          const sec = Math.floor((Date.now() - recordingStartedAtRef.current) / 1000)
+          context.setRecordingTime(sec)
+        }
+      }, 1000)
+
+      context.setRecording(true)
+      console.log('⏱️ [useRecordingNew] 計時器立即啟動')
+
+      // 設置 waiting→active 超時保險（20秒）
+      clearWaitingTimeout()
+      waitingTimeoutRef.current = setTimeout(() => {
+        if (context.appData.state === 'recording_waiting') {
+          console.warn('⚠️ [useRecordingNew] 20秒內未收到逐字稿，強制轉換到 recording_active')
+          const result = context.transition('FIRST_TRANSCRIPT_RECEIVED')
+          if (result?.success) {
+            console.log('✅ [useRecordingNew] 超時保險觸發: recording_waiting → recording_active')
+          } else {
+            console.error('❌ [useRecordingNew] 超時保險轉換失敗:', result?.error)
+          }
+        }
+      }, 20000)
+      console.log('⏰ [useRecordingNew] 已設置 20 秒 waiting 超時保險')
 
       // 初始化服務
       initializeServices()
-
       const recordingService = recordingServiceRef.current!
+      console.log('Recorder instance', recordingService)
       const transcriptService = transcriptServiceRef.current!
 
-      // 設置錄音狀態監聽
+      // 設置錄音狀態監聽（保留原本 interval 作為備用）
       const checkRecordingState = () => {
         const state = recordingService.getRecordingState()
         context.setRecording(state.isRecording)
-        context.setRecordingTime(state.recordingTime)
-
+        // context.setRecordingTime(state.recordingTime) // 由 recTimer 主導
         if (state.error) {
           setLocalError(state.error)
           context.setError(state.error)
         }
       }
-
-      // 週期性檢查錄音狀態（用於同步錄音時間和狀態）
       const stateCheckInterval = setInterval(checkRecordingState, 1000)
 
-      // 添加逐字稿監聽器
       transcriptService.addTranscriptListener(sessionId, handleTranscript)
-
-      // 使用服務層開始錄音
       await recordingService.startRecording(sessionId)
 
-      // 設置清理函數
       const cleanup = () => {
         clearInterval(stateCheckInterval)
         transcriptService.removeTranscriptListener(sessionId, handleTranscript)
+        if (recTimerRef.current) {
+          clearInterval(recTimerRef.current)
+          recTimerRef.current = null
+          recordingStartedAtRef.current = null
+          console.log('⏹️ [useRecordingNew] 計時器已清除')
+        }
+        // 清除 waiting 超時
+        clearWaitingTimeout()
       }
-
-      // 儲存清理函數供停止錄音時使用
       (globalThis as any).currentRecordingCleanup = cleanup
-
       console.log('✅ [useRecordingNew] 錄音開始成功 (服務層)，Session ID:', sessionId)
-
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '開始錄音失敗'
       setLocalError(errorMessage)
       context.setError(errorMessage)
       console.error('❌ [useRecordingNew] 開始錄音失敗:', err)
+      // 清除 waiting 超時
+      clearWaitingTimeout()
     }
-  }, [initializeServices, handleTranscript, context])
+  }, [initializeServices, handleTranscript, context, clearWaitingTimeout])
 
   // 停止錄音 - 使用服務層
   const stopRecording = useCallback(() => {
     try {
       console.log('🛑 [useRecordingNew] 停止錄音 (適配器層)')
-
+      // 清除 recTimer
+      if (recTimerRef.current) {
+        clearInterval(recTimerRef.current)
+        recTimerRef.current = null
+        recordingStartedAtRef.current = null
+        console.log('⏹️ [useRecordingNew] 計時器已清除')
+      }
+      // 清除 waiting 超時
+      clearWaitingTimeout()
       // 執行清理函數
       const cleanup = (globalThis as any).currentRecordingCleanup
       if (cleanup) {
         cleanup()
         delete (globalThis as any).currentRecordingCleanup
       }
-
       // 使用服務層停止錄音
       const recordingService = recordingServiceRef.current
       if (recordingService) {
@@ -233,7 +290,7 @@ export function useRecordingNew(): UseRecordingNewReturn {
       setLocalError(errorMessage)
       context.setError(errorMessage)
     }
-  }, [context])
+  }, [context, clearWaitingTimeout])
 
   // 清空逐字稿 - 整合 Context
   const clearTranscripts = useCallback(() => {
@@ -256,8 +313,19 @@ export function useRecordingNew(): UseRecordingNewReturn {
         cleanup()
         delete (globalThis as any).currentRecordingCleanup
       }
+
+      // 清理計時器
+      if (recTimerRef.current) {
+        clearInterval(recTimerRef.current)
+        recTimerRef.current = null
+        recordingStartedAtRef.current = null
+        console.log('🔚 [useRecordingNew] useEffect cleanup: 計時器已清除')
+      }
+
+      // 清理 waiting 超時
+      clearWaitingTimeout()
     }
-  }, [handleTranscript])
+  }, [handleTranscript, clearWaitingTimeout])
 
   // 組件真正卸載時的清理（例如頁面切換）
   useEffect(() => {

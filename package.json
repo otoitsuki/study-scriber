@@ -2,5 +2,8 @@
 	"dependencies": {
 		"axios": "^1.10.0"
 	},
-	"packageManager": "pnpm@10.7.0+sha1.66453f13fbf9078d3db193718206a8d738afdbdb"
+	"packageManager": "pnpm@10.7.0+sha1.66453f13fbf9078d3db193718206a8d738afdbdb",
+	"devDependencies": {
+		"jsdom": "^26.1.0"
+	}
 }

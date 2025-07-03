@@ -5,6 +5,7 @@ import { IRecordingService, RecordingState } from './interfaces'
 import { AdvancedAudioRecorder, AudioSegment, checkAdvancedAudioRecordingSupport } from '../advanced-audio-recorder'
 import { RestAudioUploader, UploadSegmentResponse } from '../rest-audio-uploader'
 import { getAudioChunkIntervalMs } from '../config'
+import { toast } from '@/hooks/use-toast'
 
 /**
  * SimpleRecordingService - 簡化錄音管理服務
@@ -38,6 +39,11 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
     private recordingTimer: ReturnType<typeof setInterval> | null = null
     private uploadedSegments = new Set<number>()
     private failedSegments = new Set<number>()
+
+    // 在 class SimpleRecordingService 內部加上：
+    public stream: MediaStream | null = null
+    private sessionId: string | null = null
+    private timerStart: number | null = null
 
     /**
      * 服務初始化
@@ -93,63 +99,10 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
      * 開始錄音
      */
     async startRecording(sessionId: string): Promise<void> {
-        this.logInfo('開始錄音', { sessionId })
-
-        try {
-            // 檢查是否已在錄音
-            if (this.recordingState.isRecording) {
-                this.logWarning('已在錄音中，跳過重複啟動')
-                return
-            }
-
-            // 重置狀態
-            this.resetRecordingState()
-            this.recordingState.currentSessionId = sessionId
-
-            // 步驟 1: 初始化音頻錄製器
-            this.logInfo('步驟 1: 初始化進階音頻錄製器 (Advanced Audio Recorder)')
-            this.audioRecorder = new AdvancedAudioRecorder({
-                segmentDuration: getAudioChunkIntervalMs(), // 從環境變數讀取切片時長
-                mimeType: 'audio/webm;codecs=opus',
-                audioBitsPerSecond: 128000 // 128 kbps
-            })
-
-            // 設定音頻錄製器事件處理
-            this.setupAudioRecorderEvents()
-
-            // 步驟 2: 初始化 REST 音頻上傳器
-            this.logInfo('步驟 2: 初始化 REST 音頻上傳器')
-            this.audioUploader = new RestAudioUploader()
-            this.audioUploader.setSessionId(sessionId)
-
-            // 設定上傳器事件處理
-            this.setupUploaderEvents()
-
-            // 步驟 3: 開始錄音
-            this.logInfo('步驟 3: 開始音頻錄製')
-            await this.audioRecorder.start((segment: AudioSegment) => {
-                this.handleAudioSegment(segment)
-            })
-
-            // 步驟 4: 啟動錄音計時器
-            this.logInfo('步驟 4: 啟動錄音計時器')
-            this.startRecordingTimer()
-
-            // 更新錄音狀態
-            this.recordingState.isRecording = true
-            this.recordingState.error = null
-
-            this.logSuccess('錄音啟動成功', {
-                sessionId,
-                config: this.audioRecorder.currentConfig
-            })
-
-        } catch (error) {
-            // 錯誤時清理資源
-            await this.cleanupRecordingResources()
-            this.recordingState.error = error instanceof Error ? error.message : '開始錄音失敗'
-            this.handleError('開始錄音', error)
-        }
+        this.sessionId = sessionId
+        await this.ensureStarted()
+        this.timerStart = Date.now()
+        this.initMediaRecorder()
     }
 
     /**
@@ -208,7 +161,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
      * 取得錄音時間（秒）
      */
     getRecordingTime(): number {
-        return this.recordingState.recordingTime
+        return this.timerStart ? (Date.now() - this.timerStart) / 1000 | 0 : 0
     }
 
     /**
@@ -322,6 +275,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
         this.clearRecordingTimer()
         this.recordingState.recordingTime = 0
 
+        console.log('⏱️ [SimpleRecordingService] 計時器啟動')
         this.recordingTimer = setInterval(() => {
             this.recordingState.recordingTime += 1
 
@@ -344,6 +298,7 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
         if (this.recordingTimer) {
             clearInterval(this.recordingTimer)
             this.recordingTimer = null
+            console.log('⏹️ [SimpleRecordingService] 計時器清除')
         }
     }
 
@@ -413,6 +368,24 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
                 cached: cachedCount
             }
         }
+    }
+
+    async requestPermission(): Promise<boolean> {
+        try {
+            this.stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            return true
+        } catch (e) {
+            toast({ title: '需要麥克風權限才能錄音', variant: 'destructive' })
+            return false
+        }
+    }
+
+    private async ensureStarted() {
+        if (!this.stream) await this.start()
+    }
+
+    private initMediaRecorder() {
+        // ...
     }
 }
 

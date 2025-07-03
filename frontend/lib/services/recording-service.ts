@@ -231,12 +231,13 @@ export class RecordingService extends BaseService implements IRecordingService {
    * 取得錄音時間（秒）
    */
   getRecordingTime(): number {
+    console.log('⏰ [RecordingService] getRecordingTime', this.recordingState.recordingTime)
     return this.recordingState.recordingTime
   }
 
   /**
- * 設定音頻錄製器事件處理
- */
+   * 設定音頻錄製器事件處理
+   */
   private setupAudioRecorderEvents(): void {
     if (!this.audioRecorder) return
 
@@ -369,6 +370,7 @@ export class RecordingService extends BaseService implements IRecordingService {
     this.clearRecordingTimer()
     this.recordingState.recordingTime = 0
 
+    console.log('⏱️ [RecordingService] 計時器啟動')
     this.recordingTimer = setInterval(() => {
       this.recordingState.recordingTime += 1
 
@@ -414,6 +416,7 @@ export class RecordingService extends BaseService implements IRecordingService {
     if (this.recordingTimer) {
       clearInterval(this.recordingTimer)
       this.recordingTimer = null
+      console.log('⏹️ [RecordingService] 計時器清除')
     }
   }
 
@@ -473,9 +476,9 @@ export class RecordingService extends BaseService implements IRecordingService {
   }
 
   /**
- * 獲取服務詳細狀態
- * 擴展基礎狀態，包含錄音特定信息
- */
+   * 獲取服務詳細狀態
+   * 擴展基礎狀態，包含錄音特定信息
+   */
   async getDetailedStatus(): Promise<RecordingServiceStatus> {
     const baseStatus = this.getStatus()
     const supportCheck = await checkAudioRecordingSupport()

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useRecordingNew } from '../use-recording-new'
@@ -155,5 +156,36 @@ describe('useRecordingNew', () => {
         )
 
         consoleSpy.mockRestore()
+    })
+
+    test('should increment recordingTime every second after startRecording', async () => {
+        vi.useFakeTimers()
+        const { result } = renderHook(() => useRecordingNew(), { wrapper })
+
+        await act(async () => {
+            await result.current.startRecording('test-session-id')
+        })
+        expect(result.current.isRecording).toBe(true)
+        expect(result.current.recordingTime).toBe(0)
+
+        // 快轉 1 秒
+        act(() => {
+            vi.advanceTimersByTime(1000)
+        })
+        expect(result.current.recordingTime).toBe(1)
+
+        // 再快轉 2 秒
+        act(() => {
+            vi.advanceTimersByTime(2000)
+        })
+        expect(result.current.recordingTime).toBe(3)
+
+        // 停止錄音後計時器應停止
+        act(() => {
+            result.current.stopRecording()
+            vi.advanceTimersByTime(2000)
+        })
+        expect(result.current.recordingTime).toBe(3)
+        vi.useRealTimers()
     })
 })

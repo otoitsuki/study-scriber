@@ -436,6 +436,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     if (state.appData.isRecording && servicesInitialized) {
       intervalId = setInterval(() => {
         const recordingService = serviceContainer.resolve<IRecordingService>(SERVICE_KEYS.RECORDING_SERVICE)
+        console.log('Context instance', recordingService)
         const recordingTime = recordingService.getRecordingTime()
         dispatch({ type: "SET_RECORDING_TIME", payload: recordingTime })
       }, 1000)

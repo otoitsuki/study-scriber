@@ -79,7 +79,7 @@ export interface RecordingState {
 /**
  * 錄音服務介面
  */
-export interface IRecordingService {
+export interface IRecordingService extends BaseService {
     /**
      * 開始錄音
      */
@@ -104,6 +104,16 @@ export interface IRecordingService {
      * 取得錄音時間（秒）
      */
     getRecordingTime(): number
+
+    /**
+     * 請求錄音權限
+     */
+    requestPermission(): Promise<boolean>
+
+    /**
+     * 開始錄音
+     */
+    start(sessionId: string): Promise<void>
 }
 
 /**
@@ -165,6 +175,11 @@ export interface ITranscriptService {
      * 清除逐字稿
      */
     clearTranscripts(sessionId: string): void
+
+    /**
+     * 開始錄音
+     */
+    start(sessionId: string): Promise<void>
 }
 
 /**
