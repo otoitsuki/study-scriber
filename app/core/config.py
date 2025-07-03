@@ -63,6 +63,17 @@ class Settings(BaseSettings):
         gt=0.0
     )
 
+    # 並發處理優化配置（用戶建議參數）
+    MAX_CONCURRENT_TRANSCRIPTIONS: int = Field(3, description="最大並發轉錄數")
+    TRANSCRIPTION_WORKERS_COUNT: int = Field(3, description="轉錄Worker數量")
+    QUEUE_BACKLOG_THRESHOLD: int = Field(10, description="隊列積壓警報門檻")
+    QUEUE_MONITOR_INTERVAL: int = Field(5, description="監控間隔(秒)")
+    QUEUE_ALERT_COOLDOWN: int = Field(30, description="警報冷卻時間(秒)")
+
+    # 隊列系統配置
+    MAX_QUEUE_SIZE: int = Field(100, description="最大隊列大小")
+    QUEUE_TIMEOUT_SECONDS: int = Field(300, description="隊列超時（秒）")
+
     # 你可以依需求再加更多欄位
 
     model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")

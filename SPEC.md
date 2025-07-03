@@ -292,6 +292,52 @@ FFmpeg 轉換 → Azure OpenAI Whisper API → WebSocket 推送轉錄結果
      - 使用者可以隨時離開，筆記已儲存。
      - （未來功能）可手動點擊「完成」，將 session 狀態改為 `completed`。
 
+```mermaid
+graph TD
+    A((使用者進入頁面)) --> B[預設畫面<br/>default 狀態]
+    
+    B --> C[輸入標題]
+    B --> D[輸入筆記內容]
+    
+    C --> E[暫存至 localStorage<br/>draft_title]
+    D --> F[暫存至 localStorage<br/>draft_note]
+    
+    E --> G{首次輸入？}
+    F --> G
+    
+    G -->|是| H[自動觸發<br/>createNoteSession]
+    G -->|否| I[繼續編輯]
+    
+    H --> J[建立 note_only<br/>類型 session]
+    
+    J --> K[啟動 useAutoSave hook]
+    
+    K --> L[每 10 秒同步<br/>筆記至後端]
+    
+    I --> L
+    L --> M[使用者離開<br/>筆記已儲存]
+    L --> N[手動點擊完成<br/>未來功能]
+    
+    N --> O[session 狀態<br/>改為 completed]
+    
+    %% 樣式定義
+    classDef startEndStyle fill:#e8f5e8,stroke:#4caf50,stroke-width:3px,color:#000
+    classDef processStyle fill:#e3f2fd,stroke:#2196f3,stroke-width:2px,color:#000
+    classDef decisionStyle fill:#fff3e0,stroke:#ff9800,stroke-width:2px,color:#000
+    classDef dataStyle fill:#f3e5f5,stroke:#9c27b0,stroke-width:2px,color:#000
+    classDef autoStyle fill:#e8f5e8,stroke:#4caf50,stroke-width:2px,color:#000
+    classDef futureStyle fill:#f5f5f5,stroke:#9e9e9e,stroke-width:2px,color:#666,stroke-dasharray: 5 5
+    
+    %% 應用樣式
+    class A,M startEndStyle
+    class B,C,D,H,J,K processStyle
+    class G decisionStyle
+    class E,F,L dataStyle
+    class I autoStyle
+    class N,O futureStyle
+
+```
+
 ### 場景 2：先筆記後錄音
 
 - **目標**：允許使用者在已有筆記的基礎上，隨時開始錄音。

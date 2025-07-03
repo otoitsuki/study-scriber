@@ -72,3 +72,167 @@
   - 🆔 TaskID: `e609aecd-faa9-4b2c-bd39-cf97042f4256`
   - ✅ 驗證標準：文件清楚易懂、配置範例實用
   - 🎉 **已完成**：在 `.env.example` 檔案中新增完整的「Whisper 幻覺過濾設定」區段，包含三個過濾參數（`FILTER_NO_SPEECH=0.8`、`FILTER_LOGPROB=-1.0`、`FILTER_COMPRESSION=2.4`）的詳細中文說明，涵蓋參數用途、數值範圍、建議值和實際效果，讓使用者能夠輕鬆理解和配置幻覺過濾功能
+
+## 🚀 緊急任務：並發處理優化解決逐字稿延遲問題
+
+### 目標
+解決當前錄音兩分鐘但只顯示一段逐字稿的嚴重延遲問題。主要原因是硬編碼的單並發限制（`MAX_CONCURRENT_TRANSCRIPTIONS = 1`），導致所有音檔切片必須排隊等待處理。目標將轉錄延遲從 60 秒+ 降至 15 秒內，支援 3-5 個音檔切片並發處理。
+
+### 📋 優化方案（基於現有架構）
+用戶提出的三層控制機制與現有系統高度吻合：
+1. **Queue防丟失** ✅ 現有：`PriorityQueue`（更強大）
+2. **滑動視窗API控制** ✅ 現有：`SlidingWindowRateLimiter`（更完善）  
+3. **Semaphore併發控制** ⚠️ 現有：但需從1調整到3
+
+**核心流程**：`queue.get() → sem.acquire() → sliding.acquire() → call_whisper()`
+
+### 實作任務
+
+- [ ] **Task 1: 外部化並發控制參數配置（立即生效）**
+  - 📁 檔案：`app/core/config.py`, `app/services/azure_openai_v2.py`, `.env.local`
+  - 🎯 採用用戶建議的參數配置，基於現有架構優化而非重寫
+  - 📋 核心修改：
+    - 在 `config.py` 新增：
+      ```python
+      # 採用更直觀的命名（用戶建議）
+      MAX_CONCURRENT_TRANSCRIPTIONS: int = Field(3, description="最大並發轉錄數")
+      TRANSCRIPTION_WORKERS_COUNT: int = Field(3, description="轉錄Worker數量") 
+      QUEUE_BACKLOG_THRESHOLD: int = Field(10, description="隊列積壓警報門檻")
+      QUEUE_MONITOR_INTERVAL: int = Field(5, description="監控間隔(秒)")
+      QUEUE_ALERT_COOLDOWN: int = Field(30, description="警報冷卻時間(秒)")
+      ```
+    - 移除 `azure_openai_v2.py` 中的硬編碼常數：
+      ```python
+      # 舊：MAX_CONCURRENT_TRANSCRIPTIONS = 1
+      # 新：從 settings 讀取
+      ```
+    - 更新 `TranscriptionQueueManager` 使用配置值
+  - ⚠️ 關鍵：保持現有錯誤處理、監控、段落過濾機制
+  - 🆔 TaskID: `7346d0d6-cc90-4996-b812-e1d476fb1614`
+  - ✅ 驗證標準：配置正確讀取、支援 3 並發、向後兼容、日誌正確
+
+- [ ] **Task 2: 啟用滑動視窗API配額控制（立即生效）**
+  - 📁 檔案：`.env.local`, `app/core/config.py`
+  - 🎯 啟用現有的滑動視窗機制，採用用戶建議的配置參數
+  - 📋 配置調整（立即可行）：
+    ```bash
+    # 啟用現有滑動視窗（用戶方案核心）
+    USE_SLIDING_WINDOW_RATE_LIMIT=true
+    
+    # 保持3 requests/60s（符合Azure API限制）
+    SLIDING_WINDOW_MAX_REQUESTS=3
+    SLIDING_WINDOW_SECONDS=60
+    ```
+  - ⚠️ 關鍵：現有實現比用戶的 `SlidingLimiter` 更完善（有統計、監控）
+  - 🔄 依賴：Task 1 完成
+  - 🆔 TaskID: `b61d8e48-5ab2-4de8-a828-6b10748eec48`
+  - ✅ 驗證標準：API 頻率控制正確、無 429 錯誤、Prometheus 指標正常
+
+- [ ] **Task 3: 優化隊列監控參數（用戶建議）**
+  - 📁 檔案：`app/core/config.py`, `app/services/azure_openai_v2.py`
+  - 🎯 採用用戶建議的監控參數，提供更及時的狀態回饋
+  - 📋 監控優化（用戶建議的參數）：
+    ```python
+    # 用戶建議：更及時的監控
+    QUEUE_BACKLOG_THRESHOLD = 10     # 從30降到10（用戶建議）
+    QUEUE_MONITOR_INTERVAL = 5       # 從10s降到5s（用戶建議）
+    QUEUE_ALERT_COOLDOWN = 30        # 從60s降到30s（用戶建議）
+    ```
+  - ⚠️ 優勢：現有系統比用戶的簡單廣播更完善（Prometheus + WebSocket）
+  - 🔄 依賴：Task 1 完成
+  - 🆔 TaskID: `0941f260-d478-4ec7-be06-4f217b109acd`
+  - ✅ 驗證標準：積壓早期檢測、監控回饋及時、警報合理
+
+- [ ] **Task 4: 整合配置到環境變數（5分鐘立即解決80%問題）**
+  - 📁 檔案：`.env.local`
+  - 🎯 採用用戶建議的參數值，提供立即可用的配置
+  - 📋 立即可行的配置（基於用戶方案）：
+    ```bash
+    # ============================================
+    # 🚀 並發處理優化配置（用戶建議參數）
+    # ============================================
+    # 核心瓶頸解決：從單併發提升到3併發
+    MAX_CONCURRENT_TRANSCRIPTIONS=3
+    TRANSCRIPTION_WORKERS_COUNT=3
+    
+    # 監控優化：更及時的狀態回饋（用戶建議）
+    QUEUE_BACKLOG_THRESHOLD=10        # 從30降到10
+    QUEUE_MONITOR_INTERVAL=5          # 從10s降到5s  
+    QUEUE_ALERT_COOLDOWN=30           # 從60s降到30s
+    
+    # ============================================
+    # 🪟 滑動視窗API控制（啟用現有機制）
+    # ============================================
+    # 啟用滑動視窗（用戶方案核心邏輯）
+    USE_SLIDING_WINDOW_RATE_LIMIT=true
+    
+    # Azure API配額控制：3 requests/60s
+    SLIDING_WINDOW_MAX_REQUESTS=3
+    SLIDING_WINDOW_SECONDS=60
+    ```
+  - ⚠️ 關鍵：這些參數可立即生效，無需重寫代碼
+  - 🔄 依賴：Task 1, 2, 3 完成
+  - 🆔 TaskID: `bb7f495f-a788-4dd9-b216-9978f77d3a9a`
+  - ✅ 驗證標準：環境變數正確讀取、配置匹配、註釋清楚
+
+- [ ] **Task 5: 測試驗證優化效果（預期10-15秒延遲）**
+  - 📁 檔案：系統整體測試
+  - 🎯 驗證用戶方案的預期效果：字幕平均延遲 ≈ 10-15s
+  - 📋 測試步驟（基於用戶方案流程）：
+    ```bash
+    # 1. 重啟服務應用新配置
+    make restart
+    
+    # 2. 檢查配置載入（用戶建議的參數）
+    # - MAX_CONCURRENT=3 ✓
+    # - SLIDING_WINDOW enabled ✓  
+    # - QUEUE_ALERT=10 ✓
+    
+    # 3. 驗證併發流程（用戶方案核心）
+    # queue.get() → sem.acquire() → sliding.acquire() → call_whisper()
+    
+    # 4. 測試預期效果
+    # - 錄音2-3分鐘測試逐字稿速度
+    # - 預期：延遲降至10-15秒（用戶方案目標）
+    # - 監控：3個並發任務同時處理
+    ```
+  - ⚠️ 關鍵：現有架構保留了錯誤處理、段落過濾等用戶方案未涵蓋的功能
+  - 🔄 依賴：Task 1, 2, 3, 4 完成
+  - 🆔 TaskID: `52eea2c3-d684-4119-9b6f-91da8e234bc3`
+  - ✅ 驗證標準：延遲 < 15秒、支援 3 並發、積壓解決、穩定性維持
+
+### 🎯 預期效果（基於用戶方案）
+- ✅ **延遲優化**：從 60 秒+ 降至 10-15 秒（用戶方案目標）
+- ✅ **併發提升**：支援 3 個音檔切片並發處理（`sem.acquire()`）  
+- ✅ **API控制**：永不 429 錯誤（`sliding.acquire()`）
+- ✅ **隊列防護**：保證不丟檔（`queue.get()`）
+- ✅ **架構優勢**：保留現有錯誤處理、監控、段落過濾機制
+
+### 📊 方案對比
+
+| 指標     | 現況         | 用戶方案 | 現有架構優化後 |
+| -------- | ------------ | -------- | -------------- |
+| 併發處理 | 1個          | 3個      | 3個 ✅          |
+| API控制  | 手動         | 滑動視窗 | 滑動視窗 ✅     |
+| 延遲時間 | 60s+         | 10-15s   | 10-15s ✅       |
+| 錯誤處理 | 完整         | 簡化     | 完整 ✅         |
+| 監控系統 | Prometheus   | 基礎廣播 | Prometheus ✅   |
+| 段落過濾 | verbose_json | 無       | verbose_json ✅ |
+
+### 🚀 立即行動（5分鐘解決）
+```bash
+# 在 .env.local 中修改這幾行即可立即生效
+MAX_CONCURRENT_TRANSCRIPTIONS=3
+USE_SLIDING_WINDOW_RATE_LIMIT=true  
+QUEUE_BACKLOG_THRESHOLD=10
+QUEUE_MONITOR_INTERVAL=5
+
+# 然後重啟
+make restart
+```
+
+### 注意事項
+- 🔬 **基於現有架構**：無需重寫，只需參數調優
+- 📊 **保留企業級功能**：錯誤處理、監控、段落過濾
+- 🔄 **可快速回滾**：如遇問題可立即恢復單並發
+- 📝 **效果監控**：Prometheus指標可即時觀測優化效果
