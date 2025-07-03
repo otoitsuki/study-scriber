@@ -25,6 +25,7 @@ export function RecordingState({ transcriptEntries, recordingTime, onStopRecordi
   return (
     <RecordingActiveState
       transcriptEntries={transcriptEntries}
+      recordingTime={recordingTime}
       onStopRecording={onStopRecording}
     />
   )

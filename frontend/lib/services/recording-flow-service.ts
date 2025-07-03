@@ -61,8 +61,8 @@ export class RecordingFlowService extends BaseService {
   /**
    * 開始錄音流程
    */
-  async startRecordingFlow(title?: string, content?: string): Promise<SessionResponse> {
-    this.logInfo('開始錄音流程', { title, content })
+  async startRecordingFlow(title?: string, content?: string, startTs?: number): Promise<SessionResponse> {
+    this.logInfo('開始錄音流程', { title, content, startTs })
 
     try {
       // 檢查是否已有活躍流程
@@ -71,10 +71,10 @@ export class RecordingFlowService extends BaseService {
         await this.stopRecordingFlow()
       }
 
-      // 步驟 1: 確保錄音會話存在
+      // 步驟 1: 確保錄音會話存在（傳遞開始時間戳）
       this.logInfo('步驟 1: 確保錄音會話')
-      this.currentSession = await this.sessionService.ensureRecordingSession(title, content)
-      this.logSuccess('錄音會話已準備', { sessionId: this.currentSession.id })
+      this.currentSession = await this.sessionService.ensureRecordingSession(title, content, startTs)
+      this.logSuccess('錄音會話已準備', { sessionId: this.currentSession.id, withStartTs: !!startTs })
 
       // 步驟 2: 等待會話在資料庫中完全可見
       this.logInfo('步驟 2: 等待會話準備完成')

@@ -28,12 +28,12 @@ export interface ISessionService {
      * 2. 若遇到 409 衝突，改為獲取現有活躍會話
      * 3. 確保返回可用的錄音會話
      */
-    ensureRecordingSession(title?: string, content?: string): Promise<SessionResponse>
+    ensureRecordingSession(title?: string, content?: string, startTs?: number): Promise<SessionResponse>
 
     /**
      * 創建錄音會話
      */
-    createRecordingSession(title: string, content?: string): Promise<SessionResponse>
+    createRecordingSession(title: string, content?: string, startTs?: number): Promise<SessionResponse>
 
     /**
      * 創建純筆記會話

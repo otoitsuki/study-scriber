@@ -142,15 +142,13 @@ ENABLE_PERFORMANCE_LOGGING = os.getenv("ENABLE_PERFORMANCE_LOGGING", "true").low
 # Task 1: 優化的 timeout 配置
 TIMEOUT = Timeout(connect=5, read=55, write=30, pool=5)
 
-# Task 3: 併發控制與任務優先級配置
-MAX_CONCURRENT_TRANSCRIPTIONS = 1  # 單並發保證順序
+# Task 3: 併發控制與任務優先級配置（使用settings配置值）
+# 改為從 settings 動態讀取，支援環境變數配置
 QUEUE_HIGH_PRIORITY = 0  # 重試任務高優先級
 QUEUE_NORMAL_PRIORITY = 1  # 正常任務
-MAX_QUEUE_SIZE = 100  # 最大隊列大小
-QUEUE_TIMEOUT_SECONDS = 300  # 隊列超時（5分鐘）
 
-# Task 4: 音訊段落配置
-CHUNK_DURATION = 10  # 每個音訊段落的時長（秒）
+# Task 4: 音訊段落配置 - 移除硬編碼，使用配置值
+# CHUNK_DURATION 現在在第 751 行從 settings.AUDIO_CHUNK_DURATION_SEC 讀取
 PROCESSING_TIMEOUT = 60  # 處理超時時間（秒）
 
 class PerformanceTimer:
@@ -375,9 +373,9 @@ class TranscriptionQueueManager:
 
     def __init__(self):
         # 優先級隊列 (priority, timestamp, job_data)
-        self.queue: PriorityQueue = PriorityQueue(maxsize=MAX_QUEUE_SIZE)
-        # 併發控制信號量
-        self.semaphore = Semaphore(MAX_CONCURRENT_TRANSCRIPTIONS)
+        self.queue: PriorityQueue = PriorityQueue(maxsize=settings.MAX_QUEUE_SIZE)
+        # 併發控制信號量（使用配置值）
+        self.semaphore = Semaphore(settings.MAX_CONCURRENT_TRANSCRIPTIONS)
         # Worker 任務
         self.workers: list[asyncio.Task] = []
         # Task 4: 積壓監控任務
@@ -386,24 +384,28 @@ class TranscriptionQueueManager:
         self.total_processed = 0
         self.total_failed = 0
         self.total_retries = 0
-        # Task 4: 積壓閾值和監控間隔
-        self.backlog_threshold = 30  # 超過 5 分鐘積壓 (30 任務 × 10秒)
-        self.monitor_interval = 10  # 每 10 秒檢查一次
+        # Task 4: 積壓閾值和監控間隔（使用配置值）
+        self.backlog_threshold = settings.QUEUE_BACKLOG_THRESHOLD
+        self.monitor_interval = settings.QUEUE_MONITOR_INTERVAL
         self.last_backlog_alert = 0  # 上次積壓警報時間
-        self.backlog_alert_cooldown = 60  # 積壓警報冷卻時間（秒）
+        self.backlog_alert_cooldown = settings.QUEUE_ALERT_COOLDOWN
         # 運行狀態
         self.is_running = False
 
-        logger.info(f"🎯 [QueueManager] 初始化完成：max_concurrent={MAX_CONCURRENT_TRANSCRIPTIONS}, max_queue={MAX_QUEUE_SIZE}")
+        logger.info(f"🎯 [QueueManager] 初始化完成：max_concurrent={settings.MAX_CONCURRENT_TRANSCRIPTIONS}, max_queue={settings.MAX_QUEUE_SIZE}")
 
-    async def start_workers(self, num_workers: int = 2):
+    async def start_workers(self, num_workers: int = None):
         """啟動 Worker 任務"""
         if self.is_running:
             logger.warning("⚠️ [QueueManager] Workers already running")
             return
 
+        # 使用配置值作為默認值
+        if num_workers is None:
+            num_workers = settings.TRANSCRIPTION_WORKERS_COUNT
+
         self.is_running = True
-        logger.info(f"🚀 [QueueManager] 啟動 {num_workers} 個 Workers")
+        logger.info(f"🚀 [QueueManager] 啟動 {num_workers} 個 Workers（配置值：{settings.TRANSCRIPTION_WORKERS_COUNT}）")
 
         # 啟動工作線程
         for i in range(num_workers):
@@ -461,10 +463,10 @@ class TranscriptionQueueManager:
             logger.info(f"📥 [QueueManager] 任務已入隊：session={session_id}, chunk={chunk_sequence}, priority={priority_name}, queue_size={queue_size}")
 
         except asyncio.QueueFull:
-            logger.error(f"❌ [QueueManager] 隊列已滿 ({MAX_QUEUE_SIZE})，丟棄任務：session={session_id}, chunk={chunk_sequence}")
+            logger.error(f"❌ [QueueManager] 隊列已滿 ({settings.MAX_QUEUE_SIZE})，丟棄任務：session={session_id}, chunk={chunk_sequence}")
             # 可以考慮廣播隊列滿的錯誤到前端
             await self._broadcast_queue_full_error(session_id, chunk_sequence)
-            raise Exception(f"Transcription queue is full ({MAX_QUEUE_SIZE}), please try again later")
+            raise Exception(f"Transcription queue is full ({settings.MAX_QUEUE_SIZE}), please try again later")
 
     async def _worker(self, worker_name: str):
         """Worker 協程 - 處理隊列中的任務"""
@@ -483,7 +485,7 @@ class TranscriptionQueueManager:
 
                 # 檢查任務是否過期
                 age = time.time() - timestamp
-                if age > QUEUE_TIMEOUT_SECONDS:
+                if age > settings.QUEUE_TIMEOUT_SECONDS:
                     logger.warning(f"⏰ [QueueManager] {worker_name} 丟棄過期任務：age={age:.1f}s, session={job_data['session_id']}, chunk={job_data['chunk_sequence']}")
                     self.queue.task_done()
                     continue
@@ -501,13 +503,18 @@ class TranscriptionQueueManager:
 
                     try:
                         # 執行轉錄
-                        success = await self._process_transcription_job(job_data)
+                        result = await self._process_transcription_job(job_data)
 
-                        if success:
+                        if result is True:
                             self.total_processed += 1
                             # Task 5: 記錄成功處理的任務
                             QUEUE_PROCESSED_TOTAL.labels(status="success").inc()
                             logger.info(f"✅ [QueueManager] {worker_name} 任務完成：session={session_id}, chunk={chunk_sequence}")
+                        elif result == "filtered":
+                            self.total_processed += 1
+                            # Task 5: 記錄被過濾的任務
+                            QUEUE_PROCESSED_TOTAL.labels(status="filtered").inc()
+                            logger.info(f"🔇 [QueueManager] {worker_name} 任務被過濾（靜音），跳過重試：session={session_id}, chunk={chunk_sequence}")
                         else:
                             # 處理失敗，決定是否重試
                             # Task 5: 記錄失敗處理的任務
@@ -545,40 +552,22 @@ class TranscriptionQueueManager:
             # 執行轉錄
             result = await service._transcribe_audio(webm_data, session_id, chunk_sequence)
             if result:
-                # 儲存並廣播結果
-                await service._save_and_push_result(session_id, chunk_sequence, result)
-                return True
+                # 檢查是否為被過濾的結果
+                if isinstance(result, dict) and result.get("filtered"):
+                    logger.info(f"🔇 [QueueManager] Chunk {chunk_sequence} 被靜音過濾，跳過重試：session={session_id}")
+                    return "filtered"  # 返回特殊標記，表示不需要重試
+                else:
+                    # 儲存並廣播正常結果
+                    await service._save_and_push_result(session_id, chunk_sequence, result)
+                    return True
             else:
                 logger.warning(f"⚠️ [QueueManager] 轉錄無結果：session={session_id}, chunk={chunk_sequence}")
                 return False
 
         except RateLimitError as e:
             logger.warning(f"🚦 [頻率限制] Chunk {chunk_sequence} 遇到 429 錯誤：{str(e)}")
-            rate_limit.backoff()
-
-            # Task 5: 記錄 429 錯誤
-            WHISPER_REQ_TOTAL.labels(status="rate_limit", deployment=self.deployment_name).inc()
-
-            # 根據 Rate Limiter 類型構建適當的錯誤訊息
-            if isinstance(rate_limit, SlidingWindowRateLimiter):
-                # 滑動視窗模式：基於可用許可數量提供資訊
-                stats = rate_limit.get_stats()
-                if stats['is_at_capacity']:
-                    error_msg = f"API 配額已滿（{stats['active_requests']}/{stats['max_requests']}），請等待約 {rate_limit._delay}s"
-                else:
-                    error_msg = f"API 頻率限制，滑動視窗排隊處理中（{stats['available_permits']} 個許可可用）"
-            else:
-                # 傳統指數退避模式
-                error_msg = f"API 頻率限制，將在 {rate_limit._delay}s 後重試"
-
-            # 廣播頻率限制錯誤到前端
-            await self._broadcast_transcription_error(
-                session_id,
-                chunk_sequence,
-                "rate_limit_error",
-                error_msg
-            )
-            return None
+            # 注意：這裡不調用 rate_limit.backoff()，因為它是在轉錄服務中處理的
+            return False
         except Exception as e:
             logger.error(f"❌ [QueueManager] 轉錄失敗：session={session_id}, chunk={chunk_sequence}, error={e}")
             return False
@@ -615,7 +604,7 @@ class TranscriptionQueueManager:
             error_data = {
                 "type": "transcription_error",
                 "error_type": "queue_full",
-                "message": f"轉錄隊列已滿 ({MAX_QUEUE_SIZE})，請稍後重試",
+                "message": f"轉錄隊列已滿 ({settings.MAX_QUEUE_SIZE})，請稍後重試",
                 "session_id": str(session_id),
                 "chunk_sequence": chunk_sequence,
                 "timestamp": datetime.utcnow().isoformat()
@@ -745,7 +734,7 @@ class TranscriptionQueueManager:
         queue_size = self.queue.qsize()
         return {
             'queue_size': queue_size,
-            'max_queue_size': MAX_QUEUE_SIZE,
+            'max_queue_size': settings.MAX_QUEUE_SIZE,
             'total_processed': self.total_processed,
             'total_failed': self.total_failed,
             'total_retries': self.total_retries,
@@ -1241,7 +1230,11 @@ class SimpleAudioTranscriptionService:
                                     filtered_segments.append(segment_dict)
                                     logger.debug(f"✅ [段落過濾] 段落 {i} 保留: '{segment_dict['text'][:30]}...'")
                                 else:
-                                    logger.debug(f"❌ [段落過濾] 段落 {i} 過濾: '{segment_dict['text'][:30]}...'")
+                                    # 詳細記錄被過濾的原因
+                                    logger.info(f"❌ [段落過濾] 段落 {i} 被過濾: '{segment_dict['text'][:50]}...'")
+                                    logger.info(f"   - 靜音機率: {segment_dict.get('no_speech_prob', 'N/A'):.3f} (門檻: {settings.FILTER_NO_SPEECH})")
+                                    logger.info(f"   - 置信度: {segment_dict.get('avg_logprob', 'N/A'):.3f} (門檻: {settings.FILTER_LOGPROB})")
+                                    logger.info(f"   - 重複比率: {segment_dict.get('compression_ratio', 'N/A'):.3f} (門檻: {settings.FILTER_COMPRESSION})")
 
                             # Task 4: 檢查過濾結果
                             kept_count = len(filtered_segments)
@@ -1253,7 +1246,8 @@ class SimpleAudioTranscriptionService:
                                 logger.warning(f"⚠️ [段落過濾] Chunk {chunk_sequence} 所有段落都被過濾，返回空結果")
                                 # 記錄為空轉錄（所有段落被過濾）
                                 WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
-                                return None
+                                # 返回特殊標記，表示這是被過濾（不是失敗）
+                                return {"filtered": True, "chunk_sequence": chunk_sequence}
 
                             # Task 4: 合併保留的段落文字
                             combined_text = ' '.join(segment['text'].strip() for segment in filtered_segments).strip()
@@ -1278,7 +1272,7 @@ class SimpleAudioTranscriptionService:
                                 'session_id': str(session_id),
                                 'timestamp': datetime.utcnow().isoformat(),
                                 'language': 'zh-TW',
-                                'duration': getattr(transcript, 'duration', CHUNK_DURATION),
+                                'duration': getattr(transcript, 'duration', settings.AUDIO_CHUNK_DURATION_SEC),
                                 'segments_total': total_segments,
                                 'segments_kept': kept_count,
                                 'segments_filtered': filtered_count
@@ -1337,12 +1331,35 @@ class SimpleAudioTranscriptionService:
             # 儲存到資料庫
             supabase = get_supabase_client()
 
+            # 獲取 session 的 started_at 時間戳（如果有的話）
+            session_response = supabase.table("sessions").select("started_at").eq("id", str(session_id)).limit(1).execute()
+
+            if session_response.data and session_response.data[0].get('started_at'):
+                # 使用精確的開始時間計算逐字稿時間戳
+                started_at = session_response.data[0]['started_at']
+                # 將 ISO 時間字串轉換為 datetime
+                from datetime import datetime
+                started_datetime = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+                # 計算基於實際開始時間的偏移
+                start_offset_seconds = chunk_sequence * settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC
+                end_offset_seconds = (chunk_sequence + 1) * settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC
+
+                logger.info(f"🕐 [時間計算] 使用精確開始時間: {started_at}, 切片 {chunk_sequence} 偏移: {start_offset_seconds}s-{end_offset_seconds}s")
+
+                start_time = start_offset_seconds
+                end_time = end_offset_seconds
+            else:
+                # Fallback 到舊邏輯（使用相對時間）
+                logger.warning(f"⚠️ [時間計算] Session {session_id} 沒有 started_at 時間戳，使用相對時間")
+                start_time = chunk_sequence * settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC
+                end_time = (chunk_sequence + 1) * settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC
+
             segment_data = {
                 "session_id": str(session_id),
                 "chunk_sequence": chunk_sequence,
                 "text": transcript_result['text'],
-                "start_time": chunk_sequence * CHUNK_DURATION,
-                "end_time": (chunk_sequence + 1) * CHUNK_DURATION,
+                "start_time": start_time,
+                "end_time": end_time,
                 "confidence": 1.0,
                 "language": transcript_result.get('language', 'zh-TW'),
                 "created_at": transcript_result['timestamp']

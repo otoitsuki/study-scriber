@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # 音頻切片配置
     AUDIO_CHUNK_DURATION_SEC: int = Field(10, description="音頻切片時長（秒）")
 
+    # 逐字稿顯示配置
+    TRANSCRIPT_DISPLAY_INTERVAL_SEC: int = Field(10, description="逐字稿時間戳顯示間隔（秒）")
+
     # REST API 簡化架構配置
     SEGMENT_DURATION: int = Field(10, description="分段錄音時長（秒）")
     UPLOAD_MAX_SIZE: int = Field(5 * 1024 * 1024, description="檔案上傳大小限制（5MB）")
@@ -46,9 +49,9 @@ class Settings(BaseSettings):
     SLIDING_WINDOW_MAX_REQUESTS: int = Field(3, description="滑動視窗內最大請求數")
     SLIDING_WINDOW_SECONDS: int = Field(60, description="滑動視窗時間（秒）")
 
-    # Whisper 段落過濾門檻參數
+    # Whisper 段落過濾門檻參數 (從環境變數讀取)
     FILTER_NO_SPEECH: float = Field(
-        0.8,
+        0.2,
         description="靜音檢測門檻：no_speech_prob 超過此值的段落將被過濾（0.0-1.0）",
         ge=0.0,
         le=1.0

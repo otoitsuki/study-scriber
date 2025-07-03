@@ -31,6 +31,7 @@ async def create_session(
     - 支援兩種模式：純筆記 (note_only) 或錄音模式 (recording)
     - 確保同時只有一個活躍會話
     - 自動建立對應的空白筆記記錄
+    - 支援精確的錄音開始時間戳
     """
     try:
         # 檢查是否有其他活躍會話
@@ -47,6 +48,13 @@ async def create_session(
             "language": request.language.value,
             "status": SessionStatus.ACTIVE.value
         }
+
+        # 如果有提供 start_ts，轉換為 PostgreSQL 時間戳格式
+        if request.start_ts is not None:
+            # 將毫秒時間戳轉換為 datetime 並格式化為 ISO 字串
+            started_at = datetime.fromtimestamp(request.start_ts / 1000).isoformat()
+            session_data["started_at"] = started_at
+            print(f"🕐 [SessionAPI] 設定錄音開始時間: {started_at} (原始時間戳: {request.start_ts})")
 
         response = supabase.table("sessions").insert(session_data, returning="representation").execute()
 

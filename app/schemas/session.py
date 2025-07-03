@@ -32,6 +32,7 @@ class SessionCreateRequest(BaseModel):
     type: SessionType = Field(SessionType.NOTE_ONLY, description="會話類型")
     language: LanguageCode = Field(LanguageCode.ZH_TW, description="語言設定")
     content: Optional[str] = Field(None, description="初始筆記內容")
+    start_ts: Optional[int] = Field(None, description="錄音開始時間戳（毫秒）")
 
 
 class SessionOut(BaseModel):

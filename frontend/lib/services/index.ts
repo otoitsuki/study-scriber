@@ -30,7 +30,7 @@ export { TranscriptService } from './transcript-service'
 // 服務註冊
 export { ServiceRegistry } from './service-registry'
 
-// 服務介面
+// 服務介面和鍵值
 export type {
     ISessionService,
     IRecordingService,

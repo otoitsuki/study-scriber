@@ -3,15 +3,28 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Square, Lock, Unlock } from "lucide-react"
+import { Square, Clock } from "lucide-react"
 import type { TranscriptEntry } from "../types/app-state"
 
 interface RecordingActiveStateProps {
     transcriptEntries: TranscriptEntry[]
+    recordingTime: number
     onStopRecording: () => void
 }
 
-export function RecordingActiveState({ transcriptEntries, onStopRecording }: RecordingActiveStateProps) {
+// 格式化錄音時間為 HH:MM:SS 格式
+function formatRecordingTime(seconds: number): string {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    const secs = seconds % 60
+
+    if (hours > 0) {
+        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    }
+    return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+}
+
+export function RecordingActiveState({ transcriptEntries, recordingTime, onStopRecording }: RecordingActiveStateProps) {
     const scrollAreaRef = useRef<HTMLDivElement>(null)
     const [isAutoScrollLocked, setIsAutoScrollLocked] = useState(true)
     const [userScrollTimeout, setUserScrollTimeout] = useState<NodeJS.Timeout | null>(null)
@@ -52,7 +65,7 @@ export function RecordingActiveState({ transcriptEntries, onStopRecording }: Rec
         [isAutoScrollLocked, userScrollTimeout]
     )
 
-    // 手動切換自動捲動鎖定狀態
+    // 手動切換自動捲動鎖定狀態（保持功能但不顯示按鈕）
     const toggleAutoScrollLock = useCallback(() => setIsAutoScrollLocked(prev => !prev), [])
 
     // 禁用合併段落邏輯 - 用戶要求一句話一個時間戳
@@ -102,24 +115,12 @@ export function RecordingActiveState({ transcriptEntries, onStopRecording }: Rec
             </ScrollArea>
 
             <div className="p-4 border-t border-border flex justify-between items-center">
-                <Button
-                    onClick={toggleAutoScrollLock}
-                    variant="ghost"
-                    size="sm"
-                    className="flex items-center gap-2 text-muted-foreground"
-                >
-                    {isAutoScrollLocked ? (
-                        <>
-                            <Lock className="w-4 h-4" />
-                            Auto-scroll
-                        </>
-                    ) : (
-                        <>
-                            <Unlock className="w-4 h-4" />
-                            Manual
-                        </>
-                    )}
-                </Button>
+                <div className="flex items-center gap-2 text-muted-foreground">
+                    <Clock className="w-4 h-4" />
+                    <span className="font-mono text-sm">
+                        {formatRecordingTime(recordingTime)}
+                    </span>
+                </div>
 
                 <Button onClick={onStopRecording} variant="destructive" size="sm" className="flex items-center gap-2">
                     <Square className="w-4 h-4" />

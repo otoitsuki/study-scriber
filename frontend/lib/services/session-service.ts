@@ -58,8 +58,8 @@ export class SessionService extends BaseService implements ISessionService {
      * 2. 若遇到 409 衝突，改為獲取現有活躍會話
      * 3. 確保返回可用的錄音會話
      */
-    async ensureRecordingSession(title?: string, content?: string): Promise<SessionResponse> {
-        this.logInfo('確保錄音會話存在 - 強制新建策略', { title, hasContent: !!content })
+    async ensureRecordingSession(title?: string, content?: string, startTs?: number): Promise<SessionResponse> {
+        this.logInfo('確保錄音會話存在 - 強制新建策略', { title, hasContent: !!content, hasStartTs: !!startTs })
 
         try {
             // 1. 檢查並完成任何現有活躍會話
@@ -70,28 +70,37 @@ export class SessionService extends BaseService implements ISessionService {
                     type: existingSession.type,
                     status: existingSession.status
                 })
-                
+
                 await this.finishSession(existingSession.id)
                 this.logSuccess('現有會話已完成', { sessionId: existingSession.id })
             } else {
                 this.logInfo('沒有現有活躍會話')
             }
-            
+
             // 2. 強制創建新會話
             const newSession = await this.createRecordingSession(
                 title || `錄音筆記 ${new Date().toLocaleString()}`,
-                content
+                content,
+                startTs
             )
-            
+
             this.logSuccess('強制新建策略完成', {
                 newSessionId: newSession.id,
                 type: newSession.type,
                 status: newSession.status
             })
-            
+
             return newSession
-            
+
         } catch (error) {
+            if (error instanceof Error && error.message.includes('409')) {
+                // 遇到衝突，獲取現有活躍會話
+                this.logWarning('會話衝突，嘗試獲取現有活躍會話')
+                const activeSession = await this.checkActiveSession()
+                if (activeSession) {
+                    return activeSession
+                }
+            }
             this.handleError('確保錄音會話存在 - 強制新建策略', error as Error)
         }
     }
@@ -100,14 +109,15 @@ export class SessionService extends BaseService implements ISessionService {
      * 創建錄音會話
      * 重用 sessionAPI.createSession 的重試機制和錯誤處理
      */
-    async createRecordingSession(title: string, content?: string): Promise<SessionResponse> {
-        this.logInfo('創建錄音會話', { title, hasContent: !!content })
+    async createRecordingSession(title: string, content?: string, startTs?: number): Promise<SessionResponse> {
+        this.logInfo('創建錄音會話', { title, hasContent: !!content, hasStartTs: !!startTs })
 
         try {
             const sessionData: SessionCreateRequest = {
                 title,
                 type: 'recording',
                 content,
+                start_ts: startTs
             }
 
             const session = await sessionAPI.createSession(sessionData)
@@ -115,7 +125,8 @@ export class SessionService extends BaseService implements ISessionService {
             this.logSuccess('錄音會話創建成功', {
                 sessionId: session.id,
                 type: session.type,
-                status: session.status
+                status: session.status,
+                withStartTs: !!startTs
             })
 
             return session

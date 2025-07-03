@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Square, Lock, Unlock, AlertCircle } from "lucide-react"
+import { Square, AlertCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import type { TranscriptEntry } from "../types/app-state"
 
@@ -63,26 +63,7 @@ export function RecordingWaitingState({
                 )}
             </ScrollArea>
 
-            <div className="p-4 border-t border-border flex justify-between items-center">
-                <Button
-                    onClick={toggleAutoScrollLock}
-                    variant="ghost"
-                    size="sm"
-                    className="flex items-center gap-2 text-muted-foreground"
-                >
-                    {isAutoScrollLocked ? (
-                        <>
-                            <Lock className="w-4 h-4" />
-                            Auto-scroll
-                        </>
-                    ) : (
-                        <>
-                            <Unlock className="w-4 h-4" />
-                            Manual
-                        </>
-                    )}
-                </Button>
-
+            <div className="p-4 border-t border-border flex justify-end">
                 <Button onClick={onStopRecording} variant="destructive" size="sm" className="flex items-center gap-2">
                     <Square className="w-4 h-4" />
                     Stop

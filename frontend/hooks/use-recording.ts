@@ -6,6 +6,7 @@ import { SegmentedAudioRecorder, AudioSegment } from '../lib/segmented-audio-rec
 import { audioUploader } from '../lib/stream/audio-uploader'
 import { transcriptManager, TranscriptMessage } from '../lib/transcript-manager'
 import { getAudioChunkIntervalMs } from '../lib/config'
+import { useAppActions } from '../lib/app-store-zustand'
 
 interface UseRecordingReturn {
   isRecording: boolean
@@ -25,6 +26,9 @@ export function useRecording(): UseRecordingReturn {
   const [transcriptCompleted, setTranscriptCompleted] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // 從 Zustand store 獲取操作
+  const { setRecordingStart } = useAppActions()
+
   // WebSocket 和錄音器引用
   const segmentedRecorderRef = useRef<SegmentedAudioRecorder | null>(null)
   const currentSessionIdRef = useRef<string | null>(null)
@@ -33,6 +37,7 @@ export function useRecording(): UseRecordingReturn {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const segmentsRef = useRef<AudioSegment[]>([])
   const retryCountsRef = useRef<Map<number, number>>(new Map())
+  const fallbackTimerRef = useRef<NodeJS.Timeout | null>(null) // 新增：fallback 計時器
 
   // 清理計時器
   const clearTimer = useCallback(() => {
@@ -40,19 +45,43 @@ export function useRecording(): UseRecordingReturn {
       clearInterval(timerRef.current)
       timerRef.current = null
     }
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current)
+      fallbackTimerRef.current = null
+    }
   }, [])
 
-
-
-  // 開始錄音計時器
+  // 開始錄音計時器（基於實際時間戳）
   const startTimer = useCallback(() => {
     clearTimer()
     setRecordingTime(0)
+    const startTime = Date.now()
 
     timerRef.current = setInterval(() => {
-      setRecordingTime((prev) => prev + 1)
+      const elapsed = Math.floor((Date.now() - startTime) / 1000)
+      setRecordingTime(elapsed)
     }, 1000)
+
+    console.log('⏱️ [useRecording] 錄音計時器已啟動')
   }, [clearTimer])
+
+  // 處理錄音真正開始（onstart 事件）
+  const handleRecordingStart = useCallback(() => {
+    const startTime = Date.now()
+    console.log('🚀 [useRecording] 錄音真正開始，設置開始時間:', new Date(startTime).toISOString())
+
+    // 設置到 Zustand store
+    setRecordingStart(startTime)
+
+    // 同時更新本地計時器
+    startTimer()
+
+    // 清除 fallback 計時器（如果存在）
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current)
+      fallbackTimerRef.current = null
+    }
+  }, [setRecordingStart, startTimer])
 
   // 處理逐字稿接收 - 透過 TranscriptManager
   const handleTranscript = useCallback((transcript: TranscriptMessage) => {
@@ -154,7 +183,7 @@ export function useRecording(): UseRecordingReturn {
     }
   }, [])
 
-  // 處理音檔段落 - 使用新的 SegmentedAudioRecorder
+  // 處理音檔段落 - 不再負責啟動計時
   const handleAudioSegment = useCallback(async (segment: AudioSegment) => {
     console.log(`🎵 [useRecording] 收到音檔段落 #${segment.sequence}, 大小: ${segment.blob.size} bytes`)
 
@@ -169,7 +198,7 @@ export function useRecording(): UseRecordingReturn {
     }
   }, [])
 
-  // 開始錄音 - 優化連線時序和穩定性
+  // 開始錄音 - 使用 onstart 事件
   const startRecording = useCallback(async (sessionId: string): Promise<void> => {
     try {
       setError(null)
@@ -191,18 +220,20 @@ export function useRecording(): UseRecordingReturn {
         audioBitsPerSecond: 64000 // 64 kbps
       })
 
-      console.log('🎤 [useRecording] 音訊配置: WebM Opus, 64 kbps, 10 秒切片')
+      console.log('🎤 [useRecording] 音訊配置: WebM Opus, 64 kbps, 15 秒切片')
 
       segmentedRecorderRef.current = segmentedRecorder
       segmentsRef.current = []
       retryCountsRef.current.clear()
 
       // 設定音檔錄製器事件
-      segmentedRecorder.onSegment(handleAudioSegment)
       segmentedRecorder.onError((err) => {
         console.error('❌ [useRecording] SegmentedAudioRecorder 錯誤:', err)
         setError(err.message)
       })
+
+      // 新增：設定錄音開始回調
+      segmentedRecorder.onStart(handleRecordingStart)
 
       // 步驟 2: 初始化音訊權限
       console.log('🎤 [useRecording] 步驟 2: 初始化音訊權限')
@@ -239,8 +270,14 @@ export function useRecording(): UseRecordingReturn {
       setIsRecording(true)
       console.log('🎤 [useRecording] 錄音狀態已設置為 true')
 
+      // 設置 fallback 計時器：如果 10 秒後 onstart 還沒觸發，使用舊邏輯
+      fallbackTimerRef.current = setTimeout(() => {
+        console.warn('⚠️ [useRecording] onstart 事件 10 秒內未觸發，使用 fallback 計時器')
+        handleRecordingStart()
+      }, 10000)
+
       await segmentedRecorder.start(handleAudioSegment)
-      startTimer()
+      console.log('⏳ [useRecording] 等待 onstart 事件啟動計時器')
 
       console.log('✅ [useRecording] 錄音開始成功，Session ID:', sessionId)
 
@@ -260,8 +297,9 @@ export function useRecording(): UseRecordingReturn {
       if (currentSessionIdRef.current) {
         transcriptManager.removeListener(currentSessionIdRef.current, handleTranscript)
       }
+      clearTimer()
     }
-  }, [handleAudioSegment, handleAckMissing, handleTranscript, startTimer])
+  }, [handleAudioSegment, handleAckMissing, handleTranscript, handleRecordingStart, clearTimer])
 
   // 停止錄音
   const stopRecording = useCallback(() => {

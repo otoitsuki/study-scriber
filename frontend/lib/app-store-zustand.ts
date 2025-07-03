@@ -25,6 +25,7 @@ interface AppStoreState {
   // 錄音狀態
   isRecording: boolean
   recordingTime: number
+  recordingStartTime: number | null
 
   // 內部計時器
   timerId: NodeJS.Timeout | null
@@ -60,6 +61,9 @@ interface AppStoreActions {
   stopTimer: () => void
   cleanup: () => void
 
+  // 錄音時間操作
+  setRecordingStart: (timestamp: number) => void
+
   // 狀態重置
   resetState: () => void
 }
@@ -85,6 +89,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   session: null,
   isRecording: false,
   recordingTime: 0,
+  recordingStartTime: null,
   timerId: null,
   transcriptEntries: [],
   editorContent: '',
@@ -105,22 +110,35 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })
 
     try {
-      // 2. 獲取 RecordingFlowService
+      // 2. 獲取當前的錄音開始時間（由 onstart 事件設置）
+      const currentState = get()
+      const startTs = currentState.recordingStartTime
+
+      console.log('🕐 [AppStore] 錄音開始時間:', {
+        startTs,
+        startTsDate: startTs ? new Date(startTs).toISOString() : 'N/A',
+        hasStartTime: !!startTs
+      })
+
+      // 3. 獲取 RecordingFlowService
       const { RecordingFlowService } = await import('./services/recording-flow-service')
       const recordingFlowService = new RecordingFlowService()
       await recordingFlowService.initialize()
 
-      // 3. 啟動完整錄音流程（包含雙 WebSocket）
+      // 4. 啟動完整錄音流程（包含雙 WebSocket），傳遞開始時間戳
       console.log('🔍 [AppStore] 啟動完整錄音流程...')
       const sessionResponse = await recordingFlowService.startRecordingFlow(
-        title || `錄音筆記 ${new Date().toLocaleString()}`
+        title || `錄音筆記 ${new Date().toLocaleString()}`,
+        undefined, // content
+        startTs    // 傳遞錄音開始時間戳
       )
 
       console.log('✅ [AppStore] 雙 WebSocket 錄音流程啟動成功:', {
-        sessionId: sessionResponse.id
+        sessionId: sessionResponse.id,
+        withStartTs: !!startTs
       })
 
-      // 4. 更新狀態，保持等待逐字稿
+      // 5. 更新狀態，保持等待逐字稿
       set({
         appState: 'recording_waiting',
         session: {
@@ -132,16 +150,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
         isLoading: false
       })
 
-      // 5. 啟動錄音計時器
-      get().startTimer()
+      // 6. 不需要再次啟動計時器，因為已經在 setRecordingStart 中啟動了
+      console.log('🕐 [AppStore] 計時器已在 onstart 事件中啟動，錄音時間:', currentState.recordingTime)
 
-        // 6. 儲存服務實例供停止時使用
+        // 7. 儲存服務實例供停止時使用
         ; (globalThis as any).currentRecordingFlowService = recordingFlowService
 
       console.log('🎯 [AppStore] 雙 WebSocket 錄音模式啟動成功')
 
     } catch (error) {
-      // 7. 錯誤處理
+      // 8. 錯誤處理
       const errorMessage = error instanceof Error ? error.message : '開始錄音失敗'
       console.error('❌ [AppStore] 無法開始錄音:', error)
 
@@ -250,13 +268,29 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ recordingTime: time })
   },
 
-  // 計時邏輯 - 重新實作為直接計時器
+  // 設置錄音開始時間並啟動基於實際時間的計時器
+  setRecordingStart: (timestamp: number) => {
+    console.log('🚀 [AppStore] 設置錄音開始時間:', new Date(timestamp).toISOString())
+    set({ recordingStartTime: timestamp, recordingTime: 0 })
+
+    // 啟動基於實際時間的計時器
+    get().startTimer()
+  },
+
+  // 計時邏輯 - 修改為基於實際時間戳的計算
   startTimer: () => {
     const currentState = get()
     if (currentState.timerId) return // 防止重複啟動
 
     const timerId = setInterval(() => {
-      set(state => ({ recordingTime: state.recordingTime + 1 }))
+      const state = get()
+      if (state.recordingStartTime) {
+        const elapsed = Math.floor((Date.now() - state.recordingStartTime) / 1000)
+        set({ recordingTime: elapsed })
+      } else {
+        // Fallback 到舊邏輯
+        set(prevState => ({ recordingTime: prevState.recordingTime + 1 }))
+      }
     }, 1000)
 
     set({ timerId })
@@ -267,7 +301,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const currentState = get()
     if (currentState.timerId) {
       clearInterval(currentState.timerId)
-      set({ timerId: null, recordingTime: 0 })
+      set({ timerId: null, recordingTime: 0, recordingStartTime: null })
       console.log('⏹️ [AppStore] 錄音計時器已停止並重置')
     }
   },
@@ -299,6 +333,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       session: null,
       isRecording: false,
       recordingTime: 0,
+      recordingStartTime: null,
       timerId: null,
       transcriptEntries: [],
       editorContent: ''
@@ -333,6 +368,7 @@ export const useAppActions = () => useAppStore((state: AppStore) => ({
   clearError: state.clearError,
   updateEditorContent: state.updateEditorContent,
   addTranscriptEntry: state.addTranscriptEntry,
+  setRecordingStart: state.setRecordingStart,
   resetState: state.resetState
 }))
 
