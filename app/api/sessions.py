@@ -51,10 +51,13 @@ async def create_session(
 
         # 如果有提供 start_ts，轉換為 PostgreSQL 時間戳格式
         if request.start_ts is not None:
-            # 將毫秒時間戳轉換為 datetime 並格式化為 ISO 字串
             started_at = datetime.fromtimestamp(request.start_ts / 1000).isoformat()
             session_data["started_at"] = started_at
             print(f"🕐 [SessionAPI] 設定錄音開始時間: {started_at} (原始時間戳: {request.start_ts})")
+
+        # 若為錄音模式且仍未設定 started_at，則預設為目前時間 (UTC)
+        if request.type == SessionType.RECORDING and "started_at" not in session_data:
+            session_data["started_at"] = datetime.utcnow().isoformat()
 
         response = supabase.table("sessions").insert(session_data, returning="representation").execute()
 
@@ -200,6 +203,7 @@ async def upgrade_session_to_recording(
         update_data = {
             "type": SessionType.RECORDING.value,
             "language": request.language.value,
+            "started_at": datetime.utcnow().isoformat(),
         }
 
         # 執行升級

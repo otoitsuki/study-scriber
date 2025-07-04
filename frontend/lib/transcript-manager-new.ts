@@ -161,6 +161,7 @@ export class TranscriptManager {
         const seconds = Math.floor(startTimeInSeconds % 60)
 
         const entry: TranscriptEntry = {
+            startTime: startTimeInSeconds,
             time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
             text: msg.text
         }

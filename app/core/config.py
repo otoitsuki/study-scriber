@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(False, alias="debug")
 
     # 音頻切片配置
-    AUDIO_CHUNK_DURATION_SEC: int = Field(10, description="音頻切片時長（秒）")
+    AUDIO_CHUNK_DURATION_SEC: int = int(os.getenv("AUDIO_CHUNK_DURATION_SEC", 28))
 
     # 逐字稿顯示配置
     TRANSCRIPT_DISPLAY_INTERVAL_SEC: int = Field(10, description="逐字稿時間戳顯示間隔（秒）")

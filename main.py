@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
 
     # Task 3: 啟動隊列管理器
     try:
-        await queue_manager.start_workers(num_workers=2)
+        await queue_manager.start_workers()
         logger.info("✅ 轉錄隊列管理器啟動成功")
     except Exception as e:
         logger.error(f"❌ 隊列管理器啟動失敗: {e}")

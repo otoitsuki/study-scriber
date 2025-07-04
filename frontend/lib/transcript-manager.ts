@@ -236,12 +236,45 @@ export class TranscriptManager {
       })
 
       // 推送到 Zustand store
-      const entry = message.payload
-      if (entry && entry.time && entry.text) {
+      const raw = message.payload
+      if (raw && raw.text) {
+        const parseTime = (t: string | undefined): number => {
+          if (!t) return 0
+          const parts = t.split(':').map(Number)
+          return parts.length === 3
+            ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+            : parts[0] * 60 + parts[1]
+        }
+
+        const startTime = (typeof raw.start_time === 'number') ? raw.start_time : (raw.startTime ?? parseTime(raw.time))
+
+        const entry = {
+          startTime,
+          time: raw.time ?? `${Math.floor(startTime / 60).toString().padStart(2, '0')}:${(startTime % 60).toString().padStart(2, '0')}`,
+          text: raw.text
+        }
+
+        console.log('🎯 [TranscriptManager] 準備推送 transcript_segment 到 store:', {
+          originalStartTime: raw.start_time,
+          startTimeInSeconds: startTime,
+          formattedTime: entry.time,
+          text: entry.text.substring(0, 50) + '...'
+        })
+
+        console.log('[T] before push', useAppStore.getState().appState)
         useAppStore.getState().addTranscriptEntry(entry)
-        console.log('✅ [TranscriptManager] 已推送到 store:', entry)
+        console.log('✅ [TranscriptManager] transcript_segment 已推送到 store:', entry)
+
+        // 檢查狀態是否有變化
+        const currentState = useAppStore.getState()
+        console.log('📊 [TranscriptManager] Store 狀態檢查:', {
+          appState: currentState.appState,
+          transcriptCount: currentState.transcriptEntries.length,
+          latestEntry: currentState.transcriptEntries[currentState.transcriptEntries.length - 1]
+        })
+
       } else {
-        console.warn('⚠️ [TranscriptManager] 無效的逐字稿條目:', entry)
+        console.warn('⚠️ [TranscriptManager] 無效的逐字稿條目:', raw)
       }
 
       this.broadcastToListeners(sessionId, message)
@@ -266,6 +299,7 @@ export class TranscriptManager {
           const seconds = Math.floor(startTimeInSeconds % 60)
 
           const entry = {
+            startTime: startTimeInSeconds,
             time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
             text: message.text
           }

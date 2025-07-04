@@ -114,10 +114,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const currentState = get()
       const startTs = currentState.recordingStartTime
 
+      const startTsDate = typeof startTs === 'number' ? new Date(startTs as number).toISOString() : 'N/A'
+      const hasStartTime = typeof startTs === 'number'
+
       console.log('🕐 [AppStore] 錄音開始時間:', {
         startTs,
-        startTsDate: startTs ? new Date(startTs).toISOString() : 'N/A',
-        hasStartTime: !!startTs
+        startTsDate,
+        hasStartTime
       })
 
       // 3. 獲取 RecordingFlowService
@@ -257,11 +260,32 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   addTranscriptEntry: (entry: TranscriptEntry) => {
     console.log('[S] add entry', entry.text.slice(0, 20))
-    set((state) => ({
-      transcriptEntries: [...state.transcriptEntries, entry],
-      // 🎯 收到第一個逐字稿時，從 recording_waiting → recording_active
-      appState: state.appState === 'recording_waiting' ? 'recording_active' : state.appState
-    }))
+
+    set((state) => {
+      // 將新條目加入並按數值時間排序
+      const timeToSeconds = (t: string): number => {
+        const parts = t.split(':').map(Number)
+        if (parts.length === 3) {
+          const [hh, mm, ss] = parts
+          return hh * 3600 + mm * 60 + ss
+        } else if (parts.length === 2) {
+          const [mm, ss] = parts
+          return mm * 60 + ss
+        }
+        return 0
+      }
+
+      const getStart = (e: TranscriptEntry): number => e.startTime ?? timeToSeconds(e.time)
+
+      const newEntries = [...state.transcriptEntries, entry].sort(
+        (a, b) => getStart(a) - getStart(b)
+      )
+      return {
+        transcriptEntries: newEntries,
+        // 🎯 收到第一個逐字稿時，從 recording_waiting → recording_active
+        appState: state.appState === 'recording_waiting' ? 'recording_active' : state.appState
+      }
+    })
   },
 
   setRecordingTime: (time: number) => {

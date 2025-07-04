@@ -5,6 +5,7 @@ import { serviceContainer } from './service-container'
 import { SERVICE_KEYS, type ISessionService, type IRecordingService, type ITranscriptService, type TranscriptMessage } from './interfaces'
 import type { SessionResponse } from '../api'
 import { useAppStore } from '../app-store-zustand'
+import { formatTime } from '../../utils/time'
 const setAppState = useAppStore.getState().setState
 
 /**
@@ -24,6 +25,8 @@ export class RecordingFlowService extends BaseService {
   // 流程狀態
   private currentSession: SessionResponse | null = null
   private isFlowActive = false
+  private labelIntervalSec = Number(process.env.NEXT_PUBLIC_TRANSCRIPT_LABEL_INTERVAL ?? '10')
+  private lastLabelSec = 0
   private transcriptEntries: Array<{ time: string; text: string }> = []
 
   /**
@@ -73,8 +76,25 @@ export class RecordingFlowService extends BaseService {
         throw new Error('麥克風權限被拒')
       }
 
+      // === 🛠 追加: 若有現有活躍會話，先結束它，避免 Session 打架 ===
+      const activeSession = await this.sessionService.checkActiveSession()
+      if (activeSession) {
+        this.logInfo('檢測到現有活躍會話，先完成它以避免衝突', {
+          sessionId: activeSession.id,
+          type: activeSession.type,
+          status: activeSession.status
+        })
+        await this.sessionService.finishSession(activeSession.id)
+        this.logSuccess('已完成現有活躍會話', { sessionId: activeSession.id })
+      }
+      // === 🛠 追加結束 ===
+
       // ② 建 Session（POST /session）
-      const session = await this.sessionService.createRecordingSession()
+      const session = await this.sessionService.createRecordingSession(
+        title || `錄音筆記 ${new Date().toLocaleString()}`,
+        content,
+        startTs
+      )
       if (!session) {
         setAppState('default')
         throw new Error('建立 Session 失敗')
@@ -85,9 +105,8 @@ export class RecordingFlowService extends BaseService {
       await this.transcriptService.start(session.id)
       setAppState('recording_waiting')
 
-      // 步驟 1: 確保錄音會話存在（傳遞開始時間戳）
-      this.logInfo('步驟 1: 確保錄音會話')
-      this.currentSession = await this.sessionService.ensureRecordingSession(title, content, startTs)
+      // 步驟 1: 使用新建立的會話
+      this.currentSession = session
       this.logSuccess('錄音會話已準備', { sessionId: this.currentSession.id, withStartTs: !!startTs })
 
       // 步驟 2: 等待會話在資料庫中完全可見
@@ -254,24 +273,23 @@ export class RecordingFlowService extends BaseService {
 
     try {
       if (message.type === 'transcript' && message.text) {
-        // 使用 start_time 並轉換為 HH:MM:SS 格式
-        const startTime = message.start_time ?? 0
-        const hours = Math.floor(startTime / 3600)
-        const minutes = Math.floor((startTime % 3600) / 60)
-        const seconds = Math.floor(startTime % 60)
-        const time = `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+        const startSec = message.start_time ?? 0
 
-        // 添加逐字稿項目
-        const entry = {
-          time,
-          text: message.text.trim()
+        // 每隔 labelIntervalSec 秒插入一個時間戳標籤
+        if (startSec - this.lastLabelSec >= this.labelIntervalSec) {
+          this.transcriptEntries.push({ time: formatTime(startSec), text: '' })
+          this.lastLabelSec = startSec
         }
 
-        this.transcriptEntries.push(entry)
+        // 真正的逐字稿段落
+        this.transcriptEntries.push({
+          time: formatTime(startSec),
+          text: message.text.trim()
+        })
 
         this.logInfo('逐字稿項目已添加', {
-          time: entry.time,
-          textLength: entry.text.length,
+          startSec,
+          textLength: message.text.trim().length,
           totalEntries: this.transcriptEntries.length
         })
       } else if (message.type === 'error') {

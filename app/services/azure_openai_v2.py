@@ -1252,6 +1252,10 @@ class SimpleAudioTranscriptionService:
                             # Task 4: 合併保留的段落文字
                             combined_text = ' '.join(segment['text'].strip() for segment in filtered_segments).strip()
 
+                            # 新增：計算段落在切片中的實際起迄時間 (秒)
+                            earliest_start = min(seg['start'] for seg in filtered_segments)
+                            latest_end = max(seg['end'] for seg in filtered_segments)
+
                             if not combined_text:
                                 logger.warning(f"⚠️ [段落過濾] Chunk {chunk_sequence} 合併後文字為空")
                                 WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
@@ -1275,7 +1279,10 @@ class SimpleAudioTranscriptionService:
                                 'duration': getattr(transcript, 'duration', settings.AUDIO_CHUNK_DURATION_SEC),
                                 'segments_total': total_segments,
                                 'segments_kept': kept_count,
-                                'segments_filtered': filtered_count
+                                'segments_filtered': filtered_count,
+                                # 新增：回傳在切片中的相對起迄時間，供後續計算絕對時間
+                                'start_offset': earliest_start,
+                                'end_offset': latest_end
                             }
 
                         finally:
@@ -1334,25 +1341,30 @@ class SimpleAudioTranscriptionService:
             # 獲取 session 的 started_at 時間戳（如果有的話）
             session_response = supabase.table("sessions").select("started_at").eq("id", str(session_id)).limit(1).execute()
 
+            # 讀取 started_at（若無則為 None）
+            started_at = None
             if session_response.data and session_response.data[0].get('started_at'):
-                # 使用精確的開始時間計算逐字稿時間戳
                 started_at = session_response.data[0]['started_at']
-                # 將 ISO 時間字串轉換為 datetime
-                from datetime import datetime
-                started_datetime = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
-                # 計算基於實際開始時間的偏移
-                start_offset_seconds = chunk_sequence * settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC
-                end_offset_seconds = (chunk_sequence + 1) * settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC
 
-                logger.info(f"🕐 [時間計算] 使用精確開始時間: {started_at}, 切片 {chunk_sequence} 偏移: {start_offset_seconds}s-{end_offset_seconds}s")
+            # 計算段落相對時間（若有 started_at 可用於日後絕對時間換算）
+            chunk_start_seconds = chunk_sequence * settings.AUDIO_CHUNK_DURATION_SEC
+            start_time = chunk_start_seconds + transcript_result.get('start_offset', 0)
+            end_time = chunk_start_seconds + transcript_result.get('end_offset', settings.AUDIO_CHUNK_DURATION_SEC)
 
-                start_time = start_offset_seconds
-                end_time = end_offset_seconds
+            if started_at:
+                logger.info(
+                    f"🕐 [時間計算 v2] 精確開始時間: {started_at}, "
+                    f"chunk={chunk_sequence}, chunk_start={chunk_start_seconds}s, "
+                    f"offset=({transcript_result.get('start_offset', 0)}s-{transcript_result.get('end_offset', 0)}s) → "
+                    f"absolute=({start_time}s-{end_time}s)"
+                )
             else:
-                # Fallback 到舊邏輯（使用相對時間）
-                logger.warning(f"⚠️ [時間計算] Session {session_id} 沒有 started_at 時間戳，使用相對時間")
-                start_time = chunk_sequence * settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC
-                end_time = (chunk_sequence + 1) * settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC
+                logger.info(
+                    f"🕐 [時間計算 v2] 未檢測到 started_at，使用 fallback 相對時間。" \
+                    f"chunk={chunk_sequence}, chunk_start={chunk_start_seconds}s, " \
+                    f"offset=({transcript_result.get('start_offset', 0)}s-{transcript_result.get('end_offset', 0)}s) → " \
+                    f"relative=({start_time}s-{end_time}s)"
+                )
 
             segment_data = {
                 "session_id": str(session_id),
@@ -1419,6 +1431,11 @@ class SimpleAudioTranscriptionService:
                     str(session_id)
                 )
                 logger.info(f"轉錄任務完成 for session: {session_id}, chunk: {chunk_sequence}")
+
+        except Exception as e:
+            logger.error(f"Failed to save/push transcript for chunk {chunk_sequence}: {e}")
+                # 廣播轉錄失敗錯誤到前端
+            await self._broadcast_transcription_error(session_id, chunk_sequence, "database_error", f"資料庫操作失敗: {str(e)}")
 
         except Exception as e:
             logger.error(f"Failed to save/push transcript for chunk {chunk_sequence}: {e}")

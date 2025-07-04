@@ -138,6 +138,7 @@ export interface TranscriptMessage {
  * 逐字稿項目
  */
 export interface TranscriptEntry {
+    startTime?: number
     time: string
     text: string
 }

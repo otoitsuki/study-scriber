@@ -7,6 +7,7 @@ export type AppState =
   | "finished"    // 完整逐字稿畫面：可編輯筆記、匯出、開新筆記
 
 export interface TranscriptEntry {
+  startTime?: number
   time: string
   text: string
 }
