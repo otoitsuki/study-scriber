@@ -33,12 +33,12 @@ export interface ISessionService {
     /**
      * 創建錄音會話
      */
-    createRecordingSession(title: string, content?: string, startTs?: number): Promise<SessionResponse>
+    createRecordingSession(title?: string, content?: string, startTs?: number): Promise<SessionResponse>
 
     /**
      * 創建純筆記會話
      */
-    createNoteSession(title: string, content?: string): Promise<SessionResponse>
+    createNoteSession(title?: string, content?: string): Promise<SessionResponse>
 
     /**
      * 升級會話至錄音模式

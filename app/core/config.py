@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     AZURE_OPENAI_API_VERSION: str = "2024-02-01"
     WHISPER_DEPLOYMENT_NAME: str = ""
     WHISPER_LANGUAGE: str = Field("zh", description="Whisper 轉錄語言代碼")
+    # --- STT Provider 新增設定 ---
+    STT_PROVIDER_DEFAULT: str = Field("whisper", description="預設語音轉文字 Provider ('whisper' or 'gemini')")
+    GEMINI_ENDPOINT: str = Field("", description="Vertex AI 端點，如 us-central1-aiplatform.googleapis.com")
+    GEMINI_API_KEY: str = Field("", description="GCP 服務帳戶 API Key")
+    GEMINI_PROMPT: str = Field("請輸出逐字稿：", description="Gemini system prompt")
+    GEMINI_MAX_REQUESTS: int = Field(90, description="Gemini 每分鐘最大請求次數 (RateLimiter 用)")
     R2_ACCOUNT_ID: str = ""
     R2_BUCKET_NAME: str = "studyscriber"
     R2_API_TOKEN: str = ""

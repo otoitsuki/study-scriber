@@ -13,14 +13,14 @@ interface UseAppStateReturn {
     error: string | null
 
     // 會話管理
-    createNoteSession: (title: string) => Promise<void>
-    createRecordingSession: (title: string) => Promise<void>
+    createNoteSession: (title?: string) => Promise<void>
+    createRecordingSession: (title?: string) => Promise<void>
     upgradeToRecording: () => Promise<void>
     finishSession: () => Promise<void>
     newNote: () => Promise<void>
 
     // 錄音控制
-    startRecording: (title: string) => Promise<void>
+    startRecording: (title?: string) => Promise<void>
     stopRecording: () => Promise<void>
 
     // 本地草稿

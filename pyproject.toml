@@ -23,6 +23,7 @@ dependencies = [
     "openai",
     "aiofiles",
     "python-multipart",
+    "google-generativeai",  # 提供 google.generativeai.GenerativeModel
     # Task 5: 監控依賴
     "prometheus-client",
     # 測試依賴

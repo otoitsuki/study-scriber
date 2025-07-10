@@ -36,7 +36,7 @@ export default function Component() {
   const updateEditorContent = useAppStore(state => state.updateEditorContent)
   const resetState = useAppStore(state => state.resetState)
   const clearError = useAppStore(state => state.clearError)
-  const [draftTitle, setDraftTitle] = useState("")
+  // ✅ 移除 draftTitle 狀態 - 標題不再必填
 
   // 使用 Zustand store - 所有狀態已在上方宣告
 
@@ -155,8 +155,8 @@ export default function Component() {
       console.log("⚠️ [StudyScriber] 檢測到狀態異常: recording_waiting 但沒有 session，顯示 DefaultState")
       return <DefaultState
         onStartRecording={() => {
-          console.log("📱 StudyScriber: 準備調用 startRecording（狀態修復），標題:", draftTitle)
-          startRecording(draftTitle)
+          console.log("📱 StudyScriber: 準備調用 startRecording（狀態修復）")
+          startRecording()
         }}
       />
     }
@@ -166,9 +166,9 @@ export default function Component() {
         console.log("🔄 [StudyScriber] 渲染 DefaultState，startRecording 函數:", typeof startRecording)
         return <DefaultState
           onStartRecording={() => {
-            console.log("📱 StudyScriber: 準備調用 startRecording，標題:", draftTitle)
+            console.log("📱 StudyScriber: 準備調用 startRecording")
             console.log("📱 StudyScriber: startRecording 函數類型:", typeof startRecording)
-            startRecording(draftTitle)
+            startRecording()
           }}
         />
       case "recording_active":
@@ -208,8 +208,8 @@ export default function Component() {
       default:
         return <DefaultState
           onStartRecording={() => {
-            console.log("📱 StudyScriber: 準備調用 startRecording (default)，標題:", draftTitle)
-            startRecording(draftTitle)
+            console.log("📱 StudyScriber: 準備調用 startRecording (default)")
+            startRecording()
           }}
         />
     }
@@ -249,13 +249,7 @@ export default function Component() {
         {/* Left Panel - SimpleMDE Editor */}
         <div className="flex-1 bg-background border-r border-border h-full">
           <div className="h-full p-6 flex flex-col gap-4">
-            <Input
-              placeholder="請輸入標題..."
-              className="text-lg font-semibold"
-              value={draftTitle}
-              onChange={(e) => setDraftTitle(e.target.value)}
-              disabled={appState === 'processing' || appState === 'finished' || isRecording}
-            />
+            {/* ✅ 移除標題輸入欄位 - 標題不再必填 */}
             <div className="h-full editor-container flex-grow" data-testid="editor-container">
               <SimpleMDE
                 options={editorOptions}

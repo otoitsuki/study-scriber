@@ -1,3 +1,103 @@
+## 🎯 當前任務：移除使用者先需要寫標題的功能
+
+### 目標
+根據 SPEC.md 修改，讓使用者可以直接開始錄音或做筆記，無需先輸入標題，提供更簡潔的使用體驗。遵循 TDD 原則，從後端驗證開始，逐步推進到前端各層。
+
+### 實作任務
+
+- [ ] **Task 1: 後端 API 測試：驗證可選標題功能**
+  - 📁 檔案：`tests/test_session_optional_title.py`
+  - 🎯 編寫測試驗證後端 create_session API 在不提供 title 時的行為是否正確
+  - 📋 核心功能：
+    - 測試 POST /api/session 不傳 title 參數的情況
+    - 測試 POST /api/session 傳 title=null 的情況
+    - 驗證回應包含正確的 session 結構
+    - 確保資料庫中 title 欄位為 NULL
+  - 🔄 依賴：無（基礎驗證任務）
+  - ⚠️ 關鍵技術挑戰：確認後端已完整支援可選標題，為前端修改奠定基礎
+  - ✅ 驗證標準：測試全面覆蓋、API 回應正確、資料庫狀態驗證
+
+- [ ] **Task 2: 前端 API 層更新：SessionCreateRequest 介面調整**
+  - 📁 檔案：`frontend/lib/api.ts`, `frontend/types/app-state.ts`
+  - 🎯 修改 SessionCreateRequest 介面，讓 title 參數變成可選
+  - 📋 核心功能：
+    - 更新 TypeScript 介面定義 title 為可選
+    - 修改 API 呼叫邏輯，允許不傳遞 title
+    - 更新相關類型定義
+  - 🔄 依賴：Task 1 完成
+  - ⚠️ 關鍵技術挑戰：確保類型安全性，避免破壞現有功能
+  - ✅ 驗證標準：TypeScript 編譯無錯誤、介面定義正確、API 呼叫成功
+
+- [ ] **Task 3: 服務層更新：SessionService 方法調整**
+  - 📁 檔案：`frontend/lib/services/session-service.ts`, `frontend/lib/services/interfaces.ts`
+  - 🎯 修改 SessionService 的 createSession 方法，讓 title 參數變成可選
+  - 📋 核心功能：
+    - 更新 createSession 方法簽名
+    - 修改服務實現邏輯
+    - 更新介面定義
+  - 🔄 依賴：Task 2 完成
+  - ⚠️ 關鍵技術挑戰：保持服務層介面一致性，確保錯誤處理正確
+  - ✅ 驗證標準：服務方法正確、介面相容、錯誤處理完整
+
+- [ ] **Task 4: Hook 層更新：useSession 系列 Hook 調整**
+  - 📁 檔案：`frontend/hooks/use-session.ts`, `frontend/hooks/use-session-new.ts`
+  - 🎯 修改 useSession 和 useSessionNew hooks 的 createNoteSession 和 createRecordingSession 方法
+  - 📋 核心功能：
+    - 移除 title 必填參數約束
+    - 更新函式簽名和實現
+    - 確保向後相容性
+  - 🔄 依賴：Task 3 完成
+  - ⚠️ 關鍵技術挑戰：Hook 狀態管理一致性，避免破壞現有呼叫
+  - ✅ 驗證標準：Hook 功能正常、狀態管理正確、向後相容
+
+- [ ] **Task 5: 應用狀態層更新：useAppState 系列 Hook 調整**
+  - 📁 檔案：`frontend/hooks/use-app-state.ts`, `frontend/hooks/use-app-state-new.ts`
+  - 🎯 修改 useAppState 和 useAppStateNew hooks 中呼叫 session 建立的相關邏輯
+  - 📋 核心功能：
+    - 更新 startNewNoteSession 和 startRecording 方法
+    - 移除強制要求 title 的邏輯
+    - 確保狀態轉換正確
+  - 🔄 依賴：Task 4 完成
+  - ⚠️ 關鍵技術挑戰：應用狀態管理複雜性，確保狀態機正確運作
+  - ✅ 驗證標準：狀態轉換正確、應用邏輯完整、無副作用
+
+- [ ] **Task 6: UI 層調整：移除 draftTitle 相關邏輯**
+  - 📁 檔案：`frontend/study-scriber.tsx`, `frontend/hooks/use-local-draft.ts`
+  - 🎯 從主要 UI 組件和本地草稿 hook 中移除 draftTitle 相關的狀態和邏輯
+  - 📋 核心功能：
+    - 移除 draftTitle 狀態變數
+    - 更新 useLocalDraft hook，移除 title 草稿功能
+    - 確保 UI 渲染邏輯正確
+  - 🔄 依賴：Task 5 完成
+  - ⚠️ 關鍵技術挑戰：UI 一致性，確保移除 title 後介面仍然完整
+  - ✅ 驗證標準：UI 正常顯示、無 title 相關錯誤、使用者體驗流暢
+
+- [ ] **Task 7: 整合測試：端到端流程驗證**
+  - 📁 檔案：前端測試檔案、整合測試
+  - 🎯 執行完整的端到端測試，驗證移除標題功能後的完整使用流程
+  - 📋 核心功能：
+    - 測試純筆記模式（無標題）
+    - 測試錄音模式（無標題）
+    - 驗證會話建立和儲存
+    - 確認前後端資料一致性
+  - 🔄 依賴：Task 6 完成
+  - ⚠️ 關鍵技術挑戰：端到端流程複雜性，確保所有修改協同工作
+  - ✅ 驗證標準：完整功能正常、無迴歸問題、使用者體驗符合預期
+
+### 🎯 預期效果
+- ✅ **使用體驗簡化**：使用者可直接開始錄音或做筆記
+- ✅ **向後相容性**：現有功能不受影響
+- ✅ **資料一致性**：前後端 API 完全對應
+- ✅ **測試覆蓋**：TDD 流程確保品質
+
+### 📊 實作策略
+| 階段    | 範圍              | 風險 | 對策         |
+| ------- | ----------------- | ---- | ------------ |
+| Phase 1 | 後端驗證          | 低   | 確認現有支援 |
+| Phase 2 | 前端 API + 服務層 | 中   | 漸進式修改   |
+| Phase 3 | Hook + 狀態層     | 中   | 保持介面相容 |
+| Phase 4 | UI + 整合測試     | 低   | 端到端驗證   |
+
 ## 🚀 優先任務：滑動視窗 Rate Limiting 改進逐字稿延遲
 
 ### 目標

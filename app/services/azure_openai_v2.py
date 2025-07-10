@@ -1170,6 +1170,11 @@ class SimpleAudioTranscriptionService:
 
     async def _transcribe_audio(self, webm_data: bytes, session_id: UUID, chunk_sequence: int) -> Optional[Dict[str, Any]]:
         """使用 Azure OpenAI Whisper 直接轉錄 WebM 音訊 (verbose_json + 段落過濾)"""
+        # 若此 session 指定非 Whisper Provider，改由對應 Provider 處理
+        from app.services.stt.factory import get_provider
+        alt_provider = get_provider(session_id)
+        if alt_provider and alt_provider.name() != "whisper":
+            return await alt_provider.transcribe(webm_data, session_id, chunk_sequence)
 
         # Task 2: 智能頻率限制處理 - 等待當前延遲
         await rate_limit.wait()

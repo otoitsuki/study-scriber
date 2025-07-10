@@ -165,7 +165,7 @@ export function useAppStateNew() {
   }, [session, notes, toast, dispatch])
 
   // 建立錄音會話
-  const createRecordingSession = useCallback(async (title: string) => {
+  const createRecordingSession = useCallback(async (title?: string) => {
     dispatch({ type: 'SET_LOADING', payload: true })
     dispatch({ type: 'CLEAR_ERROR' })
 
@@ -217,7 +217,7 @@ export function useAppStateNew() {
   }, [session, notes, toast, dispatch, appData.editorContent])
 
   // 開始錄音 - 完全委託給狀態機
-  const startRecording = useCallback(async (title: string) => {
+  const startRecording = useCallback(async (title?: string) => {
     console.log("🎤 [useAppStateNew] startRecording: 觸發狀態機")
 
     // 檢查狀態機是否已初始化

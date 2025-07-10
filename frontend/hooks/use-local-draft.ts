@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 
 interface DraftData {
-    title: string;
     content: string;
 }
 
@@ -20,7 +19,7 @@ interface UseLocalDraftReturn {
 const DRAFT_KEY = 'studyscriber_draft'
 
 export function useLocalDraft(sessionId?: string): UseLocalDraftReturn {
-    const [draft, setDraft] = useState<DraftData>({ title: '', content: '' })
+    const [draft, setDraft] = useState<DraftData>({ content: '' })
     const [hasDraft, setHasDraft] = useState(false)
     const [lastDraftTime, setLastDraftTime] = useState<Date | null>(null)
 
@@ -51,7 +50,6 @@ export function useLocalDraft(sessionId?: string): UseLocalDraftReturn {
 
             const parsed = JSON.parse(draftJson)
             const draftData: DraftData = {
-                title: parsed.title || '',
                 content: parsed.content || ''
             }
             const timestamp = parsed.timestamp ? new Date(parsed.timestamp) : new Date()
@@ -64,7 +62,7 @@ export function useLocalDraft(sessionId?: string): UseLocalDraftReturn {
             }
 
             setDraft(draftData)
-            setHasDraft(!!(draftData.title.trim() || draftData.content.trim()))
+            setHasDraft(!!draftData.content.trim())
             setLastDraftTime(timestamp)
 
             console.log('📖 草稿已從本地載入')
@@ -82,7 +80,7 @@ export function useLocalDraft(sessionId?: string): UseLocalDraftReturn {
         // 取得目前的草稿內容，並與新的內容合併
         const currentDraft = { ...draft, ...data }
 
-        if (!currentDraft.title.trim() && !currentDraft.content.trim()) {
+        if (!currentDraft.content.trim()) {
             // 空內容時清除草稿
             clearDraft()
             return
@@ -112,7 +110,7 @@ export function useLocalDraft(sessionId?: string): UseLocalDraftReturn {
         try {
             localStorage.removeItem(DRAFT_KEY)
 
-            const clearedDraft = { title: '', content: '' }
+            const clearedDraft = { content: '' }
             setDraft(clearedDraft)
             setHasDraft(false)
             setLastDraftTime(null)

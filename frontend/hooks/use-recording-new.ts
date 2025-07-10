@@ -215,6 +215,9 @@ export function useRecordingNew(): UseRecordingNewReturn {
       console.log('Recorder instance', recordingService)
       const transcriptService = transcriptServiceRef.current!
 
+      // 確保先建立 WebSocket 連線再註冊監聽器，避免漏接訊息
+      await transcriptService.connect(sessionId)
+
       // 設置錄音狀態監聽（保留原本 interval 作為備用）
       const checkRecordingState = () => {
         const state = recordingService.getRecordingState()

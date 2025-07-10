@@ -6,8 +6,6 @@
 - pnpm for Package manager
 - React 18 with TypeScript
 - Next.js for framework
-- Next-test-utils for test
-- MSW for mocking backend API in frontend test
 - Tailwind CSS + shadcn/ui components
 - Zustand-like context for state management
 - Zod 4, therefore the imports should be `from "zod/v4"`, you may fetch `https://zod.dev/v4/changelog` if you are unsure how to write.
@@ -64,26 +62,26 @@ z.looseObject({ name: z.string() });
 
 ### 1. 後端 FastAPI (簡化架構 - REST API 模式)
 
-| #     | 函式 / 協程                                            | 所屬模組              | 責任                                         | I/O                                                |
-| ----- | ------------------------------------------------------ | --------------------- | -------------------------------------------- | -------------------------------------------------- |
-| B-001 | `create_session(title:str, type:str) -> SessionOut`    | api.sessions          | POST /api/session                            | in: title, type；out: sid, status, type            |
-| B-002 | `finish_session(sid:UUID)`                             | api.sessions          | PATCH /api/session/{sid}/finish              | in: sid；204                                       |
-| B-015 | `upgrade_session_to_recording(sid:UUID)`               | api.sessions          | PATCH /api/session/{sid}/upgrade             | in: sid；out: updated session                      |
-| B-003 | `save_note(sid:UUID, content:str, client_ts:datetime)` | api.notes             | PUT /api/notes/{sid}                         | in: content, client_ts(可選)；out: server_ts, note |
-| B-004 | `export_resource(sid:UUID, type:str)`                  | api.export            | GET /api/export/{sid}?type=                  | StreamingResponse                                  |
-| B-020 | `upload_segment(sid:UUID, seq:int, file:UploadFile)`   | api.segments          | POST /api/segment - 上傳 10s WebM 音檔切片   | in: WebM file；out: {"ack": seq}                   |
-| B-006 | `ws_transcript_feed(ws:WebSocket, sid:UUID)`           | ws.transcript_feed    | 推送 Azure OpenAI 逐字稿結果                 | ↓ {"text","timestamp",...}                         |
-| B-007 | `store_segment_blob(sid, seq, blob)`                   | services.storage      | 上傳到 Cloudflare R2 + 更新 DB `audio_files` | —                                                  |
-| B-021 | `ffmpeg_webm_to_pcm(webm_bytes) -> bytes`              | core.ffmpeg           | WebM→16k mono PCM (處理完整 10s 檔案)        | in: WebM blob；out: PCM bytes                      |
-| B-010 | `azure_openai_client() -> OpenAI`                      | services.azure_openai | 建立 Azure OpenAI 客戶端                     | return client                                      |
-| B-022 | `whisper_transcribe(pcm_bytes) -> str`                 | services.azure_openai | 單檔轉錄：WebM/PCM → Azure OpenAI Whisper    | in: audio bytes；out: transcript text              |
-| B-023 | `process_and_transcribe(sid, seq, webm)`               | api.segments          | 背景任務：轉檔 + STT + 儲存 + 廣播           | BackgroundTasks                                    |
-| B-013 | `mark_session_error(sid, reason)`                      | db.crud               | 更新 sessions.status=error                   | —                                                  |
-| B-014 | `single_active_guard()`                                | middleware            | 保證同時僅 1 active session                  | 429 on violation                                   |
-| B-016 | `check_tables_exist()`                                 | db.database           | 檢查核心表格是否存在                         | return bool                                        |
-| B-017 | `auto_init_database()`                                 | db.database           | 自動檢測並初始化資料庫                       | 啟動時執行                                         |
-| B-018 | `init_r2_client() -> S3Client`                         | services.r2_client    | 初始化 Cloudflare R2 客戶端                  | return S3Client                                    |
-| B-019 | `generate_r2_presigned_url(bucket, key, expires)`      | services.r2_client    | 生成 R2 預簽名 URL                           | return presigned_url                               |
+| #     | 函式 / 協程                                              | 所屬模組              | 責任                                         | I/O                                                |
+| ----- | -------------------------------------------------------- | --------------------- | -------------------------------------------- | -------------------------------------------------- |
+| B-001 | `create_session(title:str=None, type:str) -> SessionOut` | api.sessions          | POST /api/session                            | in: type, title(可選)；out: sid, status, type      |
+| B-002 | `finish_session(sid:UUID)`                               | api.sessions          | PATCH /api/session/{sid}/finish              | in: sid；204                                       |
+| B-015 | `upgrade_session_to_recording(sid:UUID)`                 | api.sessions          | PATCH /api/session/{sid}/upgrade             | in: sid；out: updated session                      |
+| B-003 | `save_note(sid:UUID, content:str, client_ts:datetime)`   | api.notes             | PUT /api/notes/{sid}                         | in: content, client_ts(可選)；out: server_ts, note |
+| B-004 | `export_resource(sid:UUID, type:str)`                    | api.export            | GET /api/export/{sid}?type=                  | StreamingResponse                                  |
+| B-020 | `upload_segment(sid:UUID, seq:int, file:UploadFile)`     | api.segments          | POST /api/segment - 上傳 10s WebM 音檔切片   | in: WebM file；out: {"ack": seq}                   |
+| B-006 | `ws_transcript_feed(ws:WebSocket, sid:UUID)`             | ws.transcript_feed    | 推送 Azure OpenAI 逐字稿結果                 | ↓ {"text","timestamp",...}                         |
+| B-007 | `store_segment_blob(sid, seq, blob)`                     | services.storage      | 上傳到 Cloudflare R2 + 更新 DB `audio_files` | —                                                  |
+| B-021 | `ffmpeg_webm_to_pcm(webm_bytes) -> bytes`                | core.ffmpeg           | WebM→16k mono PCM (處理完整 10s 檔案)        | in: WebM blob；out: PCM bytes                      |
+| B-010 | `azure_openai_client() -> OpenAI`                        | services.azure_openai | 建立 Azure OpenAI 客戶端                     | return client                                      |
+| B-022 | `whisper_transcribe(pcm_bytes) -> str`                   | services.azure_openai | 單檔轉錄：WebM/PCM → Azure OpenAI Whisper    | in: audio bytes；out: transcript text              |
+| B-023 | `process_and_transcribe(sid, seq, webm)`                 | api.segments          | 背景任務：轉檔 + STT + 儲存 + 廣播           | BackgroundTasks                                    |
+| B-013 | `mark_session_error(sid, reason)`                        | db.crud               | 更新 sessions.status=error                   | —                                                  |
+| B-014 | `single_active_guard()`                                  | middleware            | 保證同時僅 1 active session                  | 429 on violation                                   |
+| B-016 | `check_tables_exist()`                                   | db.database           | 檢查核心表格是否存在                         | return bool                                        |
+| B-017 | `auto_init_database()`                                   | db.database           | 自動檢測並初始化資料庫                       | 啟動時執行                                         |
+| B-018 | `init_r2_client() -> S3Client`                           | services.r2_client    | 初始化 Cloudflare R2 客戶端                  | return S3Client                                    |
+| B-019 | `generate_r2_presigned_url(bucket, key, expires)`        | services.r2_client    | 生成 R2 預簽名 URL                           | return presigned_url                               |
 
 ### ⚠️ 移除的功能 (簡化架構)
 - ❌ `ws_upload_audio` - 改用 REST API
@@ -93,48 +91,47 @@ z.looseObject({ name: z.string() });
 
 ### 2. 前端 React（Hook / Utility）
 
-| #     | 函式                                  | 模組                | 責任                                                                                       | I/O                                                                          |
-| ----- | ------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| F-001 | `useAppState.setState(state)`         | hooks/useAppState   | 管理前端應用狀態轉換                                                                       | 'default'\|'recording_waiting'\|'recording_active'\|'processing'\|'finished' |
-| F-002 | `useSession.createNoteSession(title)` | hooks/useSession    | POST /session (type=note_only)                                                             | return sid                                                                   |
-| F-003 | `useSession.upgradeToRecording(sid)`  | hooks/useSession    | PATCH /session/{sid}/upgrade                                                               | return updated session                                                       |
-| F-004 | `useRecorder.startRecording(title?)`  | hooks/useRecorder   | a. 建立/升級 session<br>b. 狀態轉為 recording_waiting<br>c. 啟 MediaRecorder timeslice=10s | return sid                                                                   |
-| F-005 | `useRecorder.stopRecording()`         | hooks/useRecorder   | a. 停止錄音<br>b. 狀態轉為 processing<br>c. 等待轉錄完成                                   | —                                                                            |
-| F-024 | `uploadSegment(seq, blob)`            | hooks/useRecorder   | fetch POST /api/segment 上傳 10s WebM 檔案                                                 | —                                                                            |
-| F-025 | `handleUploadError(seq, blob)`        | hooks/useRecorder   | 上傳失敗處理，暫存到 IndexedDB                                                             | —                                                                            |
-| F-008 | `useTranscript.connect(sid)`          | hooks/useTranscript | 建 `/ws/transcript_feed` 連線                                                              | —                                                                            |
-| F-009 | `mergeSegment(seg)`                   | hooks/useTranscript | 相鄰 ≤1 s 合併段落                                                                         | 更新 segments state                                                          |
-| F-010 | `onTranscriptComplete()`              | hooks/useTranscript | 轉錄完成回調，狀態轉為 finished                                                            | —                                                                            |
-| F-011 | `autoScroll()`                        | hooks/useTranscript | 若鎖定到底則捲底                                                                           | —                                                                            |
-| F-012 | `unlockOnScroll()`                    | hooks/useTranscript | 使用者滾動離底 >60 px                                                                      | set locked=false                                                             |
-| F-013 | `toLatest()`                          | hooks/useTranscript | smooth scroll bottom；鎖定                                                                 | —                                                                            |
-| F-014 | `useLocalDraft(field,val)`            | hooks/useLocalDraft | 5 s debounce 存 localStorage                                                               | —                                                                            |
-| F-015 | `loadDraft()`                         | hooks/useLocalDraft | 載入 draft_title / draft_note                                                              | return {title,note}                                                          |
-| F-016 | `clearDraft()`                        | hooks/useLocalDraft | removeItem('draft_*')                                                                      | —                                                                            |
-| F-017 | `useAutoSave(sid, content)`           | hooks/useAutoSave   | 每 10 s PUT /notes                                                                         | —                                                                            |
-| F-018 | `newNote()`                           | hooks/useAppState   | 清空當前資料，狀態回到 default<br>如果存在活躍會話，先刪除該會話及其所有相關數據           | —                                                                            |
-| F-019 | `downloadZip(sid)`                    | utils/export        | GET /export/{sid}?type=zip                                                                 | 觸發 download                                                                |
-| F-020 | `showToast(text,type)`                | utils/ui            | 統一錯誤／提示                                                                             | —                                                                            |
+| #     | 函式                                 | 模組                | 責任                                                                                       | I/O                                                                          |
+| ----- | ------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| F-001 | `useAppState.setState(state)`        | hooks/useAppState   | 管理前端應用狀態轉換                                                                       | 'default'\|'recording_waiting'\|'recording_active'\|'processing'\|'finished' |
+| F-002 | `useSession.createNoteSession()`     | hooks/useSession    | POST /session (type=note_only)                                                             | return sid                                                                   |
+| F-003 | `useSession.upgradeToRecording(sid)` | hooks/useSession    | PATCH /session/{sid}/upgrade                                                               | return updated session                                                       |
+| F-004 | `useRecorder.startRecording()`       | hooks/useRecorder   | a. 建立/升級 session<br>b. 狀態轉為 recording_waiting<br>c. 啟 MediaRecorder timeslice=10s | return sid                                                                   |
+| F-005 | `useRecorder.stopRecording()`        | hooks/useRecorder   | a. 停止錄音<br>b. 狀態轉為 processing<br>c. 等待轉錄完成                                   | —                                                                            |
+| F-024 | `uploadSegment(seq, blob)`           | hooks/useRecorder   | fetch POST /api/segment 上傳 10s WebM 檔案                                                 | —                                                                            |
+| F-025 | `handleUploadError(seq, blob)`       | hooks/useRecorder   | 上傳失敗處理，暫存到 IndexedDB                                                             | —                                                                            |
+| F-008 | `useTranscript.connect(sid)`         | hooks/useTranscript | 建 `/ws/transcript_feed` 連線                                                              | —                                                                            |
+| F-009 | `mergeSegment(seg)`                  | hooks/useTranscript | 相鄰 ≤1 s 合併段落                                                                         | 更新 segments state                                                          |
+| F-010 | `onTranscriptComplete()`             | hooks/useTranscript | 轉錄完成回調，狀態轉為 finished                                                            | —                                                                            |
+| F-011 | `autoScroll()`                       | hooks/useTranscript | 若鎖定到底則捲底                                                                           | —                                                                            |
+| F-012 | `unlockOnScroll()`                   | hooks/useTranscript | 使用者滾動離底 >60 px                                                                      | set locked=false                                                             |
+| F-013 | `toLatest()`                         | hooks/useTranscript | smooth scroll bottom；鎖定                                                                 | —                                                                            |
+| F-014 | `useLocalDraft(field,val)`           | hooks/useLocalDraft | 5 s debounce 存 localStorage                                                               | —                                                                            |
+| F-015 | `loadDraft()`                        | hooks/useLocalDraft | 載入 draft_note                                                                            | return {note}                                                                |
+| F-016 | `clearDraft()`                       | hooks/useLocalDraft | removeItem('draft_*')                                                                      | —                                                                            |
+| F-017 | `useAutoSave(sid, content)`          | hooks/useAutoSave   | 每 10 s PUT /notes                                                                         | —                                                                            |
+| F-018 | `newNote()`                          | hooks/useAppState   | 清空當前資料，狀態回到 default<br>如果存在活躍會話，先刪除該會話及其所有相關數據           | —                                                                            |
+| F-019 | `downloadZip(sid)`                   | utils/export        | GET /export/{sid}?type=zip                                                                 | 觸發 download                                                                |
+| F-020 | `showToast(text,type)`               | utils/ui            | 統一錯誤／提示                                                                             | —                                                                            |
 
 ### 3. 前端 UI Component Methods（狀態對應）
 
 | #     | 元件                | 出現狀態                                                  | 主要方法 / callback                    |
 | ----- | ------------------- | --------------------------------------------------------- | -------------------------------------- |
 | C-001 | `RecordButton`      | default, recording_waiting, recording_active              | `onClick => startRecording()           | stopRecording()` |
-| C-002 | `TitleInput`        | default                                                   | `onChange => saveDraft()`              |
-| C-003 | `MarkdownEditor`    | default, recording_waiting, recording_active, finished    | `onChange => saveDraft() / autoSave()` |
-| C-004 | `TranscriptPane`    | recording_waiting, recording_active, processing, finished | `onScroll => unlockOnScroll()`         |
-| C-005 | `ToLatestButton`    | recording_waiting, finished                               | `onClick => toLatest()`                |
-| C-006 | `ProcessingOverlay` | processing                                                | 顯示轉錄進度與等待動畫                 |
-| C-007 | `ExportButton`      | finished                                                  | `onClick => downloadZip()`             |
-| C-008 | `NewNoteButton`     | finished                                                  | `onClick => newNote()`                 |
-| C-009 | `StatusIndicator`   | all states                                                | 顯示當前狀態（錄音中/處理中/已完成）   |
+| C-002 | `MarkdownEditor`    | default, recording_waiting, recording_active, finished    | `onChange => saveDraft() / autoSave()` |
+| C-003 | `TranscriptPane`    | recording_waiting, recording_active, processing, finished | `onScroll => unlockOnScroll()`         |
+| C-004 | `ToLatestButton`    | recording_waiting, finished                               | `onClick => toLatest()`                |
+| C-005 | `ProcessingOverlay` | processing                                                | 顯示轉錄進度與等待動畫                 |
+| C-006 | `ExportButton`      | finished                                                  | `onClick => downloadZip()`             |
+| C-007 | `NewNoteButton`     | finished                                                  | `onClick => newNote()`                 |
+| C-008 | `StatusIndicator`   | all states                                                | 顯示當前狀態（錄音中/處理中/已完成）   |
 
 **各狀態畫面組成**：
 
 | 狀態              | 顯示元件                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------- |
-| default           | TitleInput + MarkdownEditor + RecordButton + NewNoteButton                            |
+| default           | MarkdownEditor + RecordButton + NewNoteButton                                         |
 | recording_waiting | MarkdownEditor + TranscriptPane + NewNoteButton + RecordButton(停止) + ToLatestButton |
 | recording_active  | MarkdownEditor + TranscriptPane + NewNoteButton + RecordButton(停止) + ToLatestButton |
 | processing        | MarkdownEditor + TranscriptPane + ProcessingOverlay                                   |
@@ -157,11 +154,57 @@ z.looseObject({ name: z.string() });
 - ✅ **自動初始化**：提供完整 SQL 腳本，一鍵建立所有表格
 - ✅ **高可用性**：Supabase 提供 99.9% 可用性保證
 
+
+```Mermaid
+sequenceDiagram
+    %% ==== Participants ====
+    actor User as 👤 使用者
+    participant Browser as 🌐 瀏覽器
+    participant BE as ⚡ FastAPI
+    participant R2 as ☁️ R2 Storage
+    participant DB as 💾 Supabase
+    participant STT as 🤖 STT Model
+    participant WS as 🔌 Transcript WS
+
+    %% ==== 即時錄音流程 ====
+    rect rgb(240,248,255)
+        Note over User,WS: 🎙️ 即時錄音與轉錄（10s WebM + REST 上傳）
+        User ->> Browser: 點擊開始錄音
+        Browser ->>+ BE: POST /api/segment (10s WebM)
+        BE -->>- Browser: {"ack": seq}
+
+        par 儲存與轉錄
+            BE ->>+ R2: 儲存 WebM
+            BE ->>+ DB: INSERT audio_files
+            BE ->>+ STT: WebM → Whisper
+            STT -->>- BE: 逐字稿文字
+            BE ->>+ DB: INSERT transcript_segments
+            BE ->>+ WS: push transcript JSON
+            WS -->> Browser: 顯示逐字稿
+        end
+        Browser -->> User: 更新字幕
+    end
+
+    %% ==== 匯出功能 ====
+    rect rgb(248,255,248)
+        Note over User,WS: 📥 匯出筆記與逐字稿
+        User ->> Browser: 點擊匯出
+        Browser ->>+ BE: GET /api/export?type=zip
+        BE ->>+ DB: SELECT note & transcript
+        DB -->>- BE: 文字內容
+        BE ->>+ R2: 讀取音訊檔案
+        R2 -->>- BE: WebM files
+        BE -->>- Browser: ZIP 檔案
+        Browser -->> User: 下載完成
+    end
+
+```
+
 ```mermaid
 erDiagram
     sessions {
         UUID id PK "gen_random_uuid()"
-        VARCHAR title "會話標題"
+        VARCHAR title "會話標題(可選)"
         session_type type "note_only/recording"
         session_status status "active/completed/error"
         lang_code language "zh-TW/en-US"
@@ -282,11 +325,10 @@ FFmpeg 轉換 → Azure OpenAI Whisper API → WebSocket 推送轉錄結果
 - **目標**：讓使用者能快速開始做筆記，無需進行繁瑣的設定。
 - **流程**：
   1. **進入頁面**：使用者打開應用，看到預設畫面（`default` 狀態）。
-  2. **輸入標題與內容**：
-     - 在 `TitleInput` 中輸入標題，內容暫存於 `localStorage`（`draft_title`）。
+  2. **輸入內容**：
      - 在 `MarkdownEditor` 中輸入筆記，內容暫存於 `localStorage`（`draft_note`）。
   3. **建立會話**：
-     - 使用者首次輸入時，自動觸發 `createNoteSession(title)`，在後端建立一個 `note_only` 類型的 session。
+     - 使用者首次輸入時，自動觸發 `createNoteSession()`，在後端建立一個 `note_only` 類型的 session。
      - 成功後，`useAutoSave` hook 啟動，每 10 秒將筆記內容同步到後端。
   4. **完成筆記**：
      - 使用者可以隨時離開，筆記已儲存。
@@ -296,29 +338,26 @@ FFmpeg 轉換 → Azure OpenAI Whisper API → WebSocket 推送轉錄結果
 graph TD
     A((使用者進入頁面)) --> B[預設畫面<br/>default 狀態]
     
-    B --> C[輸入標題]
-    B --> D[輸入筆記內容]
+    B --> C[輸入筆記內容]
     
-    C --> E[暫存至 localStorage<br/>draft_title]
-    D --> F[暫存至 localStorage<br/>draft_note]
+    C --> D[暫存至 localStorage<br/>draft_note]
     
-    E --> G{首次輸入？}
-    F --> G
+    D --> E{首次輸入？}
     
-    G -->|是| H[自動觸發<br/>createNoteSession]
-    G -->|否| I[繼續編輯]
+    E -->|是| F[自動觸發<br/>createNoteSession]
+    E -->|否| G[繼續編輯]
     
-    H --> J[建立 note_only<br/>類型 session]
+    F --> H[建立 note_only<br/>類型 session]
     
-    J --> K[啟動 useAutoSave hook]
+    H --> I[啟動 useAutoSave hook]
     
-    K --> L[每 10 秒同步<br/>筆記至後端]
+    I --> J[每 10 秒同步<br/>筆記至後端]
     
-    I --> L
-    L --> M[使用者離開<br/>筆記已儲存]
-    L --> N[手動點擊完成<br/>未來功能]
+    G --> J
+    J --> K[使用者離開<br/>筆記已儲存]
+    J --> L[手動點擊完成<br/>未來功能]
     
-    N --> O[session 狀態<br/>改為 completed]
+    L --> M[session 狀態<br/>改為 completed]
     
     %% 樣式定義
     classDef startEndStyle fill:#e8f5e8,stroke:#4caf50,stroke-width:3px,color:#000
@@ -329,12 +368,12 @@ graph TD
     classDef futureStyle fill:#f5f5f5,stroke:#9e9e9e,stroke-width:2px,color:#666,stroke-dasharray: 5 5
     
     %% 應用樣式
-    class A,M startEndStyle
-    class B,C,D,H,J,K processStyle
-    class G decisionStyle
-    class E,F,L dataStyle
-    class I autoStyle
-    class N,O futureStyle
+    class A,K startEndStyle
+    class B,C,F,H,I processStyle
+    class E decisionStyle
+    class D,J dataStyle
+    class G autoStyle
+    class L,M futureStyle
 
 ```
 
@@ -354,9 +393,8 @@ graph TD
 - **目標**：提供最核心的「錄音 + 即時逐字稿 + 筆記」整合體驗。
 - **流程**：
   1. **建立會話**：
-     - 使用者在 `default` 狀態下，不輸入任何內容，直接點擊 `RecordButton`。
-     - 彈出對話框要求輸入標題。
-     - 呼叫 `createRecordingSession(title)` 建立 `recording` 類型的 session。
+     - 使用者在 `default` 狀態下，直接點擊 `RecordButton`。
+     - 呼叫 `createRecordingSession()` 建立 `recording` 類型的 session。
      - 前端狀態立即轉為 `recording_waiting`。
   2. **錄音與上傳**：
      - `MediaRecorder` 開始錄音，使用 `timeslice=10000`，每 10 秒產生一個完整 WebM 檔案。

@@ -79,7 +79,7 @@ export class SessionService extends BaseService implements ISessionService {
 
             // 2. 強制創建新會話
             const newSession = await this.createRecordingSession(
-                title || `錄音筆記 ${new Date().toLocaleString()}`,
+                title,
                 content,
                 startTs
             )
@@ -109,7 +109,7 @@ export class SessionService extends BaseService implements ISessionService {
      * 創建錄音會話
      * 重用 sessionAPI.createSession 的重試機制和錯誤處理
      */
-    async createRecordingSession(title: string, content?: string, startTs?: number): Promise<SessionResponse> {
+    async createRecordingSession(title?: string, content?: string, startTs?: number): Promise<SessionResponse> {
         this.logInfo('創建錄音會話', { title, hasContent: !!content, hasStartTs: !!startTs })
 
         try {
@@ -140,7 +140,7 @@ export class SessionService extends BaseService implements ISessionService {
      * 創建純筆記會話
      * 重用 sessionAPI.createSession 的重試機制和錯誤處理
      */
-    async createNoteSession(title: string, content?: string): Promise<SessionResponse> {
+    async createNoteSession(title?: string, content?: string): Promise<SessionResponse> {
         this.logInfo('創建純筆記會話', { title, hasContent: !!content })
 
         try {

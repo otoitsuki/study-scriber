@@ -8,8 +8,8 @@ interface UseSessionReturn {
     currentSession: SessionResponse | null
     isLoading: boolean
     error: string | null
-    createNoteSession: (title: string, content?: string) => Promise<SessionResponse | null>
-    createRecordingSession: (title: string, content?: string) => Promise<SessionResponse | null>
+    createNoteSession: (title?: string, content?: string) => Promise<SessionResponse | null>
+    createRecordingSession: (title?: string, content?: string) => Promise<SessionResponse | null>
     upgradeToRecording: () => Promise<SessionResponse | null>
     finishSession: () => Promise<void>
     deleteSession: () => Promise<void>
@@ -55,7 +55,7 @@ export function useSession(): UseSessionReturn {
             setIsLoading(false)
         }
     }, [clearError])
-    const createNoteSession = useCallback(async (title: string, content?: string): Promise<SessionResponse | null> => {
+    const createNoteSession = useCallback(async (title?: string, content?: string): Promise<SessionResponse | null> => {
         setIsLoading(true)
         clearError()
 
@@ -78,7 +78,7 @@ export function useSession(): UseSessionReturn {
                 console.error('❌ 會話衝突錯誤 (409):', err.response?.data?.detail || err.message)
                 return null
             }
-            
+
             const errorMessage = err instanceof Error ? err.message : '建立會話失敗'
             setError(errorMessage)
             console.error('❌ 建立純筆記會話失敗:', err)
@@ -88,7 +88,7 @@ export function useSession(): UseSessionReturn {
         }
     }, [clearError])
 
-    const createRecordingSession = useCallback(async (title: string, content?: string): Promise<SessionResponse | null> => {
+    const createRecordingSession = useCallback(async (title?: string, content?: string): Promise<SessionResponse | null> => {
         setIsLoading(true)
         clearError()
 
@@ -111,7 +111,7 @@ export function useSession(): UseSessionReturn {
                 console.error('❌ 會話衝突錯誤 (409):', err.response?.data?.detail || err.message)
                 return null
             }
-            
+
             const errorMessage = err instanceof Error ? err.message : '建立錄音會話失敗'
             setError(errorMessage)
             console.error('❌ 建立錄音會話失敗:', err)

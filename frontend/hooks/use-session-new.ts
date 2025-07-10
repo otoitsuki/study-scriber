@@ -11,8 +11,8 @@ interface UseSessionNewReturn {
     currentSession: SessionResponse | null
     isLoading: boolean
     error: string | null
-    createNoteSession: (title: string, content?: string) => Promise<SessionResponse | null>
-    createRecordingSession: (title: string, content?: string) => Promise<SessionResponse | null>
+    createNoteSession: (title?: string, content?: string) => Promise<SessionResponse | null>
+    createRecordingSession: (title?: string, content?: string) => Promise<SessionResponse | null>
     upgradeToRecording: () => Promise<SessionResponse | null>
     finishSession: () => Promise<void>
     deleteSession: () => Promise<void>
@@ -87,7 +87,7 @@ export function useSessionNew(): UseSessionNewReturn {
         }
     }, [clearError, context, sessionService])
 
-    const createNoteSession = useCallback(async (title: string, content?: string): Promise<SessionResponse | null> => {
+    const createNoteSession = useCallback(async (title?: string, content?: string): Promise<SessionResponse | null> => {
         context.setLoading(true)
         clearError()
 
@@ -120,7 +120,7 @@ export function useSessionNew(): UseSessionNewReturn {
         }
     }, [clearError, context, sessionService])
 
-    const createRecordingSession = useCallback(async (title: string, content?: string): Promise<SessionResponse | null> => {
+    const createRecordingSession = useCallback(async (title?: string, content?: string): Promise<SessionResponse | null> => {
         context.setLoading(true)
         clearError()
 

@@ -31,6 +31,13 @@ class SessionCreateRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=150, description="會話標題")
     type: SessionType = Field(SessionType.NOTE_ONLY, description="會話類型")
     language: LanguageCode = Field(LanguageCode.ZH_TW, description="語言設定")
+    stt_provider: Optional[str] = Field(None, description="語音轉文字 Provider ('whisper' or 'gemini')")
+    content: Optional[str] = Field(None, description="初始筆記內容")
+    start_ts: Optional[int] = Field(None, description="錄音開始時間戳（毫秒）")
+    """建立會話請求"""
+    title: Optional[str] = Field(None, max_length=150, description="會話標題")
+    type: SessionType = Field(SessionType.NOTE_ONLY, description="會話類型")
+    language: LanguageCode = Field(LanguageCode.ZH_TW, description="語言設定")
     content: Optional[str] = Field(None, description="初始筆記內容")
     start_ts: Optional[int] = Field(None, description="錄音開始時間戳（毫秒）")
 

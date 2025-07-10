@@ -509,7 +509,7 @@ export function useAppState() {
   }, [recording.error, transcript.error, session.currentSession, recording, transcript, toast])
 
   // 建立純筆記會話
-  const createNoteSession = useCallback(async (title: string) => {
+  const createNoteSession = useCallback(async (title?: string) => {
     setIsLoading(true)
     setError(null)
 
@@ -554,7 +554,7 @@ export function useAppState() {
   }, [session, recording, transcript, appData.editorContent, toast])
 
   // 建立錄音會話
-  const createRecordingSession = useCallback(async (title: string) => {
+  const createRecordingSession = useCallback(async (title?: string) => {
     setIsLoading(true)
     setError(null)
 
@@ -603,7 +603,7 @@ export function useAppState() {
   }, [session, notes, toast, appData.editorContent])
 
   // 開始錄音 - 支援四狀態流程
-  const startRecording = useCallback(async (title: string) => {
+  const startRecording = useCallback(async (title?: string) => {
     console.log("🎤 startRecording: 流程開始")
     setIsLoading(true)
     try {

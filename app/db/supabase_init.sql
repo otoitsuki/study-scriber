@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     language lang_code NOT NULL DEFAULT 'zh-TW',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMPTZ NULL,
+    stt_provider TEXT,
     completed_at TIMESTAMPTZ NULL
 );
 
@@ -38,7 +40,7 @@ CREATE TABLE IF NOT EXISTS notes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
     session_id UUID NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     content TEXT NOT NULL DEFAULT '',
-    client_ts TIMESTAMPTZ NULL COMMENT '客戶端時間戳，用於衝突檢測',
+    client_ts TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     -- 每個 session 只能有一個筆記

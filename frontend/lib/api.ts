@@ -175,7 +175,7 @@ setupInterceptors(defaultClient, 'Default')
 
 // 型別定義
 export interface SessionCreateRequest {
-  title: string
+  title?: string
   type: 'note_only' | 'recording'
   content?: string
   start_ts?: number  // 錄音開始時間戳（毫秒），用於精確時間同步
@@ -183,7 +183,7 @@ export interface SessionCreateRequest {
 
 export interface SessionResponse {
   id: string
-  title: string
+  title?: string
   type: 'note_only' | 'recording'
   status: 'draft' | 'active' | 'processing' | 'completed' | 'error'
   language: string

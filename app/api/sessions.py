@@ -9,6 +9,7 @@ from typing import Dict, Any
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
+from app.core.config import get_settings
 
 from app.db.database import get_supabase_client
 from app.schemas.session import (
@@ -46,7 +47,8 @@ async def create_session(
             "title": request.title,
             "type": request.type.value,
             "language": request.language.value,
-            "status": SessionStatus.ACTIVE.value
+            "status": SessionStatus.ACTIVE.value,
+            "stt_provider": request.stt_provider or get_settings().STT_PROVIDER_DEFAULT
         }
 
         # 如果有提供 start_ts，轉換為 PostgreSQL 時間戳格式
