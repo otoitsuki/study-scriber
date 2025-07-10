@@ -14,6 +14,8 @@ const setAppState = useAppStore.getState().setState
  * 整合 SessionService、RecordingService 和 TranscriptService
  * 提供統一的錄音流程管理
  */
+import { STTProvider } from '../api'
+
 export class RecordingFlowService extends BaseService {
   protected readonly serviceName = 'RecordingFlowService'
 
@@ -66,7 +68,7 @@ export class RecordingFlowService extends BaseService {
   /**
    * 開始錄音流程
    */
-  async startRecordingFlow(title?: string, content?: string, startTs?: number): Promise<SessionResponse> {
+  async startRecordingFlow(title?: string, content?: string, startTs?: number, sttProvider?: STTProvider): Promise<SessionResponse> {
     this.logInfo('開始錄音流程', { title, content, startTs })
 
     try {
@@ -93,7 +95,8 @@ export class RecordingFlowService extends BaseService {
       const session = await this.sessionService.createRecordingSession(
         title || `錄音筆記 ${new Date().toLocaleString()}`,
         content,
-        startTs
+        startTs,
+        sttProvider
       )
       if (!session) {
         setAppState('default')

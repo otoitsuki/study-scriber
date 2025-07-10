@@ -14,6 +14,8 @@ import axios from 'axios'
  * - 會話狀態管理
  * - 統一錯誤處理和重試機制
  */
+import { STTProvider } from '../api'
+
 export class SessionService extends BaseService implements ISessionService {
     protected readonly serviceName = 'SessionService'
 
@@ -109,15 +111,16 @@ export class SessionService extends BaseService implements ISessionService {
      * 創建錄音會話
      * 重用 sessionAPI.createSession 的重試機制和錯誤處理
      */
-    async createRecordingSession(title?: string, content?: string, startTs?: number): Promise<SessionResponse> {
-        this.logInfo('創建錄音會話', { title, hasContent: !!content, hasStartTs: !!startTs })
+    async createRecordingSession(title?: string, content?: string, startTs?: number, sttProvider?: STTProvider): Promise<SessionResponse> {
+        this.logInfo('創建錄音會話', { title, hasContent: !!content, hasStartTs: !!startTs, sttProvider })
 
         try {
             const sessionData: SessionCreateRequest = {
                 title,
                 type: 'recording',
                 content,
-                start_ts: startTs
+                start_ts: startTs,
+                stt_provider: sttProvider
             }
 
             const session = await sessionAPI.createSession(sessionData)
@@ -126,7 +129,8 @@ export class SessionService extends BaseService implements ISessionService {
                 sessionId: session.id,
                 type: session.type,
                 status: session.status,
-                withStartTs: !!startTs
+                withStartTs: !!startTs,
+                sttProvider
             })
 
             return session

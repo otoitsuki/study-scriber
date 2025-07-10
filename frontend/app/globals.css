@@ -13,6 +13,10 @@
   --color-primary-foreground: oklch(0.985 0 0);
 }
 
+:root {
+  --border: 210, 12%, 83%;
+}
+
 /* Custom SimpleMDE styling to match design system */
 .CodeMirror {
   font-family: ui-sans-serif, system-ui, sans-serif;
@@ -69,4 +73,12 @@
 
 .editor-container .CodeMirror-scroll {
   min-height: 100%;
+}
+
+.EasyMDEContainer .editor-toolbar {
+  border: 0px solid transparent !important;
+}
+
+.EasyMDEContainer .CodeMirror-wrap {
+  border-width: 1px 0px 0px 0px !important;
 }

@@ -2,7 +2,7 @@
 
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Download, ChevronDown } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 import type { TranscriptEntry } from "../types/app-state"
 
 interface FinishStateProps {
@@ -21,7 +21,7 @@ export function FinishState({ transcriptEntries, onExport, onToLatest }: FinishS
               <span className="text-muted-foreground font-mono text-xs mt-1 min-w-[40px] flex-shrink-0">
                 {entry.time}
               </span>
-              <span className="text-foreground leading-relaxed">{entry.text}</span>
+              <span className="text-foreground leading-relaxed flex-1">{entry.text}</span>
             </div>
           ))}
         </div>

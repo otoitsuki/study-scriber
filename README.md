@@ -17,7 +17,20 @@ StudyScriber 是一個先進的雲端筆記應用程式，專為學習者和專�
 - **SQLAlchemy 2.0** - ORM 與資料庫抽象層
 - **Supabase Python SDK** - 官方客戶端
 - **Azure OpenAI** - Whisper 語音轉錄服務
+- **Google Vertex AI** - Gemini 2.5 Pro 語音轉錄服務
 - **Cloudflare R2** - 音檔雲端儲存
+
+#### 🎯 雙 STT Provider 架構
+StudyScriber 支援多種語音轉文字引擎，使用者可自由選擇：
+
+- **Whisper (Azure OpenAI)**：高精確度、多語言支援、快速響應
+- **Gemini 2.5 Pro (Vertex AI)**：最新 AI 技術、上下文理解、高品質轉錄
+
+##### 技術特色：
+- **統一介面**：所有 STT Provider 實作相同的 `ISTTProvider` 介面
+- **Factory 模式**：根據會話設定動態選擇 Provider
+- **狀態管理**：每個會話的 STT Provider 獨立管理
+- **前端整合**：統一的 UI 元件支援 Provider 切換
 
 #### 🚀 WebM 直接轉錄架構 (v2)
 StudyScriber 採用革命性的 **WebM 直接轉錄架構**，大幅提升效能：
@@ -39,7 +52,8 @@ StudyScriber 採用革命性的 **WebM 直接轉錄架構**，大幅提升效能
 
 - Python 3.12+
 - **Supabase 帳戶** 
-- **Azure OpenAI 帳戶** (必須，語音轉錄服務)
+- **Azure OpenAI 帳戶** (必須，Whisper 語音轉錄服務)
+- **Google Cloud 帳戶** (可選，Gemini 2.5 Pro 語音轉錄服務)
 - **Cloudflare 帳戶** (可選，音檔儲存)
 - Node.js 18+ (前端開發用)
 
@@ -80,11 +94,18 @@ DB_MODE=supabase
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_KEY=your-anon-public-key
 
-# === Azure OpenAI 服務 (必須) ===
+# === Azure OpenAI 服務 (Whisper STT - 必須) ===
 AZURE_OPENAI_API_KEY=your-api-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_VERSION=2024-02-01
 WHISPER_DEPLOYMENT_NAME=whisper-1
+
+# === Google Vertex AI 服務 (Gemini STT - 可選) ===
+STT_PROVIDER_DEFAULT=whisper  # 預設 STT Provider: whisper 或 gemini
+GEMINI_ENDPOINT=us-central1-aiplatform.googleapis.com  # Vertex AI 端點
+GEMINI_API_KEY=your-gcp-service-account-key  # GCP 服務帳戶 API Key
+GEMINI_PROMPT=請輸出逐字稿：  # 自訂 Gemini 提示詞
+GEMINI_MAX_REQUESTS=90  # 每分鐘最大請求數
 
 # === Cloudflare R2 儲存 (可選) ===
 R2_ACCOUNT_ID=your-account-id
@@ -145,7 +166,48 @@ NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8000
 NODE_ENV=development
 ```
 
-### 7. 啟動開發伺服器
+### 7. 配置 STT Provider (可選)
+
+StudyScriber 支援兩種語音轉文字引擎：
+
+#### Whisper (Azure OpenAI) - 預設
+- 高精確度轉錄
+- 多語言支援
+- 快速響應時間
+- 設定：僅需 Azure OpenAI 相關環境變數
+
+#### Gemini 2.5 Pro (Vertex AI) - 可選
+- 最新 AI 技術
+- 優秀的上下文理解
+- 高品質轉錄結果
+- 設定：需額外配置 Google Cloud 服務
+
+##### 啟用 Gemini 的步驟：
+
+1. **建立 Google Cloud 專案**
+   - 前往 [Google Cloud Console](https://console.cloud.google.com/)
+   - 建立新專案或選擇現有專案
+   - 啟用 Vertex AI API
+
+2. **建立服務帳戶**
+   - 前往 IAM & Admin > Service Accounts
+   - 建立新的服務帳戶
+   - 下載 JSON 金鑰檔案
+   - 將金鑰內容轉換為 API Key 格式
+
+3. **設定環境變數**
+   ```env
+   STT_PROVIDER_DEFAULT=gemini
+   GEMINI_ENDPOINT=us-central1-aiplatform.googleapis.com
+   GEMINI_API_KEY=your-gcp-service-account-key
+   ```
+
+4. **UI 中切換 Provider**
+   - 在應用程式中點擊設定按鈕
+   - 選擇「語音轉文字引擎」
+   - 切換到 Gemini 2.5 Pro
+
+### 8. 啟動開發伺服器
 
 **重要：請按順序啟動，避免初始化競速問題**
 
@@ -182,6 +244,11 @@ study-scriber/
 │   │   └── notes.py            # 筆記 API
 │   ├── ws/                      # WebSocket 端點
 │   ├── services/                # 業務邏輯服務
+│   │   └── stt/                # STT Provider 服務
+│   │       ├── base.py         # ISTTProvider 介面
+│   │       ├── whisper_provider.py  # Whisper STT Provider
+│   │       ├── gemini_provider.py   # Gemini STT Provider
+│   │       └── factory.py      # Provider Factory
 │   ├── core/                    # 核心功能 (FFmpeg, etc.)
 │   ├── db/                      # 資料庫配置與模型
 │   │   ├── supabase_config.py  # Supabase 配置管理
@@ -195,6 +262,32 @@ study-scriber/
 ├── .env.example                 # 環境變數範本
 └── pyproject.toml              # 專案配置
 ```
+
+## 🎯 STT Provider 功能
+
+StudyScriber 支援多種語音轉文字引擎，提供更多選擇和靈活性：
+
+### 支援的 STT Provider
+
+| Provider | 引擎 | 特色 | 設定難度 |
+|----------|------|------|----------|
+| **Whisper** | Azure OpenAI | 高精確度、多語言支援、快速響應 | 簡單 |
+| **Gemini 2.5 Pro** | Google Vertex AI | 最新 AI 技術、上下文理解、高品質轉錄 | 中等 |
+
+### 功能特色
+
+- **UI 即時切換**：在設定中隨時切換 STT Provider
+- **會話級別管理**：每個會話可使用不同的 STT Provider
+- **狀態顯示**：逐字稿中顯示 Provider 徽章 (W/G)
+- **統一介面**：所有 Provider 回傳相同格式的轉錄結果
+- **錯誤處理**：各 Provider 獨立的錯誤處理和重試機制
+
+### 使用方式
+
+1. **開始錄音前**：在設定中選擇偏好的 STT Provider
+2. **建立會話**：系統會使用您選擇的 Provider
+3. **錄音過程**：逐字稿會顯示對應的 Provider 徽章
+4. **會話切換**：不同會話可使用不同的 Provider
 
 ## 🗄️ Supabase 資料庫架構
 

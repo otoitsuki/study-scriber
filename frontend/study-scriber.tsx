@@ -2,22 +2,30 @@
 
 import dynamic from "next/dynamic"
 import "easymde/dist/easymde.min.css"
-import { useMemo, useState, useEffect } from "react"
-import { Input } from "@/components/ui/input"
+import { useMemo, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { RotateCcw, Download } from "lucide-react"
 
 
 // 動態匯入 SimpleMDE 以避免 SSR 問題
-const SimpleMDE = dynamic(() => import("react-simplemde-editor"), {
+// 透過 .then(mod => mod.default) 明確取用 default export，
+// 以避免 Next.js 在處理 CommonJS 與 ESM 混用時，
+// 可能將整個 module 物件當作 React 元件而導致無法完成載入。
+const SimpleMDE = dynamic(() => import("react-simplemde-editor").then(mod => mod.default), {
   ssr: false,
-  loading: () => <div className="h-full flex items-center justify-center text-muted-foreground">載入編輯器中...</div>
+  loading: () => (
+    <div className="h-full flex items-center justify-center text-muted-foreground">
+      載入編輯器中...
+    </div>
+  ),
 })
+
 import { useAppStore } from "./lib/app-store-zustand"
 import { DefaultState } from "./components/default-state"
 import { RecordingState } from "./components/recording-state"
 import { WaitingState } from "./components/waiting-state"
 import { FinishState } from "./components/finish-state"
+import { ProviderContextMenu } from "./components/provider-context-menu"
 
 export default function Component() {
   // 使用 Zustand store
@@ -29,14 +37,22 @@ export default function Component() {
   const recordingTime = useAppStore(state => state.recordingTime)
   const transcriptEntries = useAppStore(state => state.transcriptEntries)
   const editorContent = useAppStore(state => state.editorContent)
-  
+  const sttProvider = useAppStore(state => state.sttProvider)
+
   // Actions
   const startRecording = useAppStore(state => state.startRecording)
   const stopRecording = useAppStore(state => state.stopRecording)
   const updateEditorContent = useAppStore(state => state.updateEditorContent)
   const resetState = useAppStore(state => state.resetState)
-  const clearError = useAppStore(state => state.clearError)
+  const setSttProvider = useAppStore(state => state.setSttProvider)
   // ✅ 移除 draftTitle 狀態 - 標題不再必填
+
+  // 預先載入 SimpleMDE，避免第一次載入時卡在 loading
+  useEffect(() => {
+    if (typeof (SimpleMDE as any).preload === 'function') {
+      (SimpleMDE as any).preload()
+    }
+  }, [])
 
   // 使用 Zustand store - 所有狀態已在上方宣告
 
@@ -222,7 +238,7 @@ export default function Component() {
         <h1 className="text-2xl font-semibold text-foreground">Study Scriber</h1>
 
         {/* Header action buttons */}
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           {/* New note 按鈕 - 在有活躍會話或需要的狀態下顯示 */}
           {((appState === "default" && !!session) ||
             appState === "recording_waiting" ||
@@ -241,40 +257,31 @@ export default function Component() {
               Export
             </Button>
           )}
+
+          <ProviderContextMenu
+            currentProvider={sttProvider}
+            onProviderChange={setSttProvider}
+            disabled={appState === 'recording_active' || appState === 'processing' || appState === 'recording_waiting'}
+          />
         </div>
       </div>
 
-      {/* Main Content - Two Panel Layout - Adjusted for fixed header height */}
-      <div className="flex h-[calc(100vh-80px)]" suppressHydrationWarning={true}>
-        {/* Left Panel - SimpleMDE Editor */}
-        <div className="flex-1 bg-background border-r border-border h-full">
-          <div className="h-full p-6 flex flex-col gap-4">
-            {/* ✅ 移除標題輸入欄位 - 標題不再必填 */}
-            <div className="h-full editor-container flex-grow" data-testid="editor-container">
-              <SimpleMDE
-                options={editorOptions}
-                value={editorContent}
-                onChange={updateEditorContent}
-                getMdeInstance={(instance) => {
-                  if (process.env.NODE_ENV !== 'production') {
-                    (window as any).theEditor = instance;
-                  }
-                }}
-              />
-              {/* 降級的 textarea 用於測試環境 */}
-              <textarea
-                data-testid="fallback-editor"
-                className="hidden"
-                value={editorContent}
-                onChange={(e) => updateEditorContent(e.target.value)}
-                placeholder="Start writing your notes..."
-              />
-            </div>
-          </div>
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Panel (Editor) */}
+        <div className="flex-1 border-r border-border h-full">
+          <SimpleMDE
+            value={editorContent}
+            onChange={updateEditorContent}
+            options={editorOptions}
+            className="h-full"
+          />
         </div>
 
-        {/* Right Panel - State-dependent content */}
-        <div className="w-80 bg-background flex-shrink-0 h-full">{renderRightPanel()}</div>
+        {/* Right Panel (Recording/Transcription) */}
+        <div className="w-1/3 min-w-[400px] max-w-[500px] flex-shrink-0 h-full overflow-y-auto">
+          {renderRightPanel()}
+        </div>
       </div>
     </div>
   )

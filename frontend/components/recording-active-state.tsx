@@ -108,7 +108,7 @@ export function RecordingActiveState({ transcriptEntries, recordingTime, onStopR
                             <span className="text-muted-foreground font-mono text-xs mt-1 min-w-[40px] flex-shrink-0">
                                 {entry.time}
                             </span>
-                            <span className="text-foreground leading-relaxed">{entry.text}</span>
+                            <span className="text-foreground leading-relaxed flex-1">{entry.text}</span>
                         </div>
                     ))}
                 </div>

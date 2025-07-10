@@ -7,7 +7,8 @@ from uuid import UUID
 
 from app.db.database import get_supabase_client
 from .base import ISTTProvider
-from .gemini_provider import GeminiProvider  # 將於後續定義
+from .gemini_provider import GeminiProvider
+from .whisper_provider import WhisperProvider
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,8 @@ logger = logging.getLogger(__name__)
 def _create_provider(name: str) -> Optional[ISTTProvider]:
     if name == "gemini":
         return GeminiProvider()
-    # whisper 採用既有 SimpleAudioTranscriptionService，這裡回 None
+    elif name == "whisper":
+        return WhisperProvider()
     return None
 
 

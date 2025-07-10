@@ -34,12 +34,6 @@ class SessionCreateRequest(BaseModel):
     stt_provider: Optional[str] = Field(None, description="語音轉文字 Provider ('whisper' or 'gemini')")
     content: Optional[str] = Field(None, description="初始筆記內容")
     start_ts: Optional[int] = Field(None, description="錄音開始時間戳（毫秒）")
-    """建立會話請求"""
-    title: Optional[str] = Field(None, max_length=150, description="會話標題")
-    type: SessionType = Field(SessionType.NOTE_ONLY, description="會話類型")
-    language: LanguageCode = Field(LanguageCode.ZH_TW, description="語言設定")
-    content: Optional[str] = Field(None, description="初始筆記內容")
-    start_ts: Optional[int] = Field(None, description="錄音開始時間戳（毫秒）")
 
 
 class SessionOut(BaseModel):
@@ -81,3 +75,15 @@ class ActiveSessionError(BaseModel):
     error: str = Field("active_session_exists", description="錯誤類型")
     message: str = Field(description="錯誤訊息")
     active_session_id: UUID = Field(description="目前活躍會話 ID")
+
+
+class SessionProviderUpdateRequest(BaseModel):
+    """更新會話 STT Provider 請求"""
+    stt_provider: str = Field(..., description="語音轉文字 Provider ('whisper' or 'gemini')")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "stt_provider": "gemini"
+            }
+        }

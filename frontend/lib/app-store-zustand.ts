@@ -9,6 +9,8 @@ import { TranscriptManager } from './transcript-manager'
 /**
  * App 狀態介面
  */
+import { STTProvider } from './api'
+
 interface AppStoreState {
   // 應用狀態
   appState: AppState
@@ -35,6 +37,9 @@ interface AppStoreState {
 
   // 編輯器狀態
   editorContent: string
+
+  // STT Provider 狀態
+  sttProvider: STTProvider
 }
 
 /**
@@ -66,6 +71,9 @@ interface AppStoreActions {
 
   // 狀態重置
   resetState: () => void
+
+  // STT Provider 操作
+  setSttProvider: (provider: STTProvider) => void
 }
 
 /**
@@ -93,6 +101,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   timerId: null,
   transcriptEntries: [],
   editorContent: '',
+  sttProvider: 'whisper' as STTProvider,
 
   // === 核心業務操作 ===
 
@@ -128,12 +137,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const recordingFlowService = new RecordingFlowService()
       await recordingFlowService.initialize()
 
-      // 4. 啟動完整錄音流程（包含雙 WebSocket），傳遞開始時間戳
+      // 4. 啟動完整錄音流程（包含雙 WebSocket），傳遞開始時間戳和 STT Provider
       console.log('🔍 [AppStore] 啟動完整錄音流程...')
       const sessionResponse = await recordingFlowService.startRecordingFlow(
         title || `錄音筆記 ${new Date().toLocaleString()}`,
         undefined, // content
-        startTs    // 傳遞錄音開始時間戳
+        startTs,   // 傳遞錄音開始時間戳
+        currentState.sttProvider // 傳遞 STT Provider
       )
 
       console.log('✅ [AppStore] 雙 WebSocket 錄音流程啟動成功:', {
@@ -252,6 +262,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ error: null })
   },
 
+  // === STT Provider 操作 ===
+
+  setSttProvider: (provider: STTProvider) => {
+    set({ sttProvider: provider })
+    console.log('🔧 [AppStore] STT Provider 已更新:', provider)
+  },
+
   // === 編輯器操作 ===
 
   updateEditorContent: (content: string) => {
@@ -360,7 +377,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       recordingStartTime: null,
       timerId: null,
       transcriptEntries: [],
-      editorContent: ''
+      editorContent: '',
+      sttProvider: 'whisper' as STTProvider
     })
   }
 }))

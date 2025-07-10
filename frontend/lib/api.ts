@@ -179,7 +179,11 @@ export interface SessionCreateRequest {
   type: 'note_only' | 'recording'
   content?: string
   start_ts?: number  // 錄音開始時間戳（毫秒），用於精確時間同步
+  stt_provider?: 'whisper' | 'gemini'  // 語音轉文字 Provider
 }
+
+// STT Provider 類型定義
+export type STTProvider = 'whisper' | 'gemini'
 
 export interface SessionResponse {
   id: string

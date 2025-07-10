@@ -14,7 +14,8 @@ from app.core.config import get_settings
 from app.db.database import get_supabase_client
 from app.schemas.session import (
     SessionCreateRequest, SessionOut, SessionUpgradeRequest,
-    SessionFinishRequest, SessionStatusResponse, SessionStatus, SessionType, LanguageCode
+    SessionFinishRequest, SessionStatusResponse, SessionStatus, SessionType, LanguageCode,
+    SessionProviderUpdateRequest
 )
 
 # 建立路由器
@@ -266,3 +267,66 @@ async def get_session(
         )
 
     return SessionOut.model_validate(response.data[0])
+
+
+@router.patch("/session/{session_id}/provider", response_model=SessionOut)
+async def update_session_provider(
+    session_id: UUID,
+    request: SessionProviderUpdateRequest,
+    supabase: Client = Depends(get_supabase_client)
+) -> SessionOut:
+    """
+    更新會話 STT Provider (B-016)
+
+    - 僅在尚未上傳音檔時允許切換
+    - 支援 whisper 和 gemini 之間的切換
+    - 驗證 Provider 的有效性
+    """
+    try:
+        # 檢查會話是否存在且為活躍狀態
+        session_response = supabase.table("sessions").select("*").eq("id", str(session_id)).eq("status", "active").limit(1).execute()
+        if not session_response.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="找不到活躍的會話。"
+            )
+
+        # 檢查是否已有音檔上傳（透過 audio_files 表）
+        audio_files_response = supabase.table("audio_files").select("id").eq("session_id", str(session_id)).limit(1).execute()
+        if audio_files_response.data:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="已開始錄音，無法更改 STT Provider。"
+            )
+
+        # 驗證 Provider 有效性
+        valid_providers = ["whisper", "gemini"]
+        if request.stt_provider not in valid_providers:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"無效的 STT Provider。支援的選項：{', '.join(valid_providers)}"
+            )
+
+        # 更新 Provider
+        update_data = {
+            "stt_provider": request.stt_provider,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+
+        response = supabase.table("sessions").update(update_data).eq("id", str(session_id)).execute()
+
+        if not response.data:
+            raise HTTPException(status_code=500, detail="無法更新 STT Provider")
+
+        updated_session = response.data[0]
+
+        logger.info(f"✅ [SessionAPI] 成功更新 session {session_id} STT Provider: {request.stt_provider}")
+        return SessionOut.model_validate(updated_session)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "internal_error", "message": f"更新 STT Provider 時發生錯誤: {str(e)}"}
+        )
