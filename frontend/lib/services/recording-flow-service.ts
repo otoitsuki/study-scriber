@@ -103,8 +103,7 @@ export class RecordingFlowService extends BaseService {
         throw new Error('建立 Session 失敗')
       }
 
-      // ③ 啟動錄音／WS／計時器
-      await this.recordingService.start(session.id)
+      // ③ 啟動逐字稿服務
       await this.transcriptService.start(session.id)
       setAppState('recording_waiting')
 

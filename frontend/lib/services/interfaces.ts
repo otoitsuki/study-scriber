@@ -1,6 +1,7 @@
 "use client"
 
-import type { SessionResponse } from '../api'
+import type { SessionResponse, STTProvider } from '../api'
+import type { BaseService } from './base-service'
 
 /**
  * 服務層介面定義
@@ -28,12 +29,12 @@ export interface ISessionService {
      * 2. 若遇到 409 衝突，改為獲取現有活躍會話
      * 3. 確保返回可用的錄音會話
      */
-    ensureRecordingSession(title?: string, content?: string, startTs?: number): Promise<SessionResponse>
+    ensureRecordingSession(title?: string, content?: string, startTs?: number, sttProvider?: STTProvider): Promise<SessionResponse>
 
     /**
      * 創建錄音會話
      */
-    createRecordingSession(title?: string, content?: string, startTs?: number): Promise<SessionResponse>
+    createRecordingSession(title?: string, content?: string, startTs?: number, sttProvider?: STTProvider): Promise<SessionResponse>
 
     /**
      * 創建純筆記會話
@@ -109,11 +110,6 @@ export interface IRecordingService extends BaseService {
      * 請求錄音權限
      */
     requestPermission(): Promise<boolean>
-
-    /**
-     * 開始錄音
-     */
-    start(sessionId: string): Promise<void>
 }
 
 /**

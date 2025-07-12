@@ -156,6 +156,7 @@ z.looseObject({ name: z.string() });
 
 
 ```Mermaid
+
 sequenceDiagram
     %% ==== Participants ====
     actor User as 👤 使用者
@@ -164,25 +165,27 @@ sequenceDiagram
     participant R2 as ☁️ R2 Storage
     participant DB as 💾 Supabase
     participant STT as 🤖 STT Model
-    participant WS as 🔌 Transcript WS
+    participant WS as 🔌 Websocket
 
     %% ==== 即時錄音流程 ====
     rect rgb(240,248,255)
-        Note over User,WS: 🎙️ 即時錄音與轉錄（10s WebM + REST 上傳）
+        Note over User,WS: 🎙️ 即時錄音與轉錄
         User ->> Browser: 點擊開始錄音
-        Browser ->>+ BE: POST /api/segment (10s WebM)
-        BE -->>- Browser: {"ack": seq}
+        Browser ->>+ BE: 開新 Session 
 
         par 儲存與轉錄
             BE ->>+ R2: 儲存 WebM
-            BE ->>+ DB: INSERT audio_files
             BE ->>+ STT: WebM → Whisper
-            STT -->>- BE: 逐字稿文字
+            STT -->> BE: 回覆 Transcript JSON
+            BE -->> WS: 傳入逐字稿
             BE ->>+ DB: INSERT transcript_segments
-            BE ->>+ WS: push transcript JSON
-            WS -->> Browser: 顯示逐字稿
         end
-        Browser -->> User: 更新字幕
+
+        WS -->> Browser: 送出逐字稿
+        Browser -->> User: 更新逐字稿
+    end
+        WS -->> Browser: 送出逐字稿
+        Browser -->> User: 更新逐字稿
     end
 
     %% ==== 匯出功能 ====

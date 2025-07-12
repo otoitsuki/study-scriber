@@ -21,7 +21,7 @@ alwaysApply: false
 - Use Zod to validate and cast type as early as possible, this includes but not limit to handling the following scenarios: `any`, `unknown`, `DefaultBodyType`.
 - Always assign unknown type to `const x: unknown = JSON.parse()`, `cosnt x: unknown = await request.json()`, `cosnt x: unknown = await response.json()`, then validate with Zod.
 - Zod schemas are shared between frontend and backend.
-- Zod schemas are in `src/schemas/`, you should find in there first to see if there's a schema you can reuse. You should not create Zod schemas outside of `src/schemas/`.
+- Zod schemas are in `frontend/schemas/`, you should find in there first to see if there's a schema you can reuse. You should not create Zod schemas outside of `frontend/schemas/`.
 - Never use `any`, `as` type assertion or `!` non-null assertion operator, you should instead use type narrowing, for example in test you can use `expectToBeInstanceOf`, `expectToNotBeNull`, `expectToNotBeUndefined`, and outside of test `instanceof` or do a proper object validation with Zod.
 - If you would declare an untyped object, instead you should either type it with e.g. `const x: X = {}` or `{} satisfies X`.
 - Avoid optional function parameter, optional property, and default values. If you are about to add one or you see any of such usages, try to look around the related code paths and see if you can refactor to remove it. Default values should only be used when it's absolutely necessary.
@@ -51,7 +51,7 @@ x?.Y(); // Y is optional because ...
 - `as` operator -> use Zod
 - `console.error` -> `logError`
 - `JSX.Element` -> `React.JSX.Element`
-- `toBeTruthy`, `.not.toBeNull`, `toBeDefined`, `toBeInstanceOf` or `if (instanceof)` -> use the type narrowing expect helpers in `src/__tests__/typedExpectHelpers.ts`
+- `toBeTruthy`, `.not.toBeNull`, `toBeDefined`, `toBeInstanceOf` or `if (instanceof)` -> use the type narrowing expect helpers in `frontend/__tests__/typedExpectHelpers.ts`
 - `getAllBy*()[*]` -> `getByTestId` or `getByText`
 - `() => {}` empty mock -> `vi.fn()`
 - `JSON.stringify(x)` if x is not typed -> `const x: X = {}; JSON.stringify(x)` or `JSON.stringify({} satisfies X)`
@@ -65,28 +65,7 @@ x?.Y(); // Y is optional because ...
 - When writing test, write integration test.
 - Write integration test to cover business logic, if something can be clicked, input or be interacted in any other ways by the user, it should be covered by a test.
 - When writing new test, make sure the test is genuinely new and not testing what another test has already covered. You should look for other existing test cases to understand if the test you are about to write is already covered by another test.
-- Focus on testing the component/function's integrated behaviour, for example, if the import tree looks like A -> B -> C, you should not mock any of A/B/C, instead you should focus on testing if interacting with A as a whole gives you the expected result; in B's test you should not mock B/C and instead test interacting with B; and so on.
-- You should only change a test file if you are fixing lint/type errors, or you made a change that requires update that test file.
-- If you are only editing test, you should not change the existing code logic that in the test. If refactoring would make writing test easier, explain to the user and wait for feedback. You may add testid yourself if needed.
-- If an action will make an API request, you should test whether the API will get the correctly formed request.
-- Before you write or change any test code, make sure you step back and get a full picture first, by reading through the related code paths from beginning to end, and understanding how the code and data flows.
-- Instead of fixing many test cases in one go, focus on fixing 1 test at a time, each test case should have its own todo item.
-- `DragEvent`, `DataTransferItemList`, `DataTransfer`, `DOMRect` are polyfilled and can be used in test:
-
-```ts
-const event = new DragEvent('dragenter', {
-  cancelable: true,
-  bubbles: true,
-});
-event.dataTransfer?.items.add('hello world', 'text/plain');
-```
-
-
-## Test
-
-- When writing test, write integration test.
-- Write integration test to cover business logic, if something can be clicked, input or be interacted in any other ways by the user, it should be covered by a test.
-- When writing new test, make sure the test is genuinely new and not testing what another test has already covered. You should look for other existing test cases to understand if the test you are about to write is already covered by another test.
+- Use Playwright to test end-to-end frontend with @playwright-e2e-testing.mdc
 - Focus on testing the component/function's integrated behaviour, for example, if the import tree looks like A -> B -> C, you should not mock any of A/B/C, instead you should focus on testing if interacting with A as a whole gives you the expected result; in B's test you should not mock B/C and instead test interacting with B; and so on.
 - You should only change a test file if you are fixing lint/type errors, or you made a change that requires update that test file.
 - If you are only editing test, you should not change the existing code logic that in the test. If refactoring would make writing test easier, explain to the user and wait for feedback. You may add testid yourself if needed.

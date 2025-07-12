@@ -60,8 +60,8 @@ export class SessionService extends BaseService implements ISessionService {
      * 2. 若遇到 409 衝突，改為獲取現有活躍會話
      * 3. 確保返回可用的錄音會話
      */
-    async ensureRecordingSession(title?: string, content?: string, startTs?: number): Promise<SessionResponse> {
-        this.logInfo('確保錄音會話存在 - 強制新建策略', { title, hasContent: !!content, hasStartTs: !!startTs })
+    async ensureRecordingSession(title?: string, content?: string, startTs?: number, sttProvider?: STTProvider): Promise<SessionResponse> {
+        this.logInfo('確保錄音會話存在 - 強制新建策略', { title, hasContent: !!content, hasStartTs: !!startTs, sttProvider })
 
         try {
             // 1. 檢查並完成任何現有活躍會話
@@ -83,13 +83,15 @@ export class SessionService extends BaseService implements ISessionService {
             const newSession = await this.createRecordingSession(
                 title,
                 content,
-                startTs
+                startTs,
+                sttProvider
             )
 
             this.logSuccess('強制新建策略完成', {
                 newSessionId: newSession.id,
                 type: newSession.type,
-                status: newSession.status
+                status: newSession.status,
+                sttProvider
             })
 
             return newSession

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, Any
 from uuid import UUID
 
-from google.generativeai import GenerativeModel  # type: ignore
+import google.generativeai as genai
 
 from app.core.config import get_settings
 from app.core.ffmpeg import webm_to_pcm
@@ -21,7 +21,7 @@ class GeminiProvider(ISTTProvider):
 
     def __init__(self) -> None:
         # 延遲載入，避免未設定 API Key 仍建立物件
-        self._model: GenerativeModel | None = None
+        self._model: genai.GenerativeModel | None = None
 
     # ------------- 介面實作 -------------
     def name(self) -> str:  # type: ignore[override]
@@ -37,32 +37,31 @@ class GeminiProvider(ISTTProvider):
         # 初始化模型
         if self._model is None:
             try:
-                self._model = GenerativeModel(
-                    "gemini-2.5-pro-preview",
-                    api_key=settings.GEMINI_API_KEY,
-                    base_url=f"https://{settings.GEMINI_ENDPOINT}"
-                )
+                # 使用新版 google-generativeai 需要先全域設定 API Key
+                genai.configure(api_key=settings.GEMINI_API_KEY)
+                # 建立模型，不再接受 api_key/base_url 參數
+                self._model = genai.GenerativeModel("gemini-2.5-pro-preview")
             except Exception as e:
                 logger.error(f"[Gemini] 初始化模型失敗: {e}")
                 raise
 
         # 1. 轉檔
         pcm_bytes = await webm_to_pcm(webm)
-        b64_pcm = base64.b64encode(pcm_bytes).decode()
 
         # 2. 組 prompt
         prompt = getattr(settings, "GEMINI_PROMPT", "請輸出逐字稿：")
 
-        # 3. 呼叫 API
+        # 3. 呼叫 API - 使用 inline_data 方式傳遞音訊 (符合新版 google-generativeai SDK)
         try:
-            res = await self._model.generate_content_async(
-                contents=[
-                    {"role": "user", "parts": [
-                        {"text": prompt},
-                        {"audio": {"mime_type": "audio/wav", "data": b64_pcm}}
-                    ]}
-                ]
-            )
+            from google.generativeai import types as genai_types  # type: ignore
+
+            parts = [
+                {"text": prompt},
+                genai_types.Part.from_bytes(data=pcm_bytes, mime_type="audio/wav"),
+            ]
+
+            res = await self._model.generate_content_async(contents=parts)
+
             text = res.text.strip() if hasattr(res, "text") else ""
         except Exception as e:
             logger.error(f"[Gemini] 轉錄失敗: {e}")
