@@ -246,6 +246,46 @@ async def webm_to_pcm(webm: bytes) -> bytes:
         raise RuntimeError(f"FFmpeg convert error: {str(e)}")
 
 
+async def webm_to_wav(webm: bytes) -> Optional[bytes]:
+    """
+    將 WebM 音訊轉換為 16kHz mono 16-bit RIFF-WAV 格式
+
+    Args:
+        webm: WebM 格式的音訊二進制資料
+
+    Returns:
+        Optional[bytes]: WAV 格式的音訊二進制資料，失敗時回傳 None
+    """
+    ffmpeg_cmd = "ffmpeg -f webm -i pipe:0 -ac 1 -ar 16000 -f wav -y pipe:1 -loglevel error"
+    try:
+        logger.debug(f"🎵 [FFmpeg] 開始轉換 WebM → WAV (size: {len(webm)} bytes)")
+        proc = await asyncio.create_subprocess_exec(
+            *shlex.split(ffmpeg_cmd),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate(webm)
+        if proc.returncode != 0:
+            error_msg = stderr.decode('utf-8') if stderr else "Unknown FFmpeg error"
+            logger.error(f"❌ [FFmpeg] WebM → WAV 轉換失敗 (返回碼: {proc.returncode}): {error_msg}")
+            return None
+        if not stdout:
+            logger.error("❌ [FFmpeg] WebM → WAV 轉換結果為空")
+            return None
+        logger.info(f"✅ [FFmpeg] WebM → WAV 轉換成功 ({len(webm)} → {len(stdout)} bytes)")
+        return stdout
+    except asyncio.TimeoutError:
+        logger.error("❌ [FFmpeg] WebM → WAV 轉換超時")
+        return None
+    except FileNotFoundError:
+        logger.error("❌ [FFmpeg] FFmpeg 程序未找到，請確認已安裝 FFmpeg")
+        return None
+    except Exception as e:
+        logger.error(f"❌ [FFmpeg] WebM → WAV 轉換異常: {str(e)}")
+        return None
+
+
 async def validate_webm_audio(webm: bytes) -> bool:
     """
     驗證 WebM 音訊檔案是否有效

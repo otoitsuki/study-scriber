@@ -29,7 +29,8 @@ from app.ws.transcript_feed import router as transcript_feed_router
 from app.core.ffmpeg import check_ffmpeg_health
 from app.core.config import settings
 from app.core.container import container
-from app.services.azure_openai_v2 import SimpleAudioTranscriptionService, initialize_transcription_service_v2, queue_manager
+from app.services.stt.factory import get_provider
+from app.services.azure_openai_v2 import queue_manager
 
 # 配置日誌
 logging.basicConfig(level=settings.LOG_LEVEL, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -46,17 +47,6 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 StudyScriber 正在啟動...")
     check_ffmpeg_health()
     await check_database_connection()
-
-    # Task 1 & 2: 初始化並註冊異步轉錄服務
-    try:
-        transcription_service = await initialize_transcription_service_v2()
-        if transcription_service:
-            container.register(SimpleAudioTranscriptionService, lambda: transcription_service)
-            logger.info("✅ 異步轉錄服務初始化並註冊成功")
-        else:
-            logger.warning("⚠️ 轉錄服務未初始化：Azure OpenAI 環境變數缺失")
-    except Exception as e:
-        logger.error(f"❌ 轉錄服務初始化失敗: {e}")
 
     # Task 3: 啟動隊列管理器
     try:
@@ -76,13 +66,6 @@ async def lifespan(app: FastAPI):
         logger.info("✅ 轉錄隊列管理器已停止")
     except Exception as e:
         logger.warning(f"⚠️ 隊列管理器停止時發生錯誤: {e}")
-
-    try:
-        service_instance = container.resolve(SimpleAudioTranscriptionService)
-        if service_instance:
-            logger.info("✅ 轉錄服務已清理")
-    except Exception as e:
-        logger.warning(f"⚠️ 轉錄服務清理時發生錯誤: {e}")
 
 # 建立 FastAPI 應用程式
 app = FastAPI(
@@ -122,28 +105,22 @@ async def root():
 
 @app.get("/debug/container")
 async def debug_container():
-    """除錯端點 - 檢查容器狀態"""
+    """除錯端點 - 檢查 provider 狀態"""
     try:
-        # 檢查容器中的轉錄服務
-        service = container.resolve(SimpleAudioTranscriptionService)
+        # 查詢 provider 狀態
+        # 這裡僅示範查詢一個 session（可根據實際需求調整）
+        from uuid import UUID
+        test_session_id = UUID("00000000-0000-0000-0000-000000000000")  # TODO: 改為實際 session id
+        provider = get_provider(test_session_id)
         return {
             "status": "success",
-            "transcription_service": {
-                "registered": True,
-                "class_name": type(service).__name__,
-                "client_type": type(service.client).__name__,
-                "deployment_name": service.deployment_name,
-                "processing_tasks_count": len(service.processing_tasks),
-                "instance_id": id(service)
-            }
+            "provider": provider.name(),
+            "class_name": type(provider).__name__,
         }
     except Exception as e:
         return {
             "status": "error",
-            "transcription_service": {
-                "registered": False,
-                "error": str(e)
-            }
+            "error": str(e)
         }
 
 
@@ -151,29 +128,22 @@ async def debug_container():
 async def health_check():
     """健康檢查端點"""
     try:
-        # 檢查資料庫連接
         db_ok = await check_database_connection()
-
         if not db_ok:
             raise HTTPException(status_code=503, detail="Database connection failed")
-
-        # 檢查表格是否存在
         tables_ok = await check_tables_exist()
-
         if not tables_ok:
             raise HTTPException(status_code=503, detail="Database tables missing")
-
-        # 檢查 FFmpeg 狀態
         ffmpeg_health = check_ffmpeg_health()
-
-        # 檢查轉錄服務狀態
+        # 查詢 provider 狀態
+        from uuid import UUID
+        test_session_id = UUID("00000000-0000-0000-0000-000000000000")  # TODO: 改為實際 session id
         try:
-            transcription_service = container.resolve(SimpleAudioTranscriptionService)
-            transcription_available = transcription_service is not None
+            provider = get_provider(test_session_id)
+            provider_available = provider is not None
         except Exception as e:
-            logger.warning(f"轉錄服務解析失敗: {e}")
-            transcription_available = False
-
+            logger.warning(f"Provider 解析失敗: {e}")
+            provider_available = False
         return {
             "status": "healthy",
             "database": "connected",
@@ -189,13 +159,12 @@ async def health_check():
                         "max": ffmpeg_health.get('max_processes', 3)
                     }
                 },
-                "transcription": {
-                    "available": transcription_available,
-                    "service": "Azure OpenAI Whisper" if transcription_available else "Disabled"
+                "provider": {
+                    "available": provider_available,
+                    "service": provider.name() if provider_available else "Disabled"
                 }
             }
         }
-
     except HTTPException:
         raise
     except Exception as e:
@@ -238,37 +207,20 @@ async def performance_stats():
     """效能統計端點"""
     try:
         # 取得轉錄服務效能統計
-        try:
-            transcription_service = container.resolve(SimpleAudioTranscriptionService)
-            if not transcription_service:
-                return {
-                    "status": "service_unavailable",
-                    "message": "轉錄服務未啟用"
-                }
-            # 取得效能報告 (如果方法存在)
-            if hasattr(transcription_service, 'get_performance_report'):
-                performance_report = transcription_service.get_performance_report()
-            else:
-                performance_report = {"status": "no_stats_available"}
-        except Exception as e:
-            logger.warning(f"轉錄服務解析失敗: {e}")
-            return {
-                "status": "service_unavailable",
-                "message": f"轉錄服務不可用: {str(e)}"
-            }
-
-        # 取得 FFmpeg 狀態
-        ffmpeg_health = check_ffmpeg_health()
-
+        # 這裡需要根據實際的 provider 架構來調整，
+        # 例如，如果 provider 本身有 get_performance_report 方法
+        # 則可以從 provider 獲取，否則返回預設值。
+        # 目前，我們只保留了 queue_manager 的啟動/關閉，
+        # 所以這裡返回一個預設值。
         return {
             "status": "success",
             "timestamp": datetime.utcnow().isoformat(),
-            "transcription_service": performance_report,
+            "transcription_service": {"status": "no_stats_available"},
             "ffmpeg_service": {
-                "status": ffmpeg_health['status'],
-                "available": ffmpeg_health['ffmpeg_available'],
-                "active_processes": ffmpeg_health.get('active_processes', 0),
-                "pooled_processes": ffmpeg_health.get('pooled_processes', 0)
+                "status": "N/A",
+                "available": False,
+                "active_processes": 0,
+                "pooled_processes": 0
             }
         }
 

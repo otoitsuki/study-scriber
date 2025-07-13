@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Settings, Mic, Zap } from "lucide-react"
 import { STTProvider } from "@/lib/api"
+import { PROVIDERS } from "../constants/providers"
 
 interface ProviderContextMenuProps {
     currentProvider: STTProvider
@@ -23,10 +24,7 @@ interface ProviderContextMenuProps {
 }
 
 export function ProviderContextMenu({ currentProvider, onProviderChange, disabled = false }: ProviderContextMenuProps) {
-    const providerDisplayName = {
-        whisper: "Whisper (Azure)",
-        gemini: "Gemini 2.5 Pro (Vertex AI)"
-    }
+    const providerDisplayName = Object.fromEntries(PROVIDERS.map(p => [p.code, p.label]))
 
     return (
         <DropdownMenu>
@@ -48,14 +46,11 @@ export function ProviderContextMenu({ currentProvider, onProviderChange, disable
                         <DropdownMenuSubTrigger>Switch Provider</DropdownMenuSubTrigger>
                         <DropdownMenuSubContent className="bg-white rounded-md">
                             <DropdownMenuRadioGroup value={currentProvider} onValueChange={(value) => onProviderChange(value as STTProvider)}>
-                                <DropdownMenuRadioItem value="whisper">
-                                    <Mic className="w-4 h-4 mr-2" />
-                                    {providerDisplayName.whisper}
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="gemini">
-                                    <Zap className="w-4 h-4 mr-2" />
-                                    {providerDisplayName.gemini}
-                                </DropdownMenuRadioItem>
+                                {PROVIDERS.map((p) => (
+                                    <DropdownMenuRadioItem value={p.code} key={p.code}>
+                                        {p.label}
+                                    </DropdownMenuRadioItem>
+                                ))}
                             </DropdownMenuRadioGroup>
                         </DropdownMenuSubContent>
                     </DropdownMenuSub>

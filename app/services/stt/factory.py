@@ -9,6 +9,7 @@ from app.db.database import get_supabase_client
 from .base import ISTTProvider
 from .gemini_provider import GeminiProvider
 from .whisper_provider import WhisperProvider
+from app.services.stt.gpt4o_provider import GPT4oProvider
 
 logger = logging.getLogger(__name__)
 
@@ -22,19 +23,20 @@ def _create_provider(name: str) -> Optional[ISTTProvider]:
     return None
 
 
-def get_provider(session_id: UUID) -> Optional[ISTTProvider]:
-    """取得指定 session 的 STT Provider 實例 (含快取)。"""
-    try:
-        supabase = get_supabase_client()
-        resp = supabase.table("sessions").select("stt_provider").eq("id", str(session_id)).single().execute()
-        name = resp.data.get("stt_provider", "whisper") if resp and resp.data else "whisper"
-    except Exception as e:
-        logger.error(f"[ProviderFactory] 讀取 session {session_id} stt_provider 失敗: {e}")
-        name = "whisper"
+__all__ = ["get_provider"]
 
-    provider = _create_provider(name)
-    if provider:
-        logger.debug(f"[ProviderFactory] 為 session {session_id} 建立 provider: {name}")
-    else:
-        logger.debug(f"[ProviderFactory] 使用內建 Whisper provider (SimpleAudioTranscriptionService)")
-    return provider
+_provider_cache: Dict[str, ISTTProvider] = {}
+
+def instance(cls) -> ISTTProvider:
+    if cls.name not in _provider_cache:
+        _provider_cache[cls.name] = cls()
+    return _provider_cache[cls.name]
+
+def get_provider(session_id: UUID) -> ISTTProvider:
+    from app.db.database import get_supabase_client
+    supa = get_supabase_client()
+    row = supa.table("sessions").select("stt_provider").eq("id", str(session_id)).single().execute()
+    name = (row.data or {}).get("stt_provider", "whisper").lower()
+    match name:
+        case "gpt4o": return instance(GPT4oProvider)
+        case _:       return instance(WhisperProvider)

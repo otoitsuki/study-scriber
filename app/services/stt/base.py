@@ -4,6 +4,7 @@ import abc
 from typing import Dict, Any
 from uuid import UUID
 
+__all__ = ["ISTTProvider"]
 
 class ISTTProvider(abc.ABC):
     """語音轉文字 Provider 介面。所有轉錄服務需實作此介面。"""

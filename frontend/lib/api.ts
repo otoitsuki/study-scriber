@@ -179,7 +179,8 @@ export interface SessionCreateRequest {
   type: 'note_only' | 'recording'
   content?: string
   start_ts?: number  // 錄音開始時間戳（毫秒），用於精確時間同步
-  stt_provider?: 'whisper' | 'gemini'  // 語音轉文字 Provider
+  lang_code?: string  // BCP-47 語言碼（如 zh-TW, en-US）
+  stt_provider?: string  // 語音轉文字 Provider 名稱（如 whisper, gpt4o）
 }
 
 // STT Provider 類型定義

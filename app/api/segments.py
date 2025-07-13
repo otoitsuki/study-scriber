@@ -17,6 +17,8 @@ from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
 from app.services.transcript_feed import get_transcript_hub
 from app.core.container import container
 from app.utils.validators import valid_webm
+from app.services.stt.factory import get_provider
+from app.services.stt.whisper_provider import save_and_push_result
 
 logger = logging.getLogger(__name__)
 
@@ -126,25 +128,16 @@ async def process_and_transcribe(sid: UUID, seq: int, webm_blob: bytes):
 
         # 3. 啟動轉錄服務
         try:
-            transcription_service = container.resolve(SimpleAudioTranscriptionService)
-            if transcription_service:
-                logger.info(f"🎯 [轉錄啟動] 開始轉錄切片 {seq}")
-                success = await transcription_service.process_audio_chunk(
-                    session_id=sid,
-                    chunk_sequence=seq,
-                    webm_data=webm_blob
-                )
-                if success:
-                    logger.info(f"✅ [轉錄啟動] 切片 {seq} 轉錄任務啟動成功")
-                else:
-                    logger.warning(f"⚠️ [轉錄啟動] 切片 {seq} 轉錄任務啟動失敗")
+            provider = get_provider(sid)
+            logger.info(f"🎯 [轉錄啟動] 開始轉錄切片 {seq} (provider={provider.name()})")
+            result = await provider.transcribe(webm_blob, sid, seq)
+            if result:
+                await save_and_push_result(sid, seq, result)
+                logger.info(f"✅ [轉錄啟動] 切片 {seq} 轉錄成功")
             else:
-                logger.error("❌ [轉錄啟動] 轉錄服務不可用")
-                raise Exception("Transcription service unavailable")
-
+                logger.warning(f"⚠️ [轉錄啟動] 切片 {seq} 轉錄失敗")
         except Exception as transcription_error:
             logger.error(f"❌ [轉錄服務錯誤] 切片 {seq}: {transcription_error}")
-            # 廣播轉錄錯誤（但不影響上傳成功）
             await transcript_hub.broadcast_error(str(sid), "transcription_service_error", str(transcription_error), seq)
 
         logger.info(f"✅ [背景轉錄] 切片 {seq} 處理完成")

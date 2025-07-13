@@ -12,12 +12,16 @@ from app.services.r2_client import get_r2_client
 from app.lib.httpx_timeout import get_httpx_timeout
 from datetime import datetime
 from app.lib.settings_utils import get_chunk_duration
+from app.services.stt.lang_map import to_gpt4o
+from app.db.database import get_supabase_client
 
 
 s = get_settings()
 api_key_raw = s.AZURE_OPENAI_API_KEY
 
 logger = logging.getLogger(__name__)
+
+__all__ = ["GPT4oProvider"]
 
 class GPT4oProvider(ISTTProvider):
     """
@@ -51,59 +55,33 @@ class GPT4oProvider(ISTTProvider):
         return "gpt4o"
 
     def max_rpm(self) -> int:
-        return 60
+        # TODO: 根據設定調整
+        from app.core.config import get_settings
+        settings = get_settings()
+        return getattr(settings, "GPT4O_MAX_REQUESTS", 60)
 
-    async def transcribe(self, webm: bytes, session_id: UUID, chunk_seq: int) -> Dict[str, Any] | None:
-        logger.info(f"[GPT4o] 開始轉錄 chunk {chunk_seq} (session {session_id})")
-        fmt = detect_audio_format(webm)
+    async def transcribe(self, audio: bytes, session_id: UUID, chunk_seq: int) -> Dict[str, Any] | None:
+        # 查詢 canonical lang_code
+        supa = get_supabase_client()
+        row = supa.table("sessions").select("lang_code").eq("id", str(session_id)).single().execute()
+        canonical = (row.data or {}).get("lang_code", "zh-TW")
+        provider_lang = to_gpt4o(canonical)
+        # TODO: call Azure GPT-4o transcribe endpoint
+        # 先檢查格式，僅支援 webm/wav
+        fmt = detect_audio_format(audio)
         if fmt not in ("webm", "wav"):
-            logger.warning(f"[GPT4o] 不支援的音檔格式: {fmt} (session {session_id}, chunk {chunk_seq})")
+            logger.error(f"[GPT4o] 不支援的音訊格式: {fmt}")
             return None
-        r2_key = f"gpt4o-cache/{session_id}/{chunk_seq:06}.wav"
         try:
-            # 步驟 1: 轉換音檔
-            wav_bytes = await webm_to_wav(webm)
-            if not wav_bytes:
-                logger.error(f"WAV conversion failed (Session: {session_id})。")
-                return None
-            # （可選）仍上傳 R2 作快取
-            await self.r2_client.put_object(r2_key, wav_bytes, "audio/wav")
-            # 步驟 2: 呼叫 OpenAI API，傳 (filename, BytesIO, mime)
-            from io import BytesIO
-            file_tuple = ("audio.wav", BytesIO(wav_bytes), "audio/wav")
-            s = get_settings()
-            response = await self.client.audio.transcriptions.create(
-                model=self.model_name,        # gpt-4o-transcribe
-                file=file_tuple,              # (filename, file-obj, mime)
-                language="zh-TW",
-                response_format="json",
-            )
-            # 取文字
-            if hasattr(response, "text"):
-                transcribed_text = response.text
-            elif isinstance(response, dict) and "text" in response:
-                transcribed_text = response["text"]
+            if fmt == "webm":
+                wav_bytes = await webm_to_wav(audio)
+                if not wav_bytes:
+                    logger.error(f"[GPT4o] webm_to_wav 轉換失敗 (session={session_id}, chunk={chunk_seq})")
+                    return None
             else:
-                logger.error("[GPT4o] 無 text 欄位，response=%s", response)
-                return None
-
-            logger.debug("[GPT4o] text='%s…' (len=%d)", transcribed_text[:30], len(transcribed_text))
-
-            from datetime import datetime
-            from app.lib.settings_utils import get_chunk_duration
-            text = response.text.strip()
-            result = {
-                "text": text,
-                "chunk_sequence": chunk_seq,
-                "timestamp": datetime.utcnow().isoformat(),
-                "language": "zh-TW",
-                "start_offset": 0,
-                "end_offset": get_chunk_duration(),
-            }
-            logger.debug("[GPT4o] result → %s", result)
-            return result
+                wav_bytes = audio
+            # 這裡預留後續上傳與回傳格式，暫以 NotImplementedError 表示
+            raise NotImplementedError("GPT-4o provider 尚未實作上傳與回傳")
         except Exception as e:
-            logger.error(f"[GPT4o] 轉錄失敗: {e}", exc_info=True)
+            logger.error(f"[GPT4o] 轉檔或上傳過程異常: {e}")
             return None
-        finally:
-            pass  # 若需自動刪除 R2 檔案可於此補上

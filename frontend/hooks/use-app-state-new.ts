@@ -126,17 +126,19 @@ export function useAppStateNew() {
   }, [appData, error, stateMachineManager]);
 
   // 建立純筆記會話
-  const createNoteSession = useCallback(async (title: string) => {
+  const createNoteSession = useCallback(async (title?: string) => {
     dispatch({ type: 'SET_LOADING', payload: true })
     dispatch({ type: 'CLEAR_ERROR' })
 
     try {
-      const newSession = await session.createNoteSession(title)
+      const newSession = await session.createNoteSession(title ?? undefined)
       if (newSession) {
         dispatch({ type: 'SET_SESSION', payload: newSession })
 
         // 載入筆記內容
-        await notes.loadNote(newSession.id)
+        if (newSession.id) {
+          await notes.loadNote(newSession.id)
+        }
 
         // 清除本地草稿
         localStorage.removeItem('draft_note')

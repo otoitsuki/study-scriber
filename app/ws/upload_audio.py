@@ -16,7 +16,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, WebSocketExceptio
 from supabase import Client
 from fastapi import HTTPException
 from app.core.container import container
-from app.services.azure_openai_v2 import SimpleAudioTranscriptionService
+from app.services.stt.factory import get_provider
 from ..db.database import get_supabase_client
 from ..services.r2_client import get_r2_client, R2ClientError
 
@@ -224,25 +224,15 @@ class AudioUploadManager:
                 await self._send_ack(chunk_sequence)
                 logger.debug(f"切片上傳成功: seq={chunk_sequence}, size={len(audio_data)}")
 
-                # 從容器解析服務並啟動轉錄
-                try:
-                    transcription_service = container.resolve(SimpleAudioTranscriptionService)
-                    if transcription_service:
-                        logger.info(f"🎯 [轉錄觸發] 開始處理切片 {chunk_sequence} (session: {self.session_id})")
-                        success = await transcription_service.process_audio_chunk(
-                            session_id=self.session_id,
-                            chunk_sequence=chunk_sequence,
-                            webm_data=audio_data
-                        )
-                        if success:
-                            logger.info(f"✅ [轉錄觸發] 切片 {chunk_sequence} 轉錄任務啟動成功")
-                        else:
-                            logger.warning(f"⚠️ [轉錄觸發] 切片 {chunk_sequence} 轉錄任務啟動失敗")
-                    else:
-                        logger.error("❌ [轉錄觸發] 轉錄服務不可用，跳過轉錄")
-                except Exception as e:
-                    logger.error(f"❌ [轉錄觸發] 解析轉錄服務失敗 (chunk {chunk_sequence}): {e}")
-                    # 即使轉錄失敗，也不影響音檔上傳流程
+                # 轉錄呼叫
+                provider = get_provider(self.session_id)
+                logger.info(f"🎯 [WS轉錄] 開始轉錄 seq={chunk_sequence} (provider={provider.name()})")
+                result = await provider.transcribe(audio_data, self.session_id, chunk_sequence)
+                if result:
+                    logger.info(f"✅ [WS轉錄] seq={chunk_sequence} 轉錄成功")
+                    # TODO: 後續儲存/推播 result
+                else:
+                    logger.warning(f"⚠️ [WS轉錄] seq={chunk_sequence} 轉錄失敗")
             else:
                 # 上傳失敗
                 error_message = result.get('error', 'Unknown R2 upload error')
