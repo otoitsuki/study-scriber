@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_VERSION: str = "2024-02-01"
     WHISPER_DEPLOYMENT_NAME: str = ""
-    WHISPER_LANGUAGE: str = Field("zh", description="Whisper 轉錄語言代碼")
+    WHISPER_LANGUAGE: str = "zh-TW"
     # --- STT Provider 新增設定 ---
     STT_PROVIDER_DEFAULT: str = Field("whisper", description="預設語音轉文字 Provider ('whisper' or 'gemini')")
     GEMINI_ENDPOINT: str = Field("", description="Vertex AI 端點，如 us-central1-aiplatform.googleapis.com")

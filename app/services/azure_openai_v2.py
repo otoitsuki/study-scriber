@@ -573,30 +573,17 @@ class TranscriptionQueueManager:
             return False
 
     async def _handle_job_failure(self, job_data: dict, worker_name: str):
-        """處理任務失敗"""
+        """處理任務失敗（暫時不 Retry）"""
         session_id = job_data['session_id']
         chunk_sequence = job_data['chunk_sequence']
-        retry_count = job_data.get('retry_count', 0)
+        # retry_count = job_data.get('retry_count', 0)
 
-        if retry_count < 3:  # 最多重試 3 次
-            job_data['retry_count'] = retry_count + 1
-            self.total_retries += 1
+        # 直接記錄失敗，不再重試
+        self.total_failed += 1
+        logger.error(f"❌ [QueueManager] {worker_name} 任務最終失敗：session={session_id}, chunk={chunk_sequence}, no_retry")
 
-            # 重新排隊（高優先級）
-            await self.enqueue_job(
-                session_id,
-                chunk_sequence,
-                job_data['webm_data'],
-                priority=QUEUE_HIGH_PRIORITY
-            )
-
-            logger.info(f"🔄 [QueueManager] {worker_name} 重新排隊：session={session_id}, chunk={chunk_sequence}, retry={retry_count + 1}")
-        else:
-            self.total_failed += 1
-            logger.error(f"❌ [QueueManager] {worker_name} 任務最終失敗：session={session_id}, chunk={chunk_sequence}, max_retries_exceeded")
-
-            # 廣播最終失敗通知
-            await self._broadcast_final_failure(session_id, chunk_sequence)
+        # 廣播最終失敗通知
+        await self._broadcast_final_failure(session_id, chunk_sequence)
 
     async def _broadcast_queue_full_error(self, session_id: UUID, chunk_sequence: int):
         """廣播隊列滿錯誤"""
@@ -1169,152 +1156,66 @@ class SimpleAudioTranscriptionService:
             return None
 
     async def _transcribe_audio(self, webm_data: bytes, session_id: UUID, chunk_sequence: int) -> Optional[Dict[str, Any]]:
-        """使用 Azure OpenAI Whisper 直接轉錄 WebM 音訊 (verbose_json + 段落過濾)"""
-        # 若此 session 指定非 Whisper Provider，改由對應 Provider 處理
+        """使用 Azure OpenAI Whisper 直接轉錄 WebM 音訊 (簡化: 只處理 text)"""
         from app.services.stt.factory import get_provider
         alt_provider = get_provider(session_id)
         if alt_provider and alt_provider.name() != "whisper":
             return await alt_provider.transcribe(webm_data, session_id, chunk_sequence)
 
-        # Task 2: 智能頻率限制處理 - 等待當前延遲
         await rate_limit.wait()
-
-        # Task 5: 記錄併發處理數量
         CONCURRENT_JOBS_GAUGE.inc()
 
         try:
-            # Task 5: 監控轉錄延遲
             with WHISPER_LATENCY_SECONDS.labels(deployment=self.deployment_name).time():
                 with PerformanceTimer(f"Whisper WebM transcription for chunk {chunk_sequence}"):
-                    # 建立 WebM 格式臨時檔案 (無需 FFmpeg 轉換)
                     with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
                         temp_file.write(webm_data)
                         temp_file.flush()
-
                         try:
-                            # Task 4: 使用 verbose_json 格式以獲取詳細段落資訊
                             with open(temp_file.name, 'rb') as audio_file:
                                 transcript = await self.client.audio.transcriptions.create(
                                     model=self.deployment_name,
                                     file=audio_file,
-                                    language=settings.WHISPER_LANGUAGE,
-                                    response_format="verbose_json"
+                                    language=getattr(settings, 'WHISPER_LANGUAGE', 'zh'),
+                                    response_format="json",
+                                    temperature=0
                                 )
-
-                            # 清理臨時檔案
                             Path(temp_file.name).unlink(missing_ok=True)
 
-                            # Task 4: 處理 verbose_json 回應和段落過濾
-                            if not transcript or not hasattr(transcript, 'segments') or not transcript.segments:
-                                logger.debug(f"💭 [段落過濾] Chunk {chunk_sequence} 無段落數據")
-                                # Task 5: 記錄空轉錄
+                            # 只處理 {"text": ...} 結果
+                            text = getattr(transcript, "text", None) or (transcript.get("text") if isinstance(transcript, dict) else None)
+                            if not text or not text.strip():
                                 WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
                                 return None
+                            combined_text = text.strip()
 
-                            # Task 4: 使用 _keep 函數過濾段落
-                            filtered_segments = []
-                            total_segments = len(transcript.segments)
-                            logger.info(f"🔍 [段落過濾] Chunk {chunk_sequence} 開始過濾，總段落數: {total_segments}")
-
-                            for i, segment in enumerate(transcript.segments):
-                                # 將 segment 轉換為字典以供 _keep 函數處理
-                                segment_dict = {
-                                    'id': getattr(segment, 'id', i),
-                                    'seek': getattr(segment, 'seek', 0),
-                                    'start': getattr(segment, 'start', 0.0),
-                                    'end': getattr(segment, 'end', 0.0),
-                                    'text': getattr(segment, 'text', ''),
-                                    'tokens': getattr(segment, 'tokens', []),
-                                    'temperature': getattr(segment, 'temperature', 0.0),
-                                    'avg_logprob': getattr(segment, 'avg_logprob', 0.0),
-                                    'compression_ratio': getattr(segment, 'compression_ratio', 0.0),
-                                    'no_speech_prob': getattr(segment, 'no_speech_prob', 0.0)
-                                }
-
-                                if self._keep(segment_dict):
-                                    filtered_segments.append(segment_dict)
-                                    logger.debug(f"✅ [段落過濾] 段落 {i} 保留: '{segment_dict['text'][:30]}...'")
-                                else:
-                                    # 詳細記錄被過濾的原因
-                                    logger.info(f"❌ [段落過濾] 段落 {i} 被過濾: '{segment_dict['text'][:50]}...'")
-                                    logger.info(f"   - 靜音機率: {segment_dict.get('no_speech_prob', 'N/A'):.3f} (門檻: {settings.FILTER_NO_SPEECH})")
-                                    logger.info(f"   - 置信度: {segment_dict.get('avg_logprob', 'N/A'):.3f} (門檻: {settings.FILTER_LOGPROB})")
-                                    logger.info(f"   - 重複比率: {segment_dict.get('compression_ratio', 'N/A'):.3f} (門檻: {settings.FILTER_COMPRESSION})")
-
-                            # Task 4: 檢查過濾結果
-                            kept_count = len(filtered_segments)
-                            filtered_count = total_segments - kept_count
-
-                            logger.info(f"📊 [段落過濾統計] Chunk {chunk_sequence}: 總數={total_segments}, 保留={kept_count}, 過濾={filtered_count}")
-
-                            if not filtered_segments:
-                                logger.warning(f"⚠️ [段落過濾] Chunk {chunk_sequence} 所有段落都被過濾，返回空結果")
-                                # 記錄為空轉錄（所有段落被過濾）
-                                WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
-                                # 返回特殊標記，表示這是被過濾（不是失敗）
-                                return {"filtered": True, "chunk_sequence": chunk_sequence}
-
-                            # Task 4: 合併保留的段落文字
-                            combined_text = ' '.join(segment['text'].strip() for segment in filtered_segments).strip()
-
-                            # 新增：計算段落在切片中的實際起迄時間 (秒)
-                            earliest_start = min(seg['start'] for seg in filtered_segments)
-                            latest_end = max(seg['end'] for seg in filtered_segments)
-
-                            if not combined_text:
-                                logger.warning(f"⚠️ [段落過濾] Chunk {chunk_sequence} 合併後文字為空")
-                                WHISPER_REQ_TOTAL.labels(status="empty", deployment=self.deployment_name).inc()
-                                return None
-
-                            # Task 2: API 呼叫成功，重置頻率限制延遲
+                            # API 呼叫成功，重置頻率限制延遲
                             rate_limit.reset()
-
-                            # Task 5: 記錄成功的轉錄請求
                             WHISPER_REQ_TOTAL.labels(status="success", deployment=self.deployment_name).inc()
 
-                            logger.info(f"🎯 [WebM 直接轉錄] 成功處理 chunk {chunk_sequence} (格式: WebM → Whisper API verbose_json)")
-                            logger.info(f"📝 [過濾結果] 最終文字: '{combined_text[:100]}{'...' if len(combined_text) > 100 else ''}'")
-
                             return {
-                                'text': combined_text,
-                                'chunk_sequence': chunk_sequence,
-                                'session_id': str(session_id),
-                                'timestamp': datetime.utcnow().isoformat(),
-                                'language': 'zh-TW',
-                                'duration': getattr(transcript, 'duration', settings.AUDIO_CHUNK_DURATION_SEC),
-                                'segments_total': total_segments,
-                                'segments_kept': kept_count,
-                                'segments_filtered': filtered_count,
-                                # 新增：回傳在切片中的相對起迄時間，供後續計算絕對時間
-                                'start_offset': earliest_start,
-                                'end_offset': latest_end
+                                "text": combined_text,
+                                "chunk_sequence": chunk_sequence,
+                                "session_id": str(session_id),
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "language": getattr(settings, 'WHISPER_LANGUAGE', 'zh-TW'),
+                                "start_offset": 0.0,
+                                "end_offset": settings.AUDIO_CHUNK_DURATION_SEC
                             }
-
                         finally:
-                            # 確保清理臨時檔案
                             Path(temp_file.name).unlink(missing_ok=True)
-
         except RateLimitError as e:
-            # Task 2: 智能處理 429 錯誤
             logger.warning(f"🚦 [頻率限制] Chunk {chunk_sequence} 遇到 429 錯誤：{str(e)}")
             rate_limit.backoff()
-
-            # Task 5: 記錄 429 錯誤
             WHISPER_REQ_TOTAL.labels(status="rate_limit", deployment=self.deployment_name).inc()
-
-            # 根據 Rate Limiter 類型構建適當的錯誤訊息
             if isinstance(rate_limit, SlidingWindowRateLimiter):
-                # 滑動視窗模式：基於可用許可數量提供資訊
                 stats = rate_limit.get_stats()
                 if stats['is_at_capacity']:
                     error_msg = f"API 配額已滿（{stats['active_requests']}/{stats['max_requests']}），請等待約 {rate_limit._delay}s"
                 else:
                     error_msg = f"API 頻率限制，滑動視窗排隊處理中（{stats['available_permits']} 個許可可用）"
             else:
-                # 傳統指數退避模式
                 error_msg = f"API 頻率限制，將在 {rate_limit._delay}s 後重試"
-
-            # 廣播頻率限制錯誤到前端
             await self._broadcast_transcription_error(
                 session_id,
                 chunk_sequence,
@@ -1322,40 +1223,25 @@ class SimpleAudioTranscriptionService:
                 error_msg
             )
             return None
-
         except Exception as e:
             logger.error(f"WebM direct transcription failed for chunk {chunk_sequence}: {e}")
-
-            # Task 5: 記錄失敗的轉錄請求
             WHISPER_REQ_TOTAL.labels(status="error", deployment=self.deployment_name).inc()
-
-            # 廣播 Whisper API 錯誤到前端
             await self._broadcast_transcription_error(session_id, chunk_sequence, "whisper_api_error", f"Azure OpenAI Whisper WebM 轉錄失敗: {str(e)}")
             return None
-
         finally:
-            # Task 5: 減少併發處理數量
             CONCURRENT_JOBS_GAUGE.dec()
 
     async def _save_and_push_result(self, session_id: UUID, chunk_sequence: int, transcript_result: Dict[str, Any]):
         """儲存轉錄結果並推送到前端"""
         try:
-            # 儲存到資料庫
             supabase = get_supabase_client()
-
-            # 獲取 session 的 started_at 時間戳（如果有的話）
             session_response = supabase.table("sessions").select("started_at").eq("id", str(session_id)).limit(1).execute()
-
-            # 讀取 started_at（若無則為 None）
             started_at = None
             if session_response.data and session_response.data[0].get('started_at'):
                 started_at = session_response.data[0]['started_at']
-
-            # 計算段落相對時間（若有 started_at 可用於日後絕對時間換算）
             chunk_start_seconds = chunk_sequence * settings.AUDIO_CHUNK_DURATION_SEC
             start_time = chunk_start_seconds + transcript_result.get('start_offset', 0)
             end_time = chunk_start_seconds + transcript_result.get('end_offset', settings.AUDIO_CHUNK_DURATION_SEC)
-
             if started_at:
                 logger.info(
                     f"🕐 [時間計算 v2] 精確開始時間: {started_at}, "
@@ -1370,7 +1256,6 @@ class SimpleAudioTranscriptionService:
                     f"offset=({transcript_result.get('start_offset', 0)}s-{transcript_result.get('end_offset', 0)}s) → " \
                     f"relative=({start_time}s-{end_time}s)"
                 )
-
             segment_data = {
                 "session_id": str(session_id),
                 "chunk_sequence": chunk_sequence,
@@ -1378,18 +1263,13 @@ class SimpleAudioTranscriptionService:
                 "start_time": start_time,
                 "end_time": end_time,
                 "confidence": 1.0,
-                "language": transcript_result.get('language', 'zh-TW'),
+                "lang_code": transcript_result.get('language', 'zh-TW'),
                 "created_at": transcript_result['timestamp']
             }
-
             response = supabase.table("transcript_segments").insert(segment_data).execute()
-
             if response.data:
                 segment_id = response.data[0]['id']
                 logger.debug(f"Saved transcript segment {segment_id} for chunk {chunk_sequence}")
-
-                # 透過 WebSocket 廣播轉錄結果
-                # 若尚未廣播 active 相位，先送出
                 if str(session_id) not in _active_phase_sent:
                     logger.info(f"🚀 [轉錄推送] 首次廣播 active 相位到 session {session_id}")
                     await transcript_manager.broadcast(
@@ -1398,34 +1278,27 @@ class SimpleAudioTranscriptionService:
                     )
                     _active_phase_sent.add(str(session_id))
                     logger.info(f"✅ [轉錄推送] Active 相位廣播完成 for session {session_id}")
-
-                # 構建逐字稿片段訊息
                 transcript_message = {
                     "type": "transcript_segment",
                     "session_id": str(session_id),
                     "segment_id": segment_id,
                     "text": transcript_result['text'],
                     "chunk_sequence": chunk_sequence,
-                    "start_sequence": chunk_sequence,  # 添加 start_sequence 欄位
+                    "start_sequence": chunk_sequence,
                     "start_time": segment_data['start_time'],
                     "end_time": segment_data['end_time'],
                     "confidence": segment_data['confidence'],
                     "timestamp": segment_data['created_at']
                 }
-
                 logger.info(f"📡 [轉錄推送] 廣播逐字稿片段到 session {session_id}:")
                 logger.info(f"   - 文字: '{transcript_result['text'][:50]}{'...' if len(transcript_result['text']) > 50 else ''}'")
                 logger.info(f"   - 序號: {chunk_sequence}")
                 logger.info(f"   - 時間: {segment_data['start_time']}s - {segment_data['end_time']}s")
-
                 await transcript_manager.broadcast(
                     json.dumps(transcript_message),
                     str(session_id)
                 )
-
                 logger.info(f"✅ [轉錄推送] 逐字稿片段廣播完成 for session {session_id}")
-
-                # 廣播轉錄完成消息
                 logger.info(f"廣播轉錄完成訊息到 session {session_id}")
                 await transcript_manager.broadcast(
                     json.dumps({
@@ -1436,15 +1309,8 @@ class SimpleAudioTranscriptionService:
                     str(session_id)
                 )
                 logger.info(f"轉錄任務完成 for session: {session_id}, chunk: {chunk_sequence}")
-
         except Exception as e:
             logger.error(f"Failed to save/push transcript for chunk {chunk_sequence}: {e}")
-                # 廣播轉錄失敗錯誤到前端
-            await self._broadcast_transcription_error(session_id, chunk_sequence, "database_error", f"資料庫操作失敗: {str(e)}")
-
-        except Exception as e:
-            logger.error(f"Failed to save/push transcript for chunk {chunk_sequence}: {e}")
-            # 廣播轉錄失敗錯誤到前端
             await self._broadcast_transcription_error(session_id, chunk_sequence, "database_error", f"資料庫操作失敗: {str(e)}")
 
     async def _broadcast_transcription_error(self, session_id: UUID, chunk_sequence: int, error_type: str, error_message: str):
