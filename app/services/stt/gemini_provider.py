@@ -73,7 +73,7 @@ class GeminiProvider(ISTTProvider):
             "chunk_sequence": chunk_seq,
             "session_id": str(session_id),
             "timestamp": datetime.utcnow().isoformat(),
-            "start_offset": 0,
-            "end_offset": 0,
+            "start_time": chunk_seq * settings.AUDIO_CHUNK_DURATION_SEC,
+            "end_time": (chunk_seq + 1) * settings.AUDIO_CHUNK_DURATION_SEC,
             "provider": self.name(),
         }

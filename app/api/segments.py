@@ -1,7 +1,5 @@
 """
-StudyScriber 音檔切片上傳 API (REST API 簡化架構)
-
-實作完整 10s WebM 檔案上傳，背景處理轉錄任務
+StudyScriber 音檔切片上傳 API
 """
 
 import logging
@@ -18,7 +16,8 @@ from app.services.transcript_feed import get_transcript_hub
 from app.core.container import container
 from app.utils.validators import valid_webm
 from app.services.stt.factory import get_provider
-from app.services.stt.whisper_provider import save_and_push_result
+from app.services.stt.save_utils import save_and_push_result
+
 
 logger = logging.getLogger(__name__)
 

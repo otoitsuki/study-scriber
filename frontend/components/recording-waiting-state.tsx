@@ -57,7 +57,7 @@ export function RecordingWaitingState({
                             Recording… {formatTime(recordingTime)}
                         </div>
                         <div className="text-xs">
-                            {error ? "轉錄過程中發生錯誤" : "錄音&轉錄中"}
+                            {error ? "轉錄過程中發生錯誤" : "轉錄中"}
                         </div>
                     </div>
                 )}

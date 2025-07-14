@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
+
 import os
 
 # 根據執行環境決定要讀取的 .env 檔案。
@@ -46,7 +47,10 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(False, alias="debug")
 
     # 音頻切片配置
-    AUDIO_CHUNK_DURATION_SEC: int = int(os.getenv("AUDIO_CHUNK_DURATION_SEC", 10))
+    AUDIO_CHUNK_DURATION_SEC: int = Field(
+    default=15,
+    env="AUDIO_CHUNK_DURATION_SEC"
+)
 
     # 逐字稿顯示配置
     TRANSCRIPT_DISPLAY_INTERVAL_SEC: int = Field(10, description="逐字稿時間戳顯示間隔（秒）")
@@ -96,6 +100,10 @@ class Settings(BaseSettings):
     QUEUE_TIMEOUT_SECONDS: int = Field(300, description="隊列超時（秒）")
 
     # 你可以依需求再加更多欄位
+
+    # 靜音判斷參數
+    SILENCE_NOISE_DB: float = Field(-35.0, description="靜音判斷 dB 門檻 (負值)", env="SILENCE_NOISE_DB")
+    SILENCE_DURATION_SEC: float = Field(0.3, description="靜音判斷持續秒數", env="SILENCE_DURATION_SEC")
 
     model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 

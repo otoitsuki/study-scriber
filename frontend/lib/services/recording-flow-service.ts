@@ -17,7 +17,9 @@ const setAppState = useAppStore.getState().setState
  */
 import { STTProvider } from '../api'
 
-export const AUDIO_CHUNK_SEC = Number(process.env.NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_SEC ?? "15")
+const AUDIO_CHUNK_SEC = Number(
+  process.env.NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_SEC ?? "15"
+);
 
 export class RecordingFlowService extends BaseService {
   protected readonly serviceName = 'RecordingFlowService'
@@ -285,8 +287,9 @@ export class RecordingFlowService extends BaseService {
            b. 否則用 chunk_sequence × 切片長度
         */
         const startSec =
-          msg.start_time ??
-          (msg.chunk_sequence ?? 0) * AUDIO_CHUNK_SEC
+          msg.start_time !== undefined
+            ? msg.start_time
+            : (msg.chunk_sequence ?? 0) * AUDIO_CHUNK_SEC;
 
         /* 3. 每隔 labelIntervalSec 秒插入一條時間碼 */
         if (startSec - this.lastLabelSec >= this.labelIntervalSec) {
