@@ -6,6 +6,7 @@ import { SERVICE_KEYS, type ISessionService, type IRecordingService, type ITrans
 import type { SessionResponse } from '../api'
 import { useAppStore } from '../app-store-zustand'
 import { formatTime } from '../../utils/time'
+
 const setAppState = useAppStore.getState().setState
 
 /**
@@ -15,6 +16,8 @@ const setAppState = useAppStore.getState().setState
  * 提供統一的錄音流程管理
  */
 import { STTProvider } from '../api'
+
+export const AUDIO_CHUNK_SEC = Number(process.env.NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_SEC ?? "15")
 
 export class RecordingFlowService extends BaseService {
   protected readonly serviceName = 'RecordingFlowService'
@@ -27,7 +30,7 @@ export class RecordingFlowService extends BaseService {
   // 流程狀態
   private currentSession: SessionResponse | null = null
   private isFlowActive = false
-  private labelIntervalSec = Number(process.env.NEXT_PUBLIC_TRANSCRIPT_LABEL_INTERVAL ?? '10')
+  private labelIntervalSec = Number(process.env.NEXT_PUBLIC_TRANSCRIPT_LABEL_INTERVAL ?? '15')
   private lastLabelSec = 0
   private transcriptEntries: Array<{ time: string; text: string }> = []
 
@@ -270,38 +273,40 @@ export class RecordingFlowService extends BaseService {
   /**
    * 處理逐字稿訊息
    */
-  private handleTranscriptMessage = (message: TranscriptMessage): void => {
-    this.logInfo('收到逐字稿訊息', { type: message.type, hasText: !!message.text })
-
+  private handleTranscriptMessage = (msg: TranscriptMessage): void => {
     try {
-      if (message.type === 'transcript' && message.text) {
-        const startSec = message.start_time ?? 0
+      // 1. 判斷訊息型別
+      if (
+        (msg.type === 'transcript' || msg.type === 'transcript_segment') &&
+        msg.text
+      ) {
+        /* 2. 計算 startSec
+           a. 後端若有 start_time → 用它
+           b. 否則用 chunk_sequence × 切片長度
+        */
+        const startSec =
+          msg.start_time ??
+          (msg.chunk_sequence ?? 0) * AUDIO_CHUNK_SEC
 
-        // 每隔 labelIntervalSec 秒插入一個時間戳標籤
+        /* 3. 每隔 labelIntervalSec 秒插入一條時間碼 */
         if (startSec - this.lastLabelSec >= this.labelIntervalSec) {
-          this.transcriptEntries.push({ time: formatTime(startSec), text: '' })
+          this.transcriptEntries.push({
+            time: formatTime(startSec),
+            text: '',              // 純時間標籤
+          })
           this.lastLabelSec = startSec
         }
 
-        // 真正的逐字稿段落
+        /* 4. 真正的逐字稿行 */
         this.transcriptEntries.push({
           time: formatTime(startSec),
-          text: message.text.trim()
+          text: msg.text.trim(),
         })
-
-        this.logInfo('逐字稿項目已添加', {
-          startSec,
-          textLength: message.text.trim().length,
-          totalEntries: this.transcriptEntries.length
-        })
-      } else if (message.type === 'error') {
-        this.logWarning('逐字稿錯誤', {
-          errorType: message.error_type,
-          errorMessage: message.error_message
-        })
+      } else if (msg.type === 'error') {
+        this.logWarning('逐字稿錯誤', msg)
       }
-    } catch (error) {
-      this.logWarning('處理逐字稿訊息失敗', error)
+    } catch (e) {
+      this.logWarning('處理逐字稿訊息失敗', e)
     }
   }
 

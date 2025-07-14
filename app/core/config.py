@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     WHISPER_DEPLOYMENT_NAME: str = ""
     WHISPER_LANGUAGE: str = "zh-TW"
     GPT4O_DEPLOYMENT_NAME: str = Field(
-        default="gpt4o-transcribe",        # 你在 Azure 建的部署名稱
+        default="gpt4o",        # 你在 Azure 建的部署名稱
         env="GPT4O_DEPLOYMENT_NAME"
     )
     GPT4O_TRANSCRIBE_PROMPT: str = Field(

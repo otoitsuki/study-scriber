@@ -121,6 +121,7 @@ class GPT4oProvider(ISTTProvider):
             "session_id": str(session_id),
             "lang_code": canonical,
             "timestamp": datetime.utcnow().isoformat(),
+            "duration": s.AUDIO_CHUNK_DURATION_SEC,
         }
 
     # ---------- meta -------------------------------------------------
