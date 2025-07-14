@@ -129,7 +129,7 @@ async def process_and_transcribe(sid: UUID, seq: int, webm_blob: bytes):
         # 3. 啟動轉錄服務
         try:
             provider = get_provider(sid)
-            logger.info(f"🎯 [轉錄啟動] 開始轉錄切片 {seq} (provider={provider.name()})")
+            logger.info(f"🎯 [轉錄啟動] 開始轉錄切片 {seq} (provider={provider.name})")
             result = await provider.transcribe(webm_blob, sid, seq)
             if result:
                 await save_and_push_result(sid, seq, result)

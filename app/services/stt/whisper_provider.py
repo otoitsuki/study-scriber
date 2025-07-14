@@ -29,8 +29,6 @@ class WhisperProvider(ISTTProvider):
         settings = get_settings()
         return getattr(settings, "WHISPER_MAX_REQUESTS", 180)
 
-    def name(self) -> str:
-        return self.name
 
     async def transcribe(self, audio: bytes, session_id: UUID, chunk_seq: int) -> Dict[str, Any] | None:
         # 查詢 canonical lang_code

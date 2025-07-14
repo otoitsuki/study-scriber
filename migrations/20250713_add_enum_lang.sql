@@ -1,3 +1,0 @@
-ALTER TYPE lang_code ADD VALUE IF NOT EXISTS 'zh';
-
-ALTER TYPE lang_code ADD VALUE IF NOT EXISTS 'en';

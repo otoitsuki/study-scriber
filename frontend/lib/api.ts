@@ -184,7 +184,7 @@ export interface SessionCreateRequest {
 }
 
 // STT Provider 類型定義
-export type STTProvider = 'whisper' | 'gemini'
+export type STTProvider = 'whisper' | 'gemini' | 'gpt4o'
 
 export interface SessionResponse {
   id: string

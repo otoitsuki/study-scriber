@@ -14,13 +14,25 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
     DB_MODE: str = "supabase"
+    STT_PROVIDER_DEFAULT: str = Field(
+        default="whisper",
+        env="DEFAULT_STT_PROVIDER",
+    )
     AZURE_OPENAI_API_KEY: str = ""
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_VERSION: str = "2024-02-01"
     WHISPER_DEPLOYMENT_NAME: str = ""
     WHISPER_LANGUAGE: str = "zh-TW"
-    # --- STT Provider 新增設定 ---
-    STT_PROVIDER_DEFAULT: str = Field("whisper", description="預設語音轉文字 Provider ('whisper' or 'gemini')")
+    GPT4O_DEPLOYMENT_NAME: str = Field(
+        default="gpt4o-transcribe",        # 你在 Azure 建的部署名稱
+        env="GPT4O_DEPLOYMENT_NAME"
+    )
+    GPT4O_TRANSCRIBE_PROMPT: str = Field(
+        default="",
+        env="GPT4O_TRANSCRIBE_PROMPT"
+    )
+    # (選) 速率限制
+    GPT4O_MAX_REQUESTS: int = 60
     GEMINI_ENDPOINT: str = Field("", description="Vertex AI 端點，如 us-central1-aiplatform.googleapis.com")
     GEMINI_API_KEY: str = Field("", description="GCP 服務帳戶 API Key")
     GEMINI_PROMPT: str = Field("請輸出逐字稿：", description="Gemini system prompt")
@@ -34,7 +46,7 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(False, alias="debug")
 
     # 音頻切片配置
-    AUDIO_CHUNK_DURATION_SEC: int = int(os.getenv("AUDIO_CHUNK_DURATION_SEC", 28))
+    AUDIO_CHUNK_DURATION_SEC: int = int(os.getenv("AUDIO_CHUNK_DURATION_SEC", 10))
 
     # 逐字稿顯示配置
     TRANSCRIPT_DISPLAY_INTERVAL_SEC: int = Field(10, description="逐字稿時間戳顯示間隔（秒）")

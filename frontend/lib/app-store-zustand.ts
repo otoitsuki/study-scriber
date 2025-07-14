@@ -101,7 +101,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   timerId: null,
   transcriptEntries: [],
   editorContent: '',
-  sttProvider: 'whisper' as STTProvider,
+  sttProvider: 'gpt4o' as STTProvider,
 
   // === 核心業務操作 ===
 
@@ -378,7 +378,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       timerId: null,
       transcriptEntries: [],
       editorContent: '',
-      sttProvider: 'whisper' as STTProvider
+      sttProvider: 'gpt4o' as STTProvider,
     })
   }
 }))

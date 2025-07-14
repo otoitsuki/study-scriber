@@ -1,87 +1,129 @@
+from __future__ import annotations
+
 import logging
-import uuid
-from io import BytesIO
-from typing import Dict, Any
-from pydantic import SecretStr
-from uuid import UUID
-from openai import AsyncAzureOpenAI
-from app.core.config import get_settings
-from app.services.stt.base import ISTTProvider
-from app.core.ffmpeg import detect_audio_format, webm_to_wav
-from app.services.r2_client import get_r2_client
-from app.lib.httpx_timeout import get_httpx_timeout
+import tempfile
 from datetime import datetime
-from app.lib.settings_utils import get_chunk_duration
-from app.services.stt.lang_map import to_gpt4o
+from typing import Any, Dict
+from uuid import UUID
+
+from openai import AsyncAzureOpenAI, RateLimitError
+
+from app.core.config import get_settings
+from app.core.ffmpeg import detect_audio_format, webm_to_wav
 from app.db.database import get_supabase_client
-
-
-s = get_settings()
-api_key_raw = s.AZURE_OPENAI_API_KEY
+from app.services.stt.interfaces import ISTTProvider
+from app.services.stt.lang_map import to_gpt4o
+from app.utils.timer import PerformanceTimer
 
 logger = logging.getLogger(__name__)
+s = get_settings()
 
-__all__ = ["GPT4oProvider"]
 
 class GPT4oProvider(ISTTProvider):
     """
-    使用 Azure OpenAI GPT-4o 模型的語音轉文字 (STT) 提供者。
+    Azure GPT-4o Speech-to-Text Provider
+    依 session.lang_code → ISO-639-1 → GPT4o 語音端點
     """
-    def __init__(self):
-        settings = get_settings()
-        if not all([
-            settings.AZURE_OPENAI_API_KEY,
-            settings.AZURE_OPENAI_ENDPOINT,
-            settings.GPT4O_DEPLOYMENT_NAME
-        ]):
-            raise ValueError("GPT-4o 所需的 Azure OpenAI 憑證或部署名稱尚未設定。")
-        # 兼容 SecretStr 與普通 str
-        api_key = (
-            api_key_raw.get_secret_value()
-            if isinstance(api_key_raw, SecretStr)
-            else api_key_raw
-        )
-        self.client = AsyncAzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=s.AZURE_OPENAI_ENDPOINT,
-            api_version="2024-05-01-preview",
-            timeout=get_httpx_timeout(),
-        )
-        self.model_name = settings.GPT4O_DEPLOYMENT_NAME
-        self.r2_bucket = settings.R2_BUCKET_NAME
-        self.r2_client = get_r2_client()
 
-    def name(self) -> str:
-        return "gpt4o"
+    name = "gpt4o"
 
-    def max_rpm(self) -> int:
-        # TODO: 根據設定調整
-        from app.core.config import get_settings
-        settings = get_settings()
-        return getattr(settings, "GPT4O_MAX_REQUESTS", 60)
+    _client: AsyncAzureOpenAI | None = None
 
-    async def transcribe(self, audio: bytes, session_id: UUID, chunk_seq: int) -> Dict[str, Any] | None:
-        # 查詢 canonical lang_code
+    # ---------- util -------------------------------------------------
+    @classmethod
+    def _client_lazy(cls) -> AsyncAzureOpenAI:
+        if cls._client is None:
+            api_key_raw = s.AZURE_OPENAI_API_KEY
+            api_key = (
+                api_key_raw.get_secret_value()
+                if hasattr(api_key_raw, "get_secret_value")
+                else api_key_raw
+            )
+            cls._client = AsyncAzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=s.AZURE_OPENAI_ENDPOINT,
+                api_version="2024-06-01",
+                timeout=(5, 55),
+                max_retries=2,
+            )
+        return cls._client
+
+    # ---------- public API -------------------------------------------
+    async def transcribe(
+        self, audio: bytes, session_id: UUID, chunk_seq: int
+    ) -> Dict[str, Any] | None:
+        """
+        1. 轉 webm→wav（GPT-4o 目前僅支援 wav）
+        2. 呼叫 Azure GPT-4o 端點
+        3. 回傳統一 dict 給呼叫端
+        """
+
+        # 取得 canonical 語言碼（zh-TW / en-US …）
         supa = get_supabase_client()
-        row = supa.table("sessions").select("lang_code").eq("id", str(session_id)).single().execute()
+        row = (
+            supa.table("sessions")
+            .select("lang_code")
+            .eq("id", str(session_id))
+            .single()
+            .execute()
+        )
         canonical = (row.data or {}).get("lang_code", "zh-TW")
-        provider_lang = to_gpt4o(canonical)
-        # TODO: call Azure GPT-4o transcribe endpoint
-        # 先檢查格式，僅支援 webm/wav
+        api_lang = to_gpt4o(canonical)  # zh / en / auto
+
+        # ---------- (1) 準備 wav ----------
         fmt = detect_audio_format(audio)
         if fmt not in ("webm", "wav"):
-            logger.error(f"[GPT4o] 不支援的音訊格式: {fmt}")
+            logger.error("GPT4o 不支援音訊格式 %s", fmt)
             return None
+
         try:
             if fmt == "webm":
                 wav_bytes = await webm_to_wav(audio)
                 if not wav_bytes:
-                    logger.error(f"[GPT4o] webm_to_wav 轉換失敗 (session={session_id}, chunk={chunk_seq})")
+                    logger.error("webm_to_wav 失敗，session=%s chunk=%s", session_id, chunk_seq)
                     return None
             else:
                 wav_bytes = audio
-            # 這裡預留後續上傳與回傳格式，暫以 NotImplementedError 表示
-            raise NotImplementedError("GPT-4o provider 尚未實作上傳與回傳")
         except Exception as e:
-            logger.error(f"[GPT4o] 轉檔或上傳過程異常: {e}")
+            logger.error("WebM→WAV 轉換異常: %s", e)
             return None
+
+        # ---------- (2) 呼叫 GPT-4o ----------
+        client = self._client_lazy()
+
+        with PerformanceTimer(f"gpt4o chunk {chunk_seq}"):
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
+                fp.write(wav_bytes)
+                fp.flush()
+                try:
+                    resp = await client.audio.transcriptions.create(
+                        model=s.GPT4O_DEPLOYMENT_NAME,
+                        file=open(fp.name, "rb"),
+                        language=api_lang,
+                        response_format="json",
+                        prompt=s.GPT4O_TRANSCRIBE_PROMPT
+                    )
+                except RateLimitError as e:
+                    logger.warning("GPT4o 429: %s", e)
+                    raise
+                except Exception as e:
+                    logger.error("GPT4o API error: %s", e, exc_info=True)
+                    return None
+
+        text: str = getattr(resp, "text", "").strip()
+        if not text:
+            logger.warning("GPT4o 空白文字 (session=%s chunk=%s)", session_id, chunk_seq)
+            return None
+
+        return {
+            "text": text,
+            "chunk_sequence": chunk_seq,
+            "session_id": str(session_id),
+            "lang_code": canonical,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+    # ---------- meta -------------------------------------------------
+    def max_rpm(self) -> int:
+        """回傳每分鐘最大呼叫數（config 可調）。"""
+        return getattr(s, "GPT4O_MAX_REQUESTS", 60)
