@@ -21,12 +21,22 @@ vi.mock('../service-container', () => ({
     }
 }))
 
+// 1. 修改 RecordingFlowService 讓 setAppState 可注入
+class TestableRecordingFlowService extends RecordingFlowService {
+    constructor(setAppState: (state: string) => void) {
+        super()
+        // @ts-ignore
+        this.setAppState = setAppState
+    }
+}
+
 describe('RecordingFlowService - 核心功能', () => {
     let recordingFlowService: RecordingFlowService
     let mockSessionService: any
     let mockRecordingService: any
     let mockTranscriptService: any
     let mockServiceContainer: any
+    let setAppStateMock: any
 
     // 測試用的會話數據
     const mockSessionResponse: SessionResponse = {
@@ -42,16 +52,20 @@ describe('RecordingFlowService - 核心功能', () => {
     beforeEach(async () => {
         // 創建 mock 服務
         mockSessionService = {
-            ensureRecordingSession: vi.fn(),
-            waitForSessionReady: vi.fn(),
-            finishSession: vi.fn()
+            ensureRecordingSession: vi.fn().mockResolvedValue(mockSessionResponse),
+            createRecordingSession: vi.fn().mockResolvedValue(mockSessionResponse),
+            waitForSessionReady: vi.fn().mockResolvedValue(true),
+            finishSession: vi.fn(),
+            checkActiveSession: vi.fn(),
         } as Partial<ISessionService>
 
         mockRecordingService = {
+            requestPermission: vi.fn().mockResolvedValue(true),
             startRecording: vi.fn(),
             stopRecording: vi.fn(),
             isRecording: vi.fn(),
-            getRecordingTime: vi.fn()
+            getRecordingTime: vi.fn(),
+            getRecordingState: vi.fn(),
         } as Partial<IRecordingService>
 
         mockTranscriptService = {
@@ -59,7 +73,8 @@ describe('RecordingFlowService - 核心功能', () => {
             disconnect: vi.fn(),
             addTranscriptListener: vi.fn(),
             removeTranscriptListener: vi.fn(),
-            isConnected: vi.fn()
+            isConnected: vi.fn(),
+            start: vi.fn(),
         } as Partial<ITranscriptService>
 
         // 設置服務容器 mock
@@ -77,7 +92,13 @@ describe('RecordingFlowService - 核心功能', () => {
             }
         })
 
-        recordingFlowService = new RecordingFlowService()
+        // mock setAppState
+        setAppStateMock = vi.fn()
+        // 這裡用 spyOn 取代 setAppState
+        const zustand = await import('../../app-store-zustand')
+        vi.spyOn(zustand.useAppStore.getState(), 'setState').mockImplementation(setAppStateMock)
+
+        recordingFlowService = new TestableRecordingFlowService(setAppStateMock)
         await recordingFlowService.initialize()
         vi.clearAllMocks()
     })
@@ -89,7 +110,7 @@ describe('RecordingFlowService - 核心功能', () => {
     describe('startRecordingFlow - 成功情境', () => {
         test('成功啟動錄音流程應該返回 SessionResponse', async () => {
             // Arrange
-            mockSessionService.ensureRecordingSession.mockResolvedValueOnce(mockSessionResponse)
+            mockSessionService.createRecordingSession.mockResolvedValueOnce(mockSessionResponse)
             mockSessionService.waitForSessionReady.mockResolvedValueOnce(true)
             mockTranscriptService.connect.mockResolvedValueOnce(undefined)
             mockRecordingService.startRecording.mockResolvedValueOnce(undefined)
@@ -104,7 +125,7 @@ describe('RecordingFlowService - 核心功能', () => {
             expect(result.type).toBe('recording')
 
             // 驗證服務調用
-            expect(mockSessionService.ensureRecordingSession).toHaveBeenCalledWith('測試標題', undefined)
+            expect(mockSessionService.createRecordingSession).toHaveBeenCalledWith('測試標題', undefined, undefined, undefined)
             expect(mockSessionService.waitForSessionReady).toHaveBeenCalledWith(mockSessionResponse.id, 5000)
             expect(mockTranscriptService.connect).toHaveBeenCalledWith(mockSessionResponse.id)
             expect(mockRecordingService.startRecording).toHaveBeenCalledWith(mockSessionResponse.id)
@@ -116,7 +137,7 @@ describe('RecordingFlowService - 核心功能', () => {
 
         test('當標題為空時，應該使用預設標題', async () => {
             // Arrange
-            mockSessionService.ensureRecordingSession.mockResolvedValueOnce(mockSessionResponse)
+            mockSessionService.createRecordingSession.mockResolvedValueOnce(mockSessionResponse)
             mockSessionService.waitForSessionReady.mockResolvedValueOnce(true)
             mockTranscriptService.connect.mockResolvedValueOnce(undefined)
             mockRecordingService.startRecording.mockResolvedValueOnce(undefined)
@@ -125,9 +146,9 @@ describe('RecordingFlowService - 核心功能', () => {
             await recordingFlowService.startRecordingFlow()
 
             // Assert
-            expect(mockSessionService.ensureRecordingSession).toHaveBeenCalledWith(
+            expect(mockSessionService.createRecordingSession).toHaveBeenCalledWith(
                 expect.stringMatching(/錄音筆記 \d{1,2}\/\d{1,2}\/\d{4}/),
-                undefined
+                undefined, undefined, undefined
             )
         })
     })
@@ -136,7 +157,7 @@ describe('RecordingFlowService - 核心功能', () => {
         test('當會話創建失敗時，應該拋出錯誤', async () => {
             // Arrange
             const sessionError = new Error('會話創建失敗')
-            mockSessionService.ensureRecordingSession.mockRejectedValueOnce(sessionError)
+            mockSessionService.createRecordingSession.mockRejectedValueOnce(sessionError)
 
             // Act & Assert
             await expect(recordingFlowService.startRecordingFlow('測試標題'))
@@ -153,7 +174,7 @@ describe('RecordingFlowService - 核心功能', () => {
 
         test('當會話準備失敗時，應該拋出錯誤', async () => {
             // Arrange
-            mockSessionService.ensureRecordingSession.mockResolvedValueOnce(mockSessionResponse)
+            mockSessionService.createRecordingSession.mockResolvedValueOnce(mockSessionResponse)
             mockSessionService.waitForSessionReady.mockResolvedValueOnce(false)
 
             // Act & Assert
@@ -167,7 +188,7 @@ describe('RecordingFlowService - 核心功能', () => {
 
         test('當逐字稿服務連接失敗時，應該拋出錯誤', async () => {
             // Arrange
-            mockSessionService.ensureRecordingSession.mockResolvedValueOnce(mockSessionResponse)
+            mockSessionService.createRecordingSession.mockResolvedValueOnce(mockSessionResponse)
             mockSessionService.waitForSessionReady.mockResolvedValueOnce(true)
             const transcriptError = new Error('逐字稿服務連接失敗')
             mockTranscriptService.connect.mockRejectedValueOnce(transcriptError)
@@ -182,7 +203,7 @@ describe('RecordingFlowService - 核心功能', () => {
 
         test('當錄音服務啟動失敗時，應該拋出錯誤', async () => {
             // Arrange
-            mockSessionService.ensureRecordingSession.mockResolvedValueOnce(mockSessionResponse)
+            mockSessionService.createRecordingSession.mockResolvedValueOnce(mockSessionResponse)
             mockSessionService.waitForSessionReady.mockResolvedValueOnce(true)
             mockTranscriptService.connect.mockResolvedValueOnce(undefined)
             const recordingError = new Error('錄音啟動失敗')
@@ -195,7 +216,7 @@ describe('RecordingFlowService - 核心功能', () => {
 
         test('當流程已在運行時，應該先停止現有流程', async () => {
             // Arrange - 先啟動一個流程
-            mockSessionService.ensureRecordingSession.mockResolvedValue(mockSessionResponse)
+            mockSessionService.createRecordingSession.mockResolvedValue(mockSessionResponse)
             mockSessionService.waitForSessionReady.mockResolvedValue(true)
             mockTranscriptService.connect.mockResolvedValue(undefined)
             mockRecordingService.startRecording.mockResolvedValue(undefined)
@@ -217,7 +238,7 @@ describe('RecordingFlowService - 核心功能', () => {
     describe('stopRecordingFlow', () => {
         beforeEach(async () => {
             // 先啟動錄音流程
-            mockSessionService.ensureRecordingSession.mockResolvedValueOnce(mockSessionResponse)
+            mockSessionService.createRecordingSession.mockResolvedValueOnce(mockSessionResponse)
             mockSessionService.waitForSessionReady.mockResolvedValueOnce(true)
             mockTranscriptService.connect.mockResolvedValueOnce(undefined)
             mockRecordingService.startRecording.mockResolvedValueOnce(undefined)
@@ -246,6 +267,43 @@ describe('RecordingFlowService - 核心功能', () => {
         })
     })
 
+    describe('Stop → processing → finished 狀態流', () => {
+        beforeEach(async () => {
+            // 先啟動錄音流程
+            mockSessionService.createRecordingSession.mockResolvedValueOnce(mockSessionResponse)
+            mockSessionService.waitForSessionReady.mockResolvedValueOnce(true)
+            mockTranscriptService.connect.mockResolvedValueOnce(undefined)
+            mockTranscriptService.start.mockResolvedValueOnce(undefined)
+            mockRecordingService.startRecording.mockResolvedValueOnce(undefined)
+            mockRecordingService.isRecording.mockReturnValue(true)
+
+            await recordingFlowService.startRecordingFlow('測試標題')
+        })
+
+        test('停止錄音後應進入 processing，收到 transcript_complete 進入 finished 並斷線', async () => {
+            // Arrange
+            mockRecordingService.stopRecording.mockResolvedValueOnce(undefined)
+            // 不要立即斷線
+            mockTranscriptService.disconnect.mockResolvedValueOnce(undefined)
+            mockSessionService.finishSession.mockResolvedValueOnce(undefined)
+
+            // Act: 停止錄音
+            await recordingFlowService.stopRecordingFlow()
+
+            // Assert: 應該進入 processing 狀態
+            expect(setAppStateMock).toHaveBeenCalledWith('processing')
+            // 模擬收到 transcript_complete 訊息
+            const msg = { type: 'transcript_complete', session_id: mockSessionResponse.id }
+            // 需將 handleTranscriptMessage 設為 public 或用 (as any)
+            await (recordingFlowService as any).handleTranscriptMessage(msg)
+
+            // 應該進入 finished 狀態並斷線
+            expect(setAppStateMock).toHaveBeenCalledWith('finished')
+            expect(mockTranscriptService.disconnect).toHaveBeenCalledWith(mockSessionResponse.id)
+            expect((recordingFlowService as any).isFlowActive).toBe(false)
+        })
+    })
+
     describe('狀態管理', () => {
         test('初始狀態應該正確', () => {
             expect(recordingFlowService.isFlowRunning()).toBe(false)
@@ -255,7 +313,7 @@ describe('RecordingFlowService - 核心功能', () => {
 
         test('啟動後狀態應該正確', async () => {
             // Arrange
-            mockSessionService.ensureRecordingSession.mockResolvedValueOnce(mockSessionResponse)
+            mockSessionService.createRecordingSession.mockResolvedValueOnce(mockSessionResponse)
             mockSessionService.waitForSessionReady.mockResolvedValueOnce(true)
             mockTranscriptService.connect.mockResolvedValueOnce(undefined)
             mockRecordingService.startRecording.mockResolvedValueOnce(undefined)

@@ -4,10 +4,9 @@ import { BaseService } from './base-service'
 import { serviceContainer } from './service-container'
 import { SERVICE_KEYS, type ISessionService, type IRecordingService, type ITranscriptService, type TranscriptMessage } from './interfaces'
 import type { SessionResponse } from '../api'
+import type { AppState } from '../../types/app-state'
 import { useAppStore } from '../app-store-zustand'
 import { formatTime } from '../../utils/time'
-
-const setAppState = useAppStore.getState().setState
 
 /**
  * 錄音流程管理服務
@@ -32,9 +31,24 @@ export class RecordingFlowService extends BaseService {
   // 流程狀態
   private currentSession: SessionResponse | null = null
   private isFlowActive = false
-  private labelIntervalSec = Number(process.env.NEXT_PUBLIC_TRANSCRIPT_LABEL_INTERVAL ?? '15')
+  private labelIntervalSec = (() => {
+    const raw = process.env.NEXT_PUBLIC_TRANSCRIPT_LABEL_INTERVAL
+    const n = Number(raw)
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 15
+  })()
   private lastLabelSec = 0
   private transcriptEntries: Array<{ time: string; text: string }> = []
+
+  private setAppState: (s: AppState) => void
+
+  constructor(setAppStateFn?: (s: AppState) => void) {
+    super()
+    if (setAppStateFn) {
+      this.setAppState = setAppStateFn
+    } else {
+      this.setAppState = useAppStore.getState().setState
+    }
+  }
 
   /**
    * 服務初始化
@@ -79,7 +93,7 @@ export class RecordingFlowService extends BaseService {
     try {
       // ① 先拿權限
       if (!(await this.recordingService.requestPermission())) {
-        setAppState('default')
+        this.setAppState('default')
         throw new Error('麥克風權限被拒')
       }
 
@@ -104,13 +118,13 @@ export class RecordingFlowService extends BaseService {
         sttProvider
       )
       if (!session) {
-        setAppState('default')
+        this.setAppState('default')
         throw new Error('建立 Session 失敗')
       }
 
       // ③ 啟動逐字稿服務
       await this.transcriptService.start(session.id)
-      setAppState('recording_waiting')
+      this.setAppState('processing')
 
       // 步驟 1: 使用新建立的會話
       this.currentSession = session
@@ -307,6 +321,13 @@ export class RecordingFlowService extends BaseService {
         })
       } else if (msg.type === 'error') {
         this.logWarning('逐字稿錯誤', msg)
+      } else if (msg.type === 'transcript_complete') {
+        this.setAppState('finished')
+        if (this.currentSession) {
+          this.transcriptService.disconnect(this.currentSession.id)
+        }
+        this.isFlowActive = false
+        this.logSuccess('收到 transcript_complete，流程結束')
       }
     } catch (e) {
       this.logWarning('處理逐字稿訊息失敗', e)

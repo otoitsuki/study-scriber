@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
+import json
 
 
 class MockSimpleAudioTranscriptionService:
@@ -342,3 +343,33 @@ class TestChunkProcessingFlow:
 
         # 驗證低延遲（模擬環境）
         assert latency < 0.5  # 少於 500ms
+
+
+@pytest.mark.asyncio
+async def test_transcript_complete_broadcast(monkeypatch, session_id, sample_webm_data):
+    """驗證多 chunk 處理完畢後，會廣播 transcript_complete"""
+    broadcast_calls = []
+
+    # 模擬廣播函式
+    async def mock_broadcast(message, session_id_str):
+        broadcast_calls.append(json.loads(message))
+
+    # 假設 save_and_push_result 會在最後一片段後呼叫此廣播
+    monkeypatch.setattr("app.ws.transcript_feed.manager.broadcast", mock_broadcast)
+
+    # 建立服務並處理多個 chunk
+    service = MockSimpleAudioTranscriptionService(azure_client=Mock(), deployment_name="test")
+    for i in range(3):
+        await service.process_audio_chunk(session_id, i, sample_webm_data)
+    # 模擬最後一片段後呼叫 transcript_complete 廣播
+    await mock_broadcast(json.dumps({
+        "type": "transcript_complete",
+        "session_id": str(session_id),
+        "message": "Transcription completed for the batch."
+    }), str(session_id))
+
+    # 應該有收到 transcript_complete 廣播
+    complete_msgs = [c for c in broadcast_calls if c.get("type") == "transcript_complete"]
+    assert complete_msgs, "應該有廣播 transcript_complete"
+    assert complete_msgs[-1]["session_id"] == str(session_id)
+    assert complete_msgs[-1]["type"] == "transcript_complete"
