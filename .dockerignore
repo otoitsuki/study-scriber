@@ -1,0 +1,10 @@
+frontend/
+.git/
+node_modules/
+__pycache__/
+*.log
+*.md
+.venv
+.serena
+.cursor
+.vscode

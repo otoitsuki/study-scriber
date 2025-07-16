@@ -1,0 +1,96 @@
+from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
+from uuid import UUID
+import io, zipfile
+from app.db.database import get_supabase_client
+
+router = APIRouter(prefix="/api/export", tags=["export"])
+
+def _sec_to_ts(sec: float) -> str:
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    return f"[{h:02d}:{m:02d}:{s:02d}]"
+
+@router.get("/{sid}", response_class=StreamingResponse)
+async def export_resource(sid: UUID, type: str = "zip"):
+    try:
+        if type != "zip":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "unsupported type")
+
+        sb = get_supabase_client()
+
+        # 1. session 必須 completed
+        session = (
+            sb.table("sessions")
+            .select("status")
+            .eq("id", str(sid))
+            .limit(1)
+            .execute()
+            .data
+        )
+        if not session:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
+        if session[0]["status"] != "completed":
+            raise HTTPException(status.HTTP_202_ACCEPTED, "session not finished")
+
+        # 2. 讀 note：欄位名稱可能是 markdown / body / content
+        note_row = (
+            sb.table("notes")
+            .select("content, markdown, body")
+            .eq("session_id", str(sid))
+            .limit(1)
+            .execute()
+            .data
+        )
+        if not note_row:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "note not found")
+        note = note_row[0]
+        note_md = note.get("content") or note.get("markdown") or note.get("body") or ""
+
+        # 3. 逐字稿：優先用有時間戳的 segments，沒有就退回 full_text
+        seg_rows = (
+            sb.table("transcript_segments")
+            .select("text, start_time")
+            .eq("session_id", str(sid))
+            .order("chunk_sequence")
+            .execute()
+            .data
+        )
+
+        if seg_rows:
+            transcript_txt = "\n".join(
+                f"{_sec_to_ts(seg.get('start_time', 0))} {seg.get('text', '').strip()}"
+                for seg in seg_rows
+            )
+        else:
+            # fallback 讀 transcripts.full_text
+            full = (
+                sb.table("transcripts")
+                .select("full_text")
+                .eq("session_id", str(sid))
+                .limit(1)
+                .execute()
+                .data
+            )
+            transcript_txt = (full[0]["full_text"] if full else "").strip()
+
+        # 4. 打包 ZIP
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("note.md", note_md.strip())
+            zf.writestr("transcript.txt", transcript_txt)
+        buf.seek(0)
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{sid}.zip"'
+        }
+        return StreamingResponse(buf, media_type="application/zip", headers=headers)
+    except HTTPException as e:
+        # FastAPI HTTPException 直接丟出
+        raise e
+    except Exception as e:
+        import traceback
+        print(f"[EXPORT ERROR] {e}")
+        print(traceback.format_exc())
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Export failed: {e}")

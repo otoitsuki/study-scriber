@@ -1,0 +1,7 @@
+{
+	"devDependencies": {
+		"@playwright/test": "^1.54.1",
+		"jszip": "^3.10.1"
+	},
+	"packageManager": "pnpm@10.7.0+sha1.66453f13fbf9078d3db193718206a8d738afdbdb"
+}
