@@ -4,14 +4,17 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { ChevronDown } from "lucide-react"
 import type { TranscriptEntry } from "../types/app-state"
+import ExportButton from "@/components/ui/ExportButton"
 
 interface FinishStateProps {
   transcriptEntries: TranscriptEntry[]
+  noteId: string
+  noteContent: string
   onExport?: () => void
   onToLatest?: () => void
 }
 
-export function FinishState({ transcriptEntries, onExport, onToLatest }: FinishStateProps) {
+export function FinishState({ transcriptEntries, noteId, noteContent, onExport, onToLatest }: FinishStateProps) {
   return (
     <div className="h-full flex flex-col">
       <ScrollArea className="flex-1">

@@ -2,36 +2,26 @@
 
 import { useState } from 'react'
 import { downloadZip } from '@/utils/export'
-import { sessionAPI, notesAPI } from '@/lib/api'
+import { notesAPI } from '@/lib/api'
 import { toast } from '@/hooks/use-toast'
-import { useSession } from '@/hooks/use-session'
 
 interface Props {
-    sid: string
-    editorContent: string
+    noteId: string
+    noteContent: string
 }
 
-export default function ExportButton({ sid, editorContent }: Props) {
+export default function ExportButton({ noteId, noteContent }: Props) {
     const [busy, setBusy] = useState(false)
-    const { waitUntilCompleted } = useSession()
 
     const handleExport = async () => {
         if (busy) return
         setBusy(true)
 
         try {
-            // 1️⃣ 等待 completed
-            const ok = await waitUntilCompleted(sid, 30_000)
-            if (!ok) {
-                toast({ title: '後端仍在處理逐字稿，請稍候再試' })
-                return
-            }
-
-            // 2️⃣ 儲存筆記
-            await notesAPI.updateNote(sid, { content: editorContent })
-
-            // 3️⃣ 下載 ZIP
-            await downloadZip(sid)
+            // 1️⃣ 儲存筆記
+            await notesAPI.updateNote(noteId, { content: noteContent })
+            // 2️⃣ 下載 ZIP
+            await downloadZip(noteId, noteContent)
         } catch (err) {
             console.error(err)
             toast({ title: '匯出失敗，請稍後重試', variant: 'destructive' })

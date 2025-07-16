@@ -5,6 +5,8 @@ import "easymde/dist/easymde.min.css"
 import { useMemo, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { RotateCcw, Download } from "lucide-react"
+import { downloadZip } from "@/utils/export"
+import { useState } from "react"
 
 
 // 動態匯入 SimpleMDE 以避免 SSR 問題
@@ -165,6 +167,8 @@ export default function Component() {
     }
   }, [])
 
+  const [exporting, setExporting] = useState(false)
+
   const renderRightPanel = () => {
     // 狀態異常檢查：如果是 recording_waiting 但沒有 session，應該顯示 default 狀態
     if (appState === "recording_waiting" && !session) {
@@ -211,10 +215,8 @@ export default function Component() {
         return (
           <FinishState
             transcriptEntries={transcriptEntries}
-            onExport={() => {
-              // TODO: 實現匯出功能
-              console.log('Export functionality not implemented yet')
-            }}
+            noteId={session?.id || ''}
+            noteContent={editorContent}
             onToLatest={() => {
               // TODO: 實現捲動到最新功能
               console.log('To Latest functionality not implemented yet')
@@ -252,8 +254,41 @@ export default function Component() {
 
           {/* Export 按鈕 - 只在 finished 狀態顯示 */}
           {appState === "finished" && (
-            <Button onClick={() => console.log('Export functionality')} size="sm" className="px-4 h-8 flex items-center gap-2">
-              <Download className="w-4 h-4" />
+            <Button
+              onClick={async () => {
+                if (!session) return
+                if (exporting) return
+                setExporting(true)
+                try {
+                  await downloadZip(session.id, editorContent)
+                } catch (err) {
+                  // downloadZip 已有 toast 處理
+                } finally {
+                  setExporting(false)
+                }
+              }}
+              size="sm"
+              className="px-4 h-8 flex items-center gap-2"
+              disabled={exporting}
+            >
+              {exporting ? (
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                  <circle
+                    className="opacity-25"
+                    cx="12" cy="12" r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    fill="none"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8v4l3-3-3-3v4A8 8 8 0 104 12z"
+                  />
+                </svg>
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
               Export
             </Button>
           )}

@@ -1,17 +1,18 @@
 import { render, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import ExportButton from './ExportButton'
 
-jest.mock('@/hooks/use-session', () => ({
-    useSession: () => ({ waitUntilCompleted: jest.fn() }),
+vi.mock('@/hooks/use-session', () => ({
+    useSession: () => ({ waitUntilCompleted: vi.fn() }),
 }))
-jest.mock('@/lib/api', () => ({
-    notesAPI: { updateNote: jest.fn() },
+vi.mock('@/lib/api', () => ({
+    notesAPI: { updateNote: vi.fn() },
 }))
-jest.mock('@/utils/export', () => ({
-    downloadZip: jest.fn(),
+vi.mock('@/utils/export', () => ({
+    downloadZip: vi.fn(),
 }))
-jest.mock('@/hooks/use-toast', () => ({
-    toast: jest.fn(),
+vi.mock('@/hooks/use-toast', () => ({
+    toast: vi.fn(),
 }))
 
 const { useSession } = require('@/hooks/use-session')
@@ -21,48 +22,48 @@ const { toast } = require('@/hooks/use-toast')
 
 describe('ExportButton', () => {
     beforeEach(() => {
-        jest.clearAllMocks()
+        vi.clearAllMocks()
     })
 
     it('calls waitUntilCompleted and downloads on success', async () => {
-        useSession.mockReturnValue({ waitUntilCompleted: jest.fn().mockResolvedValue(true) })
+        useSession.mockReturnValue({ waitUntilCompleted: vi.fn().mockResolvedValue(true) })
         notesAPI.updateNote.mockResolvedValue({})
         downloadZip.mockResolvedValue()
-        const { getByText } = render(<ExportButton sid="sid" editorContent="abc" />)
+        const { getByText } = render(<ExportButton noteId="sid" noteContent="abc" />)
         fireEvent.click(getByText(/Export/))
         await waitFor(() => expect(notesAPI.updateNote).toHaveBeenCalledWith('sid', { content: 'abc' }))
-        expect(downloadZip).toHaveBeenCalledWith('sid')
+        expect(downloadZip).toHaveBeenCalledWith('sid', 'abc')
     })
 
     it('shows toast if waitUntilCompleted returns false', async () => {
-        useSession.mockReturnValue({ waitUntilCompleted: jest.fn().mockResolvedValue(false) })
-        const { getByText } = render(<ExportButton sid="sid" editorContent="abc" />)
+        useSession.mockReturnValue({ waitUntilCompleted: vi.fn().mockResolvedValue(false) })
+        const { getByText } = render(<ExportButton noteId="sid" noteContent="abc" />)
         fireEvent.click(getByText(/Export/))
         await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringMatching(/後端仍在處理/) })))
     })
 
     it('shows error toast if updateNote fails', async () => {
-        useSession.mockReturnValue({ waitUntilCompleted: jest.fn().mockResolvedValue(true) })
+        useSession.mockReturnValue({ waitUntilCompleted: vi.fn().mockResolvedValue(true) })
         notesAPI.updateNote.mockRejectedValue(new Error('fail'))
-        const { getByText } = render(<ExportButton sid="sid" editorContent="abc" />)
+        const { getByText } = render(<ExportButton noteId="sid" noteContent="abc" />)
         fireEvent.click(getByText(/Export/))
         await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' })))
     })
 
     it('shows error toast if downloadZip fails', async () => {
-        useSession.mockReturnValue({ waitUntilCompleted: jest.fn().mockResolvedValue(true) })
+        useSession.mockReturnValue({ waitUntilCompleted: vi.fn().mockResolvedValue(true) })
         notesAPI.updateNote.mockResolvedValue({})
         downloadZip.mockRejectedValue(new Error('fail'))
-        const { getByText } = render(<ExportButton sid="sid" editorContent="abc" />)
+        const { getByText } = render(<ExportButton noteId="sid" noteContent="abc" />)
         fireEvent.click(getByText(/Export/))
         await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' })))
     })
 
     it('does not trigger export when busy', async () => {
-        useSession.mockReturnValue({ waitUntilCompleted: jest.fn().mockResolvedValue(true) })
+        useSession.mockReturnValue({ waitUntilCompleted: vi.fn().mockResolvedValue(true) })
         notesAPI.updateNote.mockResolvedValue({})
         downloadZip.mockResolvedValue()
-        const { getByText } = render(<ExportButton sid="sid" editorContent="abc" />)
+        const { getByText } = render(<ExportButton noteId="sid" noteContent="abc" />)
         const btn = getByText(/Export/)
         fireEvent.click(btn)
         fireEvent.click(btn)
