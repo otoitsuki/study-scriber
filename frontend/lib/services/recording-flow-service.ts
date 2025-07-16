@@ -204,40 +204,16 @@ export class RecordingFlowService extends BaseService {
         return
       }
 
-      const sessionId = this.currentSession.id
-
-      // 步驟 1: 停止錄音
-      this.logInfo('步驟 1: 停止錄音')
+      // 只停止錄音，不主動斷線或結束 session
       if (this.recordingService.isRecording()) {
         await this.recordingService.stopRecording()
         this.logSuccess('錄音已停止')
       }
-
-      // 步驟 2: 斷開逐字稿服務（保持連接以接收剩餘處理結果）
-      this.logInfo('步驟 2: 斷開逐字稿服務')
-      await this.transcriptService.disconnect(sessionId)
-      this.logSuccess('逐字稿服務已斷開')
-
-      // 步驟 3: 完成會話
-      this.logInfo('步驟 3: 完成會話')
-      await this.sessionService.finishSession(sessionId)
-      this.logSuccess('會話已完成')
-
-      // 重置流程狀態
-      this.isFlowActive = false
-
-      this.logSuccess('錄音流程停止完成', {
-        sessionId,
-        transcriptEntriesCount: this.transcriptEntries.length,
-        finalRecordingTime: this.recordingService.getRecordingTime()
-      })
-
+      // 進入 processing 狀態，等待 transcript_complete
+      this.setAppState('processing')
     } catch (error) {
       this.handleError('停止錄音流程', error)
       throw error
-    } finally {
-      // 確保資源清理
-      await this.cleanupFlowResources()
     }
   }
 

@@ -247,23 +247,15 @@ describe('RecordingFlowService - 核心功能', () => {
             await recordingFlowService.startRecordingFlow('測試標題')
         })
 
-        test('應該正確停止錄音流程', async () => {
+        test('只停止錄音，不呼叫 disconnect/finishSession', async () => {
             // Arrange
             mockRecordingService.stopRecording.mockResolvedValueOnce(undefined)
-            mockTranscriptService.disconnect.mockResolvedValueOnce(undefined)
-            mockSessionService.finishSession.mockResolvedValueOnce(undefined)
-
             // Act
             await recordingFlowService.stopRecordingFlow()
-
-            // Assert - 驗證停止順序
+            // Assert
             expect(mockRecordingService.stopRecording).toHaveBeenCalled()
-            expect(mockTranscriptService.disconnect).toHaveBeenCalledWith(mockSessionResponse.id)
-            expect(mockSessionService.finishSession).toHaveBeenCalledWith(mockSessionResponse.id)
-
-            // 驗證狀態清理
-            expect(recordingFlowService.isFlowRunning()).toBe(false)
-            expect(recordingFlowService.getCurrentSession()).toBeNull()
+            expect(mockTranscriptService.disconnect).not.toHaveBeenCalled()
+            expect(mockSessionService.finishSession).not.toHaveBeenCalled()
         })
     })
 
@@ -280,27 +272,33 @@ describe('RecordingFlowService - 核心功能', () => {
             await recordingFlowService.startRecordingFlow('測試標題')
         })
 
-        test('停止錄音後應進入 processing，收到 transcript_complete 進入 finished 並斷線', async () => {
-            // Arrange
+        test('停止錄音後應進入 processing 狀態', async () => {
             mockRecordingService.stopRecording.mockResolvedValueOnce(undefined)
-            // 不要立即斷線
-            mockTranscriptService.disconnect.mockResolvedValueOnce(undefined)
-            mockSessionService.finishSession.mockResolvedValueOnce(undefined)
-
-            // Act: 停止錄音
             await recordingFlowService.stopRecordingFlow()
-
-            // Assert: 應該進入 processing 狀態
             expect(setAppStateMock).toHaveBeenCalledWith('processing')
-            // 模擬收到 transcript_complete 訊息
-            const msg = { type: 'transcript_complete', session_id: mockSessionResponse.id }
-            // 需將 handleTranscriptMessage 設為 public 或用 (as any)
-            await (recordingFlowService as any).handleTranscriptMessage(msg)
+        })
 
-            // 應該進入 finished 狀態並斷線
+        test('收到 transcript_complete 才進入 finished 並呼叫 disconnect', async () => {
+            mockRecordingService.stopRecording.mockResolvedValueOnce(undefined)
+            mockTranscriptService.disconnect.mockResolvedValueOnce(undefined)
+            await recordingFlowService.stopRecordingFlow()
+            const msg = { type: 'transcript_complete', session_id: mockSessionResponse.id }
+            await (recordingFlowService as any).handleTranscriptMessage(msg)
             expect(setAppStateMock).toHaveBeenCalledWith('finished')
             expect(mockTranscriptService.disconnect).toHaveBeenCalledWith(mockSessionResponse.id)
-            expect((recordingFlowService as any).isFlowActive).toBe(false)
+        })
+
+        test('Race condition: stop 剛呼叫後馬上收到 transcript_complete 也能正確流轉', async () => {
+            mockRecordingService.stopRecording.mockResolvedValueOnce(undefined)
+            mockTranscriptService.disconnect.mockResolvedValueOnce(undefined)
+            // stopRecordingFlow 尚未完全結束時收到 transcript_complete
+            const stopPromise = recordingFlowService.stopRecordingFlow()
+            const msg = { type: 'transcript_complete', session_id: mockSessionResponse.id }
+            await (recordingFlowService as any).handleTranscriptMessage(msg)
+            await stopPromise
+            expect(setAppStateMock).toHaveBeenCalledWith('processing')
+            expect(setAppStateMock).toHaveBeenCalledWith('finished')
+            expect(mockTranscriptService.disconnect).toHaveBeenCalledWith(mockSessionResponse.id)
         })
     })
 
