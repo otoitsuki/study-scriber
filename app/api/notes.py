@@ -18,6 +18,7 @@ from app.db.database import get_supabase_client
 from app.schemas.note import (
     NoteSaveRequest, NoteOut, NoteSaveResponse, NoteConflictError
 )
+from app.utils.export import format_export_filename
 
 # 建立路由器
 router = APIRouter(prefix="/api", tags=["筆記管理"])
@@ -125,6 +126,15 @@ async def export_note(
         note_content = request.get("note_content")
         logger.info(f"開始匯出 session_id: {session_id}")
 
+        # 查詢 session 資訊以取得 stt_provider 和 created_at
+        session_result = supabase.table("sessions").select("stt_provider, created_at").eq("id", session_id).limit(1).execute()
+        if not session_result.data:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        session_data = session_result.data[0]
+        stt_provider = session_data.get("stt_provider")
+        created_at = session_data.get("created_at")
+
         # 從資料庫取得真實的轉錄資料
         transcripts = await _get_session_transcripts(supabase, session_id)
 
@@ -141,7 +151,12 @@ async def export_note(
 
         zip_buffer.seek(0)
 
-        filename = f"note_{str(session_id)[:8]}_{datetime.now().strftime('%Y%m%d')}.zip"
+        # 使用新的檔名格式化函數
+        filename = format_export_filename(
+            session_id=UUID(session_id),
+            stt_provider=stt_provider,
+            created_at=created_at
+        )
         logger.info(f"成功生成 ZIP 檔案: {filename}")
 
         return StreamingResponse(
