@@ -37,13 +37,23 @@ export async function downloadZip(sessionId: string, editorContent: string) {
             }
             throw new Error(errorMessage);
         }
-        // 處理成功回應...
+        // ---- 處理成功回應 ----
+        // 1️⃣ 取得檔名：先讀取後端 Content-Disposition，如果沒有就回退舊格式
+        const disposition = response.headers.get('Content-Disposition') || response.headers.get('content-disposition');
+        let filename = `note_${sessionId}_${new Date().toISOString().split('T')[0]}.zip`;
+        if (disposition) {
+            const match = disposition.match(/filename\s*=\s*"?([^";]+)"?/i);
+            if (match && match[1]) {
+                filename = match[1];
+            }
+        }
+
         const blob = await response.blob();
-        console.log('收到檔案:', blob.size, 'bytes');
+        console.log('收到檔案:', blob.size, 'bytes', 'filename:', filename);
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `note_${sessionId}_${new Date().toISOString().split('T')[0]}.zip`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         setTimeout(() => {
@@ -53,6 +63,7 @@ export async function downloadZip(sessionId: string, editorContent: string) {
         return { success: true };
     } catch (error) {
         console.error('Export error:', error);
+        toast({ title: '匯出失敗，請稍後重試', variant: 'destructive' });
         return {
             success: false,
             error: error instanceof Error ? error.message : 'Export failed'
