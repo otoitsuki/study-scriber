@@ -288,25 +288,8 @@ async def _get_session_transcripts(supabase: Client, session_id: str) -> list:
 
 
 def _generate_stt_transcript(session_id: str, transcripts: list) -> str:
-    """生成 STT 格式的逐字稿"""
-    # 建立標題
-    lines = [
-        "=== 音頻轉錄逐字稿 ===",
-        f"Session ID: {session_id}",
-        f"生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-    ]
-
-    if transcripts:
-        # 計算總時長（使用 start_time 欄位）
-        last_timestamp = max(t.get('start_time', 0) for t in transcripts)
-        duration = str(timedelta(seconds=int(last_timestamp)))
-        lines.append(f"錄音時長: {duration}")
-    else:
-        lines.append("錄音時長: 00:00:00")
-
-    lines.append(f"總段落數: {len(transcripts)}")
-    lines.append("=" * 50)
-    lines.append("")
+    """生成 STT 格式的逐字稿（不包含標題區塊）"""
+    lines = []
 
     # 加入轉錄內容
     for transcript in transcripts:
