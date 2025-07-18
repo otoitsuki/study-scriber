@@ -44,6 +44,7 @@ export function FinishState({ transcriptEntries, noteId, noteContent, onExport, 
               To Latest
             </Button>
           )}
+          <ExportButton noteId={noteId} noteContent={noteContent} />
         </div>
       </div>
     </div>

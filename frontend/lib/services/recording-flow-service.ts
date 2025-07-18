@@ -9,16 +9,26 @@ import { useAppStore } from '../app-store-zustand'
 import { formatTime } from '../../utils/time'
 
 /**
- * 錄音流程管理服務
- *
- * 整合 SessionService、RecordingService 和 TranscriptService
+ * RecordingFlowService - 錄音流程服務
  * 提供統一的錄音流程管理
  */
 import { STTProvider } from '../api'
+import { getEffectiveAudioChunkDurationSec } from '../config'
 
-const AUDIO_CHUNK_SEC = Number(
-  process.env.NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_SEC ?? "15"
-);
+// 使用有效音頻切片長度（考慮 overlap）
+// 改為在需要時動態獲取，避免模組初始化順序問題
+const getEffectiveAudioChunkSec = () => getEffectiveAudioChunkDurationSec()
+
+/**
+ * 錄音流程監聽器接口
+ */
+export interface RecordingFlowListener {
+  onTranscriptReceived: (transcript: any) => void
+  onFirstTranscriptReceived: () => void
+  onRecordingStatusChange: (recording: boolean) => void
+  onTranscriptComplete: () => void
+  onError: (errorMessage: string) => void
+}
 
 export class RecordingFlowService extends BaseService {
   protected readonly serviceName = 'RecordingFlowService'
@@ -274,12 +284,12 @@ export class RecordingFlowService extends BaseService {
       ) {
         /* 2. 計算 startSec
            a. 後端若有 start_time → 用它
-           b. 否則用 chunk_sequence × 切片長度
+           b. 否則用 chunk_sequence × 有效切片長度 (考慮 overlap)
         */
         const startSec =
           msg.start_time !== undefined
             ? msg.start_time
-            : (msg.chunk_sequence ?? 0) * AUDIO_CHUNK_SEC;
+            : (msg.chunk_sequence ?? 0) * getEffectiveAudioChunkSec();
 
         /* 3. 每隔 labelIntervalSec 秒插入一條時間碼 */
         if (startSec - this.lastLabelSec >= this.labelIntervalSec) {

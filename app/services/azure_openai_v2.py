@@ -34,6 +34,7 @@ from app.core.ffmpeg import detect_audio_format
 from app.core.webm_header_repairer import WebMHeaderRepairer
 from app.ws.transcript_feed import manager as transcript_manager
 from app.services.r2_client import R2Client
+from app.utils.timing import calc_times
 
 logger = logging.getLogger(__name__)
 
@@ -1239,9 +1240,12 @@ class SimpleAudioTranscriptionService:
             started_at = None
             if session_response.data and session_response.data[0].get('started_at'):
                 started_at = session_response.data[0]['started_at']
-            chunk_start_seconds = chunk_sequence * settings.AUDIO_CHUNK_DURATION_SEC
+
+            # 使用 calc_times 函數來正確計算時間戳（考慮 overlap）
+            chunk_start_seconds, chunk_end_seconds = calc_times(chunk_sequence)
             start_time = chunk_start_seconds + transcript_result.get('start_offset', 0)
-            end_time = chunk_start_seconds + transcript_result.get('end_offset', settings.AUDIO_CHUNK_DURATION_SEC)
+            end_time = chunk_start_seconds + transcript_result.get('end_offset', chunk_end_seconds - chunk_start_seconds)
+
             if started_at:
                 logger.info(
                     f"🕐 [時間計算 v2] 精確開始時間: {started_at}, "

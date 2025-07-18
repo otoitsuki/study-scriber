@@ -46,15 +46,19 @@ async def save_and_push_result(session_id: UUID, chunk_seq: int, data: dict):
     """共用：把結果寫入 transcript_segments 並透過 WebSocket 推送"""
     from app.ws.transcript_feed import manager
     from app.db.database import get_supabase_client
+    from app.utils.timing import calc_times
 
-    settings = get_settings()
     supa = get_supabase_client()
+
+    # 使用 calc_times 函數來正確計算時間戳（考慮 overlap）
+    start_time, end_time = calc_times(chunk_seq)
+
     seg = {
         "session_id": str(session_id),
         "chunk_sequence": chunk_seq,
         "text": data["text"],
-        "start_time": chunk_seq * settings.AUDIO_CHUNK_DURATION_SEC,
-        "end_time": (chunk_seq + 1) * settings.AUDIO_CHUNK_DURATION_SEC,
+        "start_time": start_time,
+        "end_time": end_time,
         "confidence": 1.0,
         "lang_code": data["lang_code"],
     }

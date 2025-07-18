@@ -10,6 +10,9 @@
  */
 export interface AudioConfig {
   chunkInterval: number // 音訊切片間隔（毫秒）
+  chunkDuration: number // 音訊切片長度（秒）
+  chunkOverlap: number // 音訊切片重疊（秒）
+  effectiveChunkDuration: number // 有效音訊切片長度（秒）
   mimeType: string // 音訊格式
   audioBitsPerSecond: number // 音訊位元率
 }
@@ -52,6 +55,36 @@ function getAudioChunkInterval(): number {
 }
 
 /**
+ * 從環境變數獲取音訊切片長度（秒）
+ */
+function getAudioChunkDuration(): number {
+  const duration = process.env.NEXT_PUBLIC_AUDIO_CHUNK_DURATION_SEC
+  if (duration) {
+    const parsed = parseInt(duration, 10)
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed
+    }
+  }
+  // 預設值：15秒（與後端保持一致）
+  return 15
+}
+
+/**
+ * 從環境變數獲取音訊切片重疊（秒）
+ */
+function getAudioChunkOverlap(): number {
+  const overlap = process.env.NEXT_PUBLIC_AUDIO_CHUNK_OVERLAP_SEC
+  if (overlap) {
+    const parsed = parseInt(overlap, 10)
+    if (!isNaN(parsed) && parsed >= 0) {
+      return parsed
+    }
+  }
+  // 預設值：5秒（與後端保持一致）
+  return 5
+}
+
+/**
  * 應用程式配置實例
  */
 export const appConfig: AppConfig = {
@@ -60,6 +93,9 @@ export const appConfig: AppConfig = {
   isDevelopment: process.env.NODE_ENV === 'development',
   audio: {
     chunkInterval: getAudioChunkInterval(),
+    chunkDuration: getAudioChunkDuration(),
+    chunkOverlap: getAudioChunkOverlap(),
+    effectiveChunkDuration: getAudioChunkDuration() - getAudioChunkOverlap(),
     mimeType: 'audio/webm;codecs=opus',
     audioBitsPerSecond: 64000  // 64 kbps for 10s chunks
   }
@@ -77,6 +113,28 @@ export function getAudioChunkIntervalMs(): number {
  */
 export function getAudioChunkIntervalSec(): number {
   return Math.round(appConfig.audio.chunkInterval / 1000)
+}
+
+/**
+ * 輔助函數：獲取音訊切片長度（秒）
+ */
+export function getAudioChunkDurationSec(): number {
+  return appConfig.audio.chunkDuration
+}
+
+/**
+ * 輔助函數：獲取音訊切片重疊（秒）
+ */
+export function getAudioChunkOverlapSec(): number {
+  return appConfig.audio.chunkOverlap
+}
+
+/**
+ * 輔助函數：獲取有效音訊切片長度（秒）
+ * 用於時間戳計算，考慮 overlap 的影響
+ */
+export function getEffectiveAudioChunkDurationSec(): number {
+  return appConfig.audio.effectiveChunkDuration
 }
 
 /**
@@ -109,7 +167,11 @@ if (appConfig.isDevelopment && typeof window !== 'undefined') {
   console.log('🔧 [Config] 音訊配置:', {
     chunkInterval: appConfig.audio.chunkInterval,
     chunkIntervalSec: getAudioChunkIntervalSec(),
+    chunkDuration: appConfig.audio.chunkDuration,
+    chunkOverlap: appConfig.audio.chunkOverlap,
+    effectiveChunkDuration: appConfig.audio.effectiveChunkDuration,
     mimeType: appConfig.audio.mimeType,
+    audioBitsPerSecond: appConfig.audio.audioBitsPerSecond,
     source: process.env.NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_MS ? 'MS' :
       process.env.NEXT_PUBLIC_AUDIO_CHUNK_INTERVAL_SEC ? 'SEC' : 'DEFAULT'
   })
