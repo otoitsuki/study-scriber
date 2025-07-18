@@ -156,7 +156,6 @@ z.looseObject({ name: z.string() });
 
 
 ```Mermaid
-
 sequenceDiagram
     %% ==== Participants ====
     actor User as 👤 使用者
@@ -176,17 +175,50 @@ sequenceDiagram
         par 儲存與轉錄
             BE ->>+ R2: 儲存 WebM
             BE ->>+ STT: WebM → Whisper
-            STT -->> BE: 回覆 Transcript JSON
+            STT -->>- BE: 回覆 Transcript JSON
             BE -->> WS: 傳入逐字稿
             BE ->>+ DB: INSERT transcript_segments
+            DB -->>- BE: 確認儲存
+            R2 -->>- BE: 確認上傳
+        end
+
+        WS -->> Browser: 送出逐字稿
+        Browser -->> User: 更新逐字稿
+        BE -->>- Browser: Session 建立完成
+    end
+
+    %% ==== Participants ====
+    actor User as 👤 使用者
+    participant Browser as 🌐 瀏覽器
+    participant BE as ⚡ FastAPI
+    participant FFmpeg as 🎵 FFmpeg
+    participant R2 as ☁️ R2 Storage
+    participant DB as 💾 Supabase
+    participant STT as 🤖 STT Model
+    participant WS as 🔌 Websocket
+
+    %% ==== 即時錄音流程 ====
+    rect rgb(240,248,255)
+        Note over User,WS: 🎙️ 即時錄音與轉錄
+        User ->> Browser: 點擊開始錄音
+        Browser ->>+ BE: 開新 Session 
+
+        par 轉檔、儲存與轉錄
+            BE ->>+ FFmpeg: WebM → WAV 轉檔
+            FFmpeg -->>- BE: 回傳 WAV 檔案
+            BE ->>+ R2: 儲存 WAV 檔案
+            R2 -->>- BE: 回傳 R2 網址
+            BE ->>+ STT: 傳送 R2 網址
+            STT -->>- BE: 回覆 Transcript JSON
+            BE -->> WS: 傳入逐字稿
+            BE ->>+ DB: INSERT transcript_segments
+            DB -->>- BE: 確認儲存
         end
 
         WS -->> Browser: 送出逐字稿
         Browser -->> User: 更新逐字稿
     end
-        WS -->> Browser: 送出逐字稿
-        Browser -->> User: 更新逐字稿
-    end
+
 
     %% ==== 匯出功能 ====
     rect rgb(248,255,248)
@@ -195,8 +227,6 @@ sequenceDiagram
         Browser ->>+ BE: GET /api/export?type=zip
         BE ->>+ DB: SELECT note & transcript
         DB -->>- BE: 文字內容
-        BE ->>+ R2: 讀取音訊檔案
-        R2 -->>- BE: WebM files
         BE -->>- Browser: ZIP 檔案
         Browser -->> User: 下載完成
     end

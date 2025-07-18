@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     env="AUDIO_CHUNK_DURATION_SEC"
 )
 
+    # 音頻切片重疊秒數
+    AUDIO_CHUNK_OVERLAP_SEC: int = Field(
+        default=5,
+        env="AUDIO_CHUNK_OVERLAP_SEC"
+    )
+
     # 逐字稿顯示配置
     TRANSCRIPT_DISPLAY_INTERVAL_SEC: int = Field(10, description="逐字稿時間戳顯示間隔（秒）")
 

@@ -4,18 +4,14 @@ StudyScriber Notes 管理 API 端點
 實作筆記儲存、自動儲存與 UPSERT 邏輯
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 import json
 import io
 import zipfile
-import uuid
-import pytest
-from fastapi.testclient import TestClient
-from app.schemas.export import ExportRequest, NoteExportData, TranscriptionSegment
-from app.services.export_service import ExportService
+import logging
 from fastapi.responses import StreamingResponse
 
 from app.db.database import get_supabase_client
@@ -25,6 +21,7 @@ from app.schemas.note import (
 
 # 建立路由器
 router = APIRouter(prefix="/api", tags=["筆記管理"])
+logger = logging.getLogger(__name__)
 
 
 @router.put("/notes/{session_id}", response_model=NoteSaveResponse)
@@ -116,30 +113,37 @@ async def get_note(
 
 
 @router.post("/notes/export")
-async def export_note(request: dict):
+async def export_note(
+    request: dict,
+    supabase: Client = Depends(get_supabase_client)
+):
     """
-    匯出筆記內容與逐字稿為 ZIP 檔案（簡化版，僅用 session_id 與 note_content）
+    匯出筆記內容與逐字稿為 ZIP 檔案
     """
-    import io
-    import zipfile
-    from datetime import datetime
-    from fastapi.responses import StreamingResponse
-    import logging
-    logger = logging.getLogger(__name__)
     try:
         session_id = request.get("session_id")
         note_content = request.get("note_content")
         logger.info(f"開始匯出 session_id: {session_id}")
+
+        # 從資料庫取得真實的轉錄資料
+        transcripts = await _get_session_transcripts(supabase, session_id)
+
+        # 建立 ZIP 檔案
         zip_buffer = io.BytesIO()
+
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # 1. 加入 Markdown 筆記
             zip_file.writestr('note.md', note_content.encode('utf-8'))
-            stt_content = f"""=== 音頻轉錄逐字稿 ===\nSession ID: {session_id}\n生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n錄音時長: 00:01:00\n總段落數: 3\n==================================================\n\n[00:00:00] 這時候我們就一起來感受一下它的互動性。現在我是不是分兩區了?\n[00:00:30] 如果你的圖表拿去，那你覺得客戶會怎麼說?那我這邊如果點加拿大，你能不能在這邊拍...\n[00:01:00] 所以你點重疊的那一起動,它是可以一起連動。\n"""
+
+            # 2. 生成真實的 STT 格式逐字稿
+            stt_content = _generate_stt_transcript(session_id, transcripts)
             zip_file.writestr('transcript.txt', stt_content.encode('utf-8'))
-            metadata = f"""Session ID: {session_id}\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\nContent Length: {len(note_content)} characters\n"""
-            zip_file.writestr('metadata.txt', metadata.encode('utf-8'))
+
         zip_buffer.seek(0)
+
         filename = f"note_{str(session_id)[:8]}_{datetime.now().strftime('%Y%m%d')}.zip"
         logger.info(f"成功生成 ZIP 檔案: {filename}")
+
         return StreamingResponse(
             zip_buffer,
             media_type='application/zip',
@@ -148,9 +152,9 @@ async def export_note(request: dict):
                 'Access-Control-Expose-Headers': 'Content-Disposition'
             }
         )
+
     except Exception as e:
         logger.error(f"匯出錯誤: {str(e)}", exc_info=True)
-        from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
@@ -184,31 +188,6 @@ async def _ensure_session_editable(supabase: Client, session_id: UUID) -> dict:
         )
 
     return session
-
-
-async def _ensure_note_editable(supabase: Client, note_id: UUID) -> dict:
-    """確保筆記存在且可編輯"""
-    response = supabase.table("notes").select("id, session_id, content, client_ts, created_at, updated_at").eq("id", str(note_id)).limit(1).execute()
-
-    if not response.data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "note_not_found", "message": "指定的筆記不存在"}
-        )
-
-    note = response.data[0]
-
-    # 檢查筆記狀態是否允許編輯
-    if note.get('status') == 'error':
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "note_not_editable",
-                "message": f"筆記狀態為 {note.get('status')}，無法編輯"
-            }
-        )
-
-    return note
 
 
 async def _get_existing_note(supabase: Client, session_id: UUID) -> dict | None:
@@ -289,3 +268,87 @@ async def _update_session_timestamp(supabase: Client, session_id: UUID) -> None:
     }
 
     supabase.table("sessions").update(update_data).eq("id", str(session_id)).execute()
+
+
+async def _get_session_transcripts(supabase: Client, session_id: str) -> list:
+    """從資料庫取得會話的所有轉錄資料"""
+    try:
+        # 使用 transcript_segments 表，而不是 transcripts
+        response = supabase.table("transcript_segments") \
+            .select("*") \
+            .eq("session_id", session_id) \
+            .order("start_time", desc=False) \
+            .execute()
+
+        return response.data or []
+
+    except Exception as e:
+        logger.error(f"查詢轉錄資料失敗: {str(e)}")
+        return []
+
+
+def _generate_stt_transcript(session_id: str, transcripts: list) -> str:
+    """生成 STT 格式的逐字稿"""
+    # 建立標題
+    lines = [
+        "=== 音頻轉錄逐字稿 ===",
+        f"Session ID: {session_id}",
+        f"生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+    ]
+
+    if transcripts:
+        # 計算總時長（使用 start_time 欄位）
+        last_timestamp = max(t.get('start_time', 0) for t in transcripts)
+        duration = str(timedelta(seconds=int(last_timestamp)))
+        lines.append(f"錄音時長: {duration}")
+    else:
+        lines.append("錄音時長: 00:00:00")
+
+    lines.append(f"總段落數: {len(transcripts)}")
+    lines.append("=" * 50)
+    lines.append("")
+
+    # 加入轉錄內容
+    for transcript in transcripts:
+        # 使用正確的欄位名稱
+        start_time = transcript.get('start_time', 0)
+        text = transcript.get('text', '').strip()
+
+        # 格式化時間戳 (HH:MM:SS.mmm)
+        time_str = _format_timestamp(start_time)
+
+        # 確保文字沒有換行
+        text = text.replace('\n', ' ')
+
+        lines.append(f"[{time_str}] {text}")
+
+    return '\n'.join(lines)
+
+
+def _generate_stt_transcript(session_id: str, transcripts: list) -> str:
+    """生成 STT 格式的逐字稿"""
+
+    # 加入轉錄內容
+    for transcript in transcripts:
+        timestamp = transcript.get('timestamp', 0)
+        text = transcript.get('text', '').strip()
+
+        # 格式化時間戳 (HH:MM:SS.mmm)
+        time_str = _format_timestamp(timestamp)
+
+        # 確保文字沒有換行
+        text = text.replace('\n', ' ')
+
+        lines.append(f"[{time_str}] {text}")
+
+    return '\n'.join(lines)
+
+
+def _format_timestamp(seconds: float) -> str:
+    """將秒數轉換為 HH:MM:SS.mmm 格式"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    milliseconds = int((seconds % 1) * 1000)
+
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
