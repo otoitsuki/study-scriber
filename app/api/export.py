@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from uuid import UUID
 import io, zipfile
+from datetime import datetime
 from app.db.database import get_supabase_client
 
 router = APIRouter(prefix="/api/export", tags=["export"])
@@ -12,6 +13,41 @@ def _sec_to_ts(sec: float) -> str:
     s = int(sec % 60)
     return f"[{h:02d}:{m:02d}:{s:02d}]"
 
+def _format_export_filename(session_id: UUID, stt_provider: str, created_at: str) -> str:
+    """
+    建立匯出檔名格式: studyscriber_{provider}_{YYYYMMDD}_{last4digits}.zip
+
+    Args:
+        session_id: Session UUID
+        stt_provider: STT 提供者名稱 (whisper, gemini, gpt4o)
+        created_at: Session 建立時間的 ISO 字串
+
+    Returns:
+        格式化的檔名字串
+    """
+    # 轉換日期格式為 YYYYMMDD
+    try:
+        # 處理不同可能的日期格式
+        if 'T' in created_at:
+            # ISO 格式: 2024-07-18T12:30:00.000Z
+            dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+        else:
+            # 其他格式嘗試
+            dt = datetime.fromisoformat(created_at)
+        date_str = dt.strftime('%Y%m%d')
+    except (ValueError, TypeError):
+        # 如果日期解析失敗，使用當前日期
+        date_str = datetime.now().strftime('%Y%m%d')
+
+    # 取得 session ID 的最後4碼
+    session_str = str(session_id).replace('-', '')
+    last4_digits = session_str[-4:]
+
+    # 處理 stt_provider 為 None 的情況
+    provider = stt_provider or 'whisper'
+
+    return f"studyscriber_{provider}_{date_str}_{last4_digits}.zip"
+
 @router.get("/{sid}", response_class=StreamingResponse)
 async def export_resource(sid: UUID, type: str = "zip"):
     try:
@@ -20,10 +56,10 @@ async def export_resource(sid: UUID, type: str = "zip"):
 
         sb = get_supabase_client()
 
-        # 1. session 必須 completed
+        # 1. session 必須 completed，同時取得 stt_provider 和 created_at
         session = (
             sb.table("sessions")
-            .select("status")
+            .select("status, stt_provider, created_at")
             .eq("id", str(sid))
             .limit(1)
             .execute()
@@ -31,7 +67,9 @@ async def export_resource(sid: UUID, type: str = "zip"):
         )
         if not session:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
-        if session[0]["status"] != "completed":
+
+        session_data = session[0]
+        if session_data["status"] != "completed":
             raise HTTPException(status.HTTP_202_ACCEPTED, "session not finished")
 
         # 2. 讀 note：欄位名稱可能是 markdown / body / content
@@ -75,7 +113,14 @@ async def export_resource(sid: UUID, type: str = "zip"):
             )
             transcript_txt = (full[0]["full_text"] if full else "").strip()
 
-        # 4. 打包 ZIP
+        # 4. 建立檔名
+        filename = _format_export_filename(
+            session_id=sid,
+            stt_provider=session_data["stt_provider"],
+            created_at=session_data["created_at"]
+        )
+
+        # 5. 打包 ZIP
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("note.md", note_md.strip())
@@ -83,7 +128,7 @@ async def export_resource(sid: UUID, type: str = "zip"):
         buf.seek(0)
 
         headers = {
-            "Content-Disposition": f'attachment; filename="{sid}.zip"'
+            "Content-Disposition": f'attachment; filename="{filename}"'
         }
         return StreamingResponse(buf, media_type="application/zip", headers=headers)
     except HTTPException as e:
