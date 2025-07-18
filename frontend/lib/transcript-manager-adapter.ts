@@ -30,7 +30,7 @@ let managerInstance: ITranscriptManager | null = null
 export async function getTranscriptManager(): Promise<ITranscriptManager> {
   const useRefactored = isFeatureEnabled('useRefactoredTranscriptManager')
 
-  console.log(`🎯 [TranscriptManagerAdapter] 使用 ${useRefactored ? '新' : '舊'} 實現`)
+  console.log(`🎯 [TranscriptManagerAdapter] 使用 ${useRefactored ? '新' : '舊'} 實現 (useRefactoredTranscriptManager=${useRefactored})`)
 
   if (useRefactored) {
     // 動態導入新實現

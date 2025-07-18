@@ -51,7 +51,7 @@ function getAudioChunkInterval(): number {
   }
 
   // 預設值：10秒
-  return 10 * 1000
+  return 30 * 1000
 }
 
 /**
@@ -113,6 +113,27 @@ export function getAudioChunkIntervalMs(): number {
  */
 export function getAudioChunkIntervalSec(): number {
   return Math.round(appConfig.audio.chunkInterval / 1000)
+}
+
+/**
+ * 輔助函數：獲取時間戳標籤間隔（秒）
+ */
+export function getTranscriptLabelIntervalSec(): number {
+  const raw = process.env.NEXT_PUBLIC_TRANSCRIPT_LABEL_INTERVAL
+  const n = Number(raw)
+  const result = Number.isFinite(n) && n > 0 ? Math.floor(n) : 30
+
+  // 開發模式下顯示調試信息
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🏷️ [Config] 時間戳標籤間隔設定:', {
+      rawValue: raw,
+      parsedValue: n,
+      finalValue: result,
+      envVar: 'NEXT_PUBLIC_TRANSCRIPT_LABEL_INTERVAL'
+    })
+  }
+
+  return result
 }
 
 /**

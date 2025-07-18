@@ -314,6 +314,10 @@ def _generate_stt_transcript(session_id: str, transcripts: list) -> str:
         start_time = transcript.get('start_time', 0)
         text = transcript.get('text', '').strip()
 
+        # 跳過沒有文字內容的段落，避免產生只有時間戳的空白行
+        if not text:
+            continue
+
         # 格式化時間戳 (HH:MM:SS.mmm)
         time_str = _format_timestamp(start_time)
 
@@ -325,23 +329,7 @@ def _generate_stt_transcript(session_id: str, transcripts: list) -> str:
     return '\n'.join(lines)
 
 
-def _generate_stt_transcript(session_id: str, transcripts: list) -> str:
-    """生成 STT 格式的逐字稿"""
 
-    # 加入轉錄內容
-    for transcript in transcripts:
-        timestamp = transcript.get('timestamp', 0)
-        text = transcript.get('text', '').strip()
-
-        # 格式化時間戳 (HH:MM:SS.mmm)
-        time_str = _format_timestamp(timestamp)
-
-        # 確保文字沒有換行
-        text = text.replace('\n', ' ')
-
-        lines.append(f"[{time_str}] {text}")
-
-    return '\n'.join(lines)
 
 
 def _format_timestamp(seconds: float) -> str:

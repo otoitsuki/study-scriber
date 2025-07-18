@@ -59,7 +59,8 @@ interface AppStoreActions {
 
   // 編輯器操作
   updateEditorContent: (content: string) => void
-  addTranscriptEntry: (entry: TranscriptEntry) => void
+  addTranscriptEntry: (entry: Omit<TranscriptEntry, 'id'>) => void
+  replaceTranscriptEntry: (entry: TranscriptEntry) => void
 
   // 計時器操作
   startTimer: () => void
@@ -142,7 +143,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const sessionResponse = await recordingFlowService.startRecordingFlow(
         title || `錄音筆記 ${new Date().toLocaleString()}`,
         undefined, // content
-        startTs,   // 傳遞錄音開始時間戳
+        hasStartTime ? startTs : undefined,   // 傳遞錄音開始時間戳
         currentState.sttProvider // 傳遞 STT Provider
       )
 
@@ -275,34 +276,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ editorContent: content })
   },
 
-  addTranscriptEntry: (entry: TranscriptEntry) => {
-    console.log('[S] add entry', entry.text.slice(0, 20))
+  addTranscriptEntry: (entry: Omit<TranscriptEntry, 'id'>) => {
+    set((state) => ({
+      transcriptEntries: [
+        ...state.transcriptEntries,
+        { ...entry, id: crypto.randomUUID() },
+      ],
+      appState: state.appState === 'recording_waiting' ? 'recording_active' : state.appState
+    }))
+  },
 
-    set((state) => {
-      // 將新條目加入並按數值時間排序
-      const timeToSeconds = (t: string): number => {
-        const parts = t.split(':').map(Number)
-        if (parts.length === 3) {
-          const [hh, mm, ss] = parts
-          return hh * 3600 + mm * 60 + ss
-        } else if (parts.length === 2) {
-          const [mm, ss] = parts
-          return mm * 60 + ss
-        }
-        return 0
-      }
-
-      const getStart = (e: TranscriptEntry): number => e.startTime ?? timeToSeconds(e.time)
-
-      const newEntries = [...state.transcriptEntries, entry].sort(
-        (a, b) => getStart(a) - getStart(b)
-      )
-      return {
-        transcriptEntries: newEntries,
-        // 🎯 收到第一個逐字稿時，從 recording_waiting → recording_active
-        appState: state.appState === 'recording_waiting' ? 'recording_active' : state.appState
-      }
-    })
+  replaceTranscriptEntry: (entry: TranscriptEntry) => {
+    set((state) => ({
+      transcriptEntries: state.transcriptEntries.map((e) =>
+        e.id === entry.id ? entry : e
+      ),
+    }))
   },
 
   setRecordingTime: (time: number) => {

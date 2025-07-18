@@ -5,6 +5,7 @@ import { useAppStateContext } from './use-app-state-context'
 import { isFeatureEnabled } from '../lib/feature-flags'
 import { SERVICE_KEYS, serviceContainer } from '../lib/services'
 import type { IRecordingService, ITranscriptService, TranscriptMessage } from '../lib/services'
+import { getTranscriptLabelIntervalSec } from '../lib/config'
 
 interface UseRecordingNewReturn {
   isRecording: boolean
@@ -44,6 +45,10 @@ export function useRecordingNew(): UseRecordingNewReturn {
 
   // waiting→active 超時保險
   const waitingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 時間戳過濾相關屬性
+  const lastLabelTimeRef = useRef<number>(0)
+  const labelIntervalSec = getTranscriptLabelIntervalSec()
 
   console.log('🔄 [useRecordingNew] Hook 初始化 (適配器層)，功能開關狀態:', {
     useNewStateManagement: isFeatureEnabled('useNewStateManagement'),
@@ -146,6 +151,29 @@ export function useRecordingNew(): UseRecordingNewReturn {
     const seconds = Math.floor(startTime % 60)
     const timeStr = `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
 
+    // 檢查是否需要添加時間戳標籤
+    const lastLabelTime = lastLabelTimeRef.current
+    const shouldAddLabel = startTime - lastLabelTime >= labelIntervalSec
+
+    if (shouldAddLabel) {
+      // 添加時間戳標籤
+      const labelEntry = {
+        time: timeStr,
+        text: '' // 純時間標籤
+      }
+
+      console.log('🏷️ [useRecordingNew] 添加時間戳標籤:', {
+        startTime,
+        formattedTime: timeStr,
+        lastLabelTime,
+        intervalSec: labelIntervalSec
+      })
+
+      context.addTranscriptEntry(labelEntry)
+      lastLabelTimeRef.current = startTime
+    }
+
+    // 添加逐字稿內容
     const transcriptEntry = {
       time: timeStr,
       text: transcript.text ?? '',
@@ -167,7 +195,7 @@ export function useRecordingNew(): UseRecordingNewReturn {
         console.warn('⚠️ [useRecordingNew] 狀態機轉換失敗:', result?.error)
       }
     }
-  }, [context, clearWaitingTimeout])
+  }, [context, clearWaitingTimeout, labelIntervalSec])
 
   // 開始錄音 - 使用服務層
   const startRecording = useCallback(async (sessionId: string): Promise<void> => {

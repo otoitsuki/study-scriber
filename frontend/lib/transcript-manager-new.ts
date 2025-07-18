@@ -3,6 +3,7 @@
 import { TranscriptWebSocket } from './websocket'
 import { useAppStore } from './app-store-zustand'
 import type { TranscriptEntry } from '../types/app-state'
+import { getTranscriptLabelIntervalSec } from './config'
 import {
     TranscriptSegmentMessage,
     TranscriptCompleteMessage,
@@ -32,6 +33,10 @@ export class TranscriptManager {
     private maxReconnectAttempts = 5
     private heartbeatInterval = 10000 // 10秒
     private reconnectDelay = 2000 // 2秒
+
+    // 添加時間戳過濾相關屬性
+    private lastLabelTimes: Map<string, number> = new Map() // 記錄每個會話的最後時間戳顯示時間
+    private labelIntervalSec: number = getTranscriptLabelIntervalSec()
 
     private constructor() {
         // Singleton pattern
@@ -76,6 +81,9 @@ export class TranscriptManager {
 
     async disconnect(sessionId: string): Promise<void> {
         console.log(`📱 [TranscriptManager] 斷開會話: ${sessionId}`)
+
+        // 清理時間戳狀態
+        this.lastLabelTimes.delete(sessionId)
 
         // 停止心跳
         this.stopHeartbeat(sessionId)
@@ -130,14 +138,35 @@ export class TranscriptManager {
         console.log(`🎯 [TranscriptManager] 綁定事件處理器: ${sessionId}`)
 
         // ✅ 型別安全的事件監聽器
-        ws.on('transcript_segment', (msg) => this.handleTranscriptSegment(sessionId, msg))
-        ws.on('connection_established', (msg) => this.handleConnectionEstablished(sessionId, msg))
-        ws.on('transcript_complete', (msg) => this.handleTranscriptComplete(sessionId, msg))
-        ws.on('heartbeat_ack', (msg) => this.handleHeartbeatAck(sessionId, msg))
-        ws.on('pong', (msg) => this.handlePong(sessionId, msg))
-        ws.on('error', (msg) => this.handleError(sessionId, msg))
-        ws.on('transcription_error', (msg) => this.handleTranscriptionError(sessionId, msg))
-        ws.on('phase', (msg) => this.handlePhase(sessionId, msg))
+        ws.onMessage((event: MessageEvent) => {
+            const msg = JSON.parse(event.data)
+            switch (msg.type) {
+                case 'transcript_segment':
+                    this.handleTranscriptSegment(sessionId, msg)
+                    break
+                case 'connection_established':
+                    this.handleConnectionEstablished(sessionId, msg)
+                    break
+                case 'transcript_complete':
+                    this.handleTranscriptComplete(sessionId, msg)
+                    break
+                case 'heartbeat_ack':
+                    this.handleHeartbeatAck(sessionId, msg)
+                    break
+                case 'pong':
+                    this.handlePong(sessionId, msg)
+                    break
+                case 'error':
+                    this.handleError(sessionId, msg)
+                    break
+                case 'transcription_error':
+                    this.handleTranscriptionError(sessionId, msg)
+                    break
+                case 'phase':
+                    this.handlePhase(sessionId, msg)
+                    break
+            }
+        })
     }
 
     /* ============================================================
@@ -145,6 +174,16 @@ export class TranscriptManager {
      * ============================================================ */
 
     private handleTranscriptSegment(sessionId: string, msg: TranscriptSegmentMessage): void {
+        // 若文字為空白，直接忽略，避免產生空白時間戳
+        if (!msg.text || msg.text.trim().length === 0) {
+            console.log('⚠️ [TranscriptManager] 收到空白逐字稿片段，已忽略', {
+                sessionId,
+                start_time: msg.start_time,
+                end_time: msg.end_time
+            })
+            return
+        }
+
         console.log('📝 [TranscriptManager] 收到逐字稿片段:', {
             sessionId,
             text: msg.text.substring(0, 50) + '...',
@@ -160,21 +199,52 @@ export class TranscriptManager {
         const minutes = Math.floor((startTimeInSeconds % 3600) / 60)
         const seconds = Math.floor(startTimeInSeconds % 60)
 
-        const entry: TranscriptEntry = {
-            startTime: startTimeInSeconds,
-            time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
-            text: msg.text
+        // 檢查是否需要添加時間戳標籤
+        const lastLabelTime = this.lastLabelTimes.get(sessionId) ?? 0
+        const shouldAddLabel = startTimeInSeconds - lastLabelTime >= this.labelIntervalSec
+
+        if (shouldAddLabel) {
+            // 添加時間戳標籤
+            const labelEntry: Omit<TranscriptEntry, 'id'> = {
+                startTime: startTimeInSeconds,
+                time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
+                text: msg.text // 將文字內容直接加到時間戳標籤項目中
+            }
+
+            console.log('🏷️ [TranscriptManager] 添加帶有內容的時間戳標籤:', {
+                sessionId,
+                startTime: startTimeInSeconds,
+                formattedTime: labelEntry.time,
+                lastLabelTime,
+                intervalSec: this.labelIntervalSec
+            })
+
+            useAppStore.getState().addTranscriptEntry(labelEntry)
+            this.lastLabelTimes.set(sessionId, startTimeInSeconds)
+        } else {
+            // 如果不需要添加新的時間戳標籤，就更新最後一個逐字稿項目的文字
+            const lastEntry = useAppStore.getState().transcriptEntries.slice(-1)[0]
+            if (lastEntry) {
+                const updatedEntry: TranscriptEntry = {
+                    ...lastEntry,
+                    text: (lastEntry.text + ' ' + msg.text).trim()
+                }
+                useAppStore.getState().replaceTranscriptEntry(updatedEntry)
+                console.log('🔄 [TranscriptManager] 更新現有逐字稿:', {
+                    sessionId,
+                    startTime: updatedEntry.startTime,
+                    newText: updatedEntry.text
+                })
+            } else {
+                // 如果沒有最後一個項目，就新增一個
+                const entry: Omit<TranscriptEntry, 'id'> = {
+                    startTime: startTimeInSeconds,
+                    time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
+                    text: msg.text
+                }
+                useAppStore.getState().addTranscriptEntry(entry)
+            }
         }
-
-        console.log('🎯 [TranscriptManager] 推送到 store:', entry)
-        useAppStore.getState().addTranscriptEntry(entry)
-
-        // 檢查狀態轉換
-        const currentState = useAppStore.getState()
-        console.log('📊 [TranscriptManager] Store 狀態:', {
-            appState: currentState.appState,
-            transcriptCount: currentState.transcriptEntries.length
-        })
     }
 
     private handleConnectionEstablished(sessionId: string, msg: ConnectionEstablishedMessage): void {

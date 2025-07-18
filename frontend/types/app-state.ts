@@ -6,8 +6,12 @@ export type AppState =
   | "processing"  // 處理畫面：停止錄音後，處理剩餘逐字稿
   | "finished"    // 完整逐字稿畫面：可編輯筆記、匯出、開新筆記
 
+/**
+ * 逐字稿單一項目
+ */
 export interface TranscriptEntry {
-  startTime?: number
+  id: string; // 新增 ID 欄位
+  startTime: number
   time: string
   text: string
   provider?: 'whisper' | 'gemini'  // STT Provider 標識

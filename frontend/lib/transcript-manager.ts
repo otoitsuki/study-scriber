@@ -3,6 +3,7 @@
 import { TranscriptWebSocket, TranscriptMessage, WebSocketManager } from './websocket'
 import { useAppStore } from './app-store-zustand'
 import type { TranscriptEntry } from '../types/app-state'
+import { getTranscriptLabelIntervalSec } from './config'
 
 /**
  * TranscriptManager - 統一管理 transcript WebSocket 連接的 Singleton
@@ -22,6 +23,10 @@ export class TranscriptManager {
   private maxReconnectAttempts = 5
   private heartbeatInterval = 10000 // 10秒，避免伺服器過早判定逾時
   private reconnectDelay = 2000 // 2秒
+
+  // 添加時間戳過濾相關屬性
+  private lastLabelTimes: Map<string, number> = new Map() // 記錄每個會話的最後時間戳顯示時間
+  private labelIntervalSec: number = getTranscriptLabelIntervalSec()
 
   private constructor() {
     // Singleton pattern - 私有建構子
@@ -290,7 +295,7 @@ export class TranscriptManager {
       })
 
       // 🎯 轉換 transcript_segment 為 TranscriptEntry 格式並推送到 store
-      if (message.text) {
+      if (message.text && message.text.trim().length > 0) {
         try {
           // 使用 start_time 而不是 timestamp，並轉換為 HH:MM:SS 格式
           const startTimeInSeconds = message.start_time ?? 0
@@ -298,22 +303,50 @@ export class TranscriptManager {
           const minutes = Math.floor((startTimeInSeconds % 3600) / 60)
           const seconds = Math.floor(startTimeInSeconds % 60)
 
-          const entry = {
-            startTime: startTimeInSeconds,
-            time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
-            text: message.text
+          // 檢查是否需要添加時間戳標籤
+          const lastLabelTime = this.lastLabelTimes.get(sessionId) ?? 0
+          const shouldAddLabel = startTimeInSeconds - lastLabelTime >= this.labelIntervalSec
+
+          if (shouldAddLabel) {
+            // 直接將文字內容放入時間戳標籤，避免產生重複的空白行
+            const labelEntry = {
+              startTime: startTimeInSeconds,
+              time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
+              text: message.text
+            }
+
+            console.log('🏷️ [TranscriptManager] 添加帶內容的時間戳標籤:', {
+              sessionId,
+              startTime: startTimeInSeconds,
+              formattedTime: labelEntry.time,
+              lastLabelTime,
+              intervalSec: this.labelIntervalSec
+            })
+
+            useAppStore.getState().addTranscriptEntry(labelEntry)
+            this.lastLabelTimes.set(sessionId, startTimeInSeconds)
+
+            // 已插入帶內容的時間戳，後續不必再插入重複項目
+          } else {
+            // 添加逐字稿內容，時間戳已存在，僅更新文字
+            const entry = {
+              startTime: startTimeInSeconds,
+              time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
+              text: message.text
+            }
+
+            console.log('🎯 [TranscriptManager] 準備推送 transcript_segment 到 store:', {
+              originalStartTime: message.start_time,
+              startTimeInSeconds,
+              formattedTime: entry.time,
+              text: entry.text.substring(0, 50) + '...'
+            })
+
+            console.log('[T] before push', useAppStore.getState().appState)
+            useAppStore.getState().addTranscriptEntry(entry)
           }
 
-          console.log('🎯 [TranscriptManager] 準備推送 transcript_segment 到 store:', {
-            originalStartTime: message.start_time,
-            startTimeInSeconds,
-            formattedTime: entry.time,
-            text: entry.text.substring(0, 50) + '...'
-          })
-
-          console.log('[T] before push', useAppStore.getState().appState)
-          useAppStore.getState().addTranscriptEntry(entry)
-          console.log('✅ [TranscriptManager] transcript_segment 已推送到 store:', entry)
+          console.log('✅ [TranscriptManager] transcript_segment 已推送到 store:', message.text.substring(0, 50) + '...')
 
           // 檢查狀態是否有變化
           const currentState = useAppStore.getState()
@@ -376,6 +409,67 @@ export class TranscriptManager {
         timestamp: new Date().toISOString()
       })
       // 廣播錯誤訊息給監聽器
+      this.broadcastToListeners(sessionId, message)
+    } else if (message.type === 'transcript') {
+      // 處理舊格式的逐字稿訊息
+      const raw = message.data || message
+      if (raw && raw.text) {
+        const parseTime = (t: string | undefined): number => {
+          if (!t) return 0
+          const parts = t.split(':').map(Number)
+          return parts.length === 3
+            ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+            : parts[0] * 60 + parts[1]
+        }
+
+        const startTime = (typeof raw.start_time === 'number') ? raw.start_time : (raw.startTime ?? parseTime(raw.time))
+
+        // 檢查是否需要添加時間戳標籤
+        const lastLabelTime = this.lastLabelTimes.get(sessionId) ?? 0
+        const shouldAddLabel = startTime - lastLabelTime >= this.labelIntervalSec
+
+        if (shouldAddLabel) {
+          // 添加時間戳標籤
+          const labelEntry = {
+            startTime,
+            time: raw.time ?? `${Math.floor(startTime / 60).toString().padStart(2, '0')}:${(startTime % 60).toString().padStart(2, '0')}`,
+            text: '' // 純時間標籤
+          }
+
+          useAppStore.getState().addTranscriptEntry(labelEntry)
+          this.lastLabelTimes.set(sessionId, startTime)
+        }
+
+        // 添加逐字稿內容
+        const entry = {
+          startTime,
+          time: raw.time ?? `${Math.floor(startTime / 60).toString().padStart(2, '0')}:${(startTime % 60).toString().padStart(2, '0')}`,
+          text: raw.text
+        }
+
+        console.log('🎯 [TranscriptManager] 準備推送 transcript_segment 到 store:', {
+          originalStartTime: raw.start_time,
+          startTimeInSeconds: startTime,
+          formattedTime: entry.time,
+          text: entry.text.substring(0, 50) + '...'
+        })
+
+        console.log('[T] before push', useAppStore.getState().appState)
+        useAppStore.getState().addTranscriptEntry(entry)
+        console.log('✅ [TranscriptManager] transcript_segment 已推送到 store:', entry)
+
+        // 檢查狀態是否有變化
+        const currentState = useAppStore.getState()
+        console.log('📊 [TranscriptManager] Store 狀態檢查:', {
+          appState: currentState.appState,
+          transcriptCount: currentState.transcriptEntries.length,
+          latestEntry: currentState.transcriptEntries[currentState.transcriptEntries.length - 1]
+        })
+
+      } else {
+        console.warn('⚠️ [TranscriptManager] 無效的逐字稿條目:', raw)
+      }
+
       this.broadcastToListeners(sessionId, message)
     } else {
       console.log('📨 [TranscriptManager] 未知訊息類型:', {
@@ -513,10 +607,13 @@ export class TranscriptManager {
   }
 
   /**
-   * 斷開指定 session 的連接
+   * 清理會話相關的時間戳狀態
    */
   async disconnect(sessionId: string): Promise<void> {
-    console.log(`📱 TranscriptManager: 斷開 session ${sessionId}`)
+    console.log(`🔌 [TranscriptManager] 斷開連接 ${sessionId}`)
+
+    // 清理時間戳狀態
+    this.lastLabelTimes.delete(sessionId)
 
     // 停止心跳
     this.stopHeartbeat(sessionId)

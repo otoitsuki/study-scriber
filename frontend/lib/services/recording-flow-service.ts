@@ -13,7 +13,7 @@ import { formatTime } from '../../utils/time'
  * 提供統一的錄音流程管理
  */
 import { STTProvider } from '../api'
-import { getEffectiveAudioChunkDurationSec } from '../config'
+import { getEffectiveAudioChunkDurationSec, getTranscriptLabelIntervalSec } from '../config'
 
 // 使用有效音頻切片長度（考慮 overlap）
 // 改為在需要時動態獲取，避免模組初始化順序問題
@@ -41,11 +41,7 @@ export class RecordingFlowService extends BaseService {
   // 流程狀態
   private currentSession: SessionResponse | null = null
   private isFlowActive = false
-  private labelIntervalSec = (() => {
-    const raw = process.env.NEXT_PUBLIC_TRANSCRIPT_LABEL_INTERVAL
-    const n = Number(raw)
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 15
-  })()
+  private labelIntervalSec = getTranscriptLabelIntervalSec()
   private lastLabelSec = 0
   private transcriptEntries: Array<{ time: string; text: string }> = []
 

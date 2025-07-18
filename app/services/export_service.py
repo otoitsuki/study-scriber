@@ -22,24 +22,16 @@ class ExportService:
         """生成 STT 格式的逐字稿"""
         lines = []
 
-        # 標題資訊
-        lines.append("=== 音頻轉錄逐字稿 ===")
-        lines.append(f"生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-        if transcriptions:
-            # 計算總時長
-            max_time = max(t.timestamp_end or t.timestamp_start for t in transcriptions)
-            duration = str(timedelta(seconds=int(max_time)))
-            lines.append(f"錄音時長: {duration}")
-
-        lines.append(f"總段落數: {len(transcriptions)}")
-        lines.append("=" * 50)
-        lines.append("")
-
         # 轉錄內容
         for segment in sorted(transcriptions, key=lambda x: x.timestamp_start):
-            timestamp = self._format_timestamp(segment.timestamp_start)
+            # 清理文字內容並忽略空白轉錄
             text = segment.text.strip().replace('\n', ' ')
+
+            # 跳過沒有文字內容的轉錄，避免產生只有時間戳的空白行
+            if not text:
+                continue
+
+            timestamp = self._format_timestamp(segment.timestamp_start)
             lines.append(f"[{timestamp}] {text}")
 
         return '\n'.join(lines)

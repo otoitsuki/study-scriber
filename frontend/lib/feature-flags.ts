@@ -8,6 +8,7 @@ export interface FeatureFlags {
   useNewTranscriptHook: boolean
   useNewAppStateHook: boolean
   useSimpleRecordingService: boolean  // 🔧 Phase 2.5: 使用進階錄音服務 (AdvancedAudioRecorder)
+  useRefactoredTranscriptManager: boolean  // 🔧 使用重構後的 TranscriptManager
   enableStateSync: boolean
   enableDebugLogging: boolean
 }
@@ -20,6 +21,7 @@ const defaultFeatureFlags: FeatureFlags = {
   useNewTranscriptHook: true,    // 🆕 啟用新 transcript hook
   useNewAppStateHook: true,      // 🆕 啟用新 app state hook
   useSimpleRecordingService: true, // 🔧 Phase 2.5: 啟用進階錄音服務 (修復 WebM Header)
+  useRefactoredTranscriptManager: true, // 🔧 使用新的重構版 TranscriptManager（架構更好、型別安全）
   enableStateSync: true,         // 預設開啟狀態同步
   enableDebugLogging: true,      // 預設開啟調試日誌
 }
