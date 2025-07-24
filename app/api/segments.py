@@ -44,45 +44,73 @@ async def upload_segment(
 
     # --- 基本驗證 ---
     if file.content_type not in ("audio/webm", "audio/webm;codecs=opus"):
-        raise HTTPException(HTTP_400_BAD_REQUEST, "Unsupported media type. Expected audio/webm")
+        detail = {
+            "code": "unsupported_media_type",
+            "message": "Unsupported media type. Expected audio/webm"
+        }
+        logger.error(detail)
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
     # 讀取檔案內容
     blob = await file.read()
 
     # 檔案大小檢查
     if len(blob) > MAX_FILE_SIZE:
-        raise HTTPException(HTTP_400_BAD_REQUEST, f"File too large: {len(blob)} bytes > {MAX_FILE_SIZE} bytes (5MB)")
+        detail = {
+            "code": "file_too_large",
+            "message": f"File too large: {len(blob)} bytes > {MAX_FILE_SIZE} bytes (5MB)"
+        }
+        logger.error(detail)
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
     # 會話驗證 - 檢查 session 存在且狀態正確
     try:
         session_response = supabase.table("sessions").select("*").eq("id", str(sid)).eq("status", "active").limit(1).execute()
         if not session_response.data:
-            raise HTTPException(HTTP_400_BAD_REQUEST, "Session not found or not active")
+            detail = {"code": "session_not_active", "message": "Session not found or not active"}
+            logger.error(detail)
+            raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
         session = session_response.data[0]
         if session.get('type') != 'recording':
-            raise HTTPException(HTTP_400_BAD_REQUEST, "Session is not in recording mode")
+            detail = {"code": "session_not_recording", "message": "Session is not in recording mode"}
+            logger.error(detail)
+            raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Session validation error: {e}")
-        raise HTTPException(HTTP_400_BAD_REQUEST, "Session validation failed")
+        detail = {"code": "session_validation_failed", "message": "Session validation failed"}
+        logger.error(detail)
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
     # 序號唯一性檢查 - (session_id, seq) UNIQUE
     try:
         existing_response = supabase.table("audio_files").select("id").eq("session_id", str(sid)).eq("chunk_sequence", seq).limit(1).execute()
         if existing_response.data:
-            raise HTTPException(HTTP_409_CONFLICT, f"Sequence {seq} already uploaded for this session. Please retry with next sequence or skip.")
+            detail = {
+                "code": "sequence_conflict",
+                "message": f"Sequence {seq} already uploaded for this session. Please retry with next sequence or skip."
+            }
+            logger.error(detail)
+            raise HTTPException(status_code=HTTP_409_CONFLICT, detail=detail)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Sequence uniqueness check error: {e}")
-        raise HTTPException(HTTP_400_BAD_REQUEST, "Sequence validation failed")
+        detail = {"code": "sequence_validation_failed", "message": "Sequence validation failed"}
+        logger.error(detail)
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
     # WebM 檔案格式基本驗證
     if not valid_webm(blob[:32]):
-        raise HTTPException(HTTP_400_BAD_REQUEST, "Invalid WebM header. Please ensure file is properly encoded WebM format.")
+        detail = {
+            "code": "invalid_webm_header",
+            "message": "Invalid WebM header. Please ensure file is properly encoded WebM format."
+        }
+        logger.error(detail)
+        raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
     logger.info(f"✅ Validated WebM segment upload: session={sid}, seq={seq}, size={len(blob)} bytes")
 

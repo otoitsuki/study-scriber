@@ -100,10 +100,19 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
      */
     async startRecording(sessionId: string): Promise<void> {
         try {
+            console.log('🎤 [SimpleRecordingService] 開始錄音', {
+                sessionId,
+                currentState: this.recordingState,
+                timestamp: new Date().toISOString()
+            })
             this.logInfo(`開始錄音 - sessionId: ${sessionId}`)
 
             // 如果已經在錄音，先停止
             if (this.recordingState.isRecording) {
+                console.log('⚠️ [SimpleRecordingService] 已在錄音中，先停止現有錄音', {
+                    currentSessionId: this.recordingState.currentSessionId,
+                    requestedSessionId: sessionId
+                })
                 this.logWarning('已在錄音中，先停止現有錄音')
                 await this.stopRecording()
             }
@@ -230,6 +239,14 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
                 error,
                 totalFailed: this.failedSegments.size
             })
+
+            import('../app-store-zustand').then(({ useAppStore }) => {
+                try {
+                    useAppStore.getState().setError(error)
+                } catch (e) {
+                    this.logWarning('無法在 store 設置錯誤訊息', e)
+                }
+            })
         })
 
         // 處理暫存到本地
@@ -249,7 +266,17 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
             sequence: segment.sequence,
             size: segment.blob.size,
             duration: segment.duration,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            sessionId: this.sessionId
+        })
+
+        console.log('🔍 [SimpleRecordingService] 音頻段落詳細資訊：', {
+            blobType: segment.blob.type,
+            blobSize: `${segment.blob.size} bytes`,
+            duration: `${segment.duration}ms`,
+            sequence: segment.sequence,
+            hasUploader: !!this.audioUploader,
+            uploaderStatus: this.audioUploader ? 'ready' : 'not initialized'
         })
 
         this.logInfo(`收到音頻段落 - sequence: ${segment.sequence}, size: ${segment.blob.size}, duration: ${segment.duration}`)
@@ -397,16 +424,29 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
 
     async requestPermission(): Promise<boolean> {
         try {
+            console.log('🎙️ [SimpleRecordingService] 正在請求麥克風權限...')
             this.stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            console.log('✅ [SimpleRecordingService] 麥克風權限獲取成功', {
+                streamActive: this.stream.active,
+                tracks: this.stream.getAudioTracks().length
+            })
             return true
         } catch (e) {
+            console.error('❌ [SimpleRecordingService] 麥克風權限請求失敗:', e)
             toast({ title: '需要麥克風權限才能錄音', variant: 'destructive' })
             return false
         }
     }
 
     private async ensureStarted() {
-        if (!this.stream) await this.start()
+        if (!this.stream) {
+            console.log('🎙️ [SimpleRecordingService] 音頻流不存在，請求麥克風權限')
+            const hasPermission = await this.requestPermission()
+            if (!hasPermission) {
+                throw new Error('麥克風權限被拒絕')
+            }
+            console.log('✅ [SimpleRecordingService] 麥克風權限獲取成功')
+        }
     }
 
     /**
@@ -445,10 +485,24 @@ export class SimpleRecordingService extends BaseService implements IRecordingSer
             this.setupUploaderEvents()
 
             // 開始錄音並傳入段落處理 callback
+            console.log('🎬 [SimpleRecordingService] 準備開始錄音', {
+                sessionId: this.sessionId,
+                chunkInterval: chunkInterval,
+                hasStream: !!this.stream,
+                hasRecorder: !!this.audioRecorder,
+                hasUploader: !!this.audioUploader
+            })
+
             await this.audioRecorder.start(async (segment) => {
+                console.log('📥 [SimpleRecordingService] 錄音器回調觸發', {
+                    sequence: segment.sequence,
+                    size: segment.blob.size,
+                    sessionId: this.sessionId
+                })
                 await this.handleAudioSegment(segment)
             })
 
+            console.log('✅ [SimpleRecordingService] 錄音器啟動成功')
             this.logSuccess(`MediaRecorder 初始化完成並開始錄音 - sessionId: ${this.sessionId}, chunkInterval: ${chunkInterval}ms`)
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : '未知錯誤'

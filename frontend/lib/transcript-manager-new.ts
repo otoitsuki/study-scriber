@@ -38,6 +38,9 @@ export class TranscriptManager {
     private lastLabelTimes: Map<string, number> = new Map() // 記錄每個會話的最後時間戳顯示時間
     private labelIntervalSec: number = getTranscriptLabelIntervalSec()
 
+    // 🎯 新增：監聽器管理
+    private listeners: Map<string, Set<(message: any) => void>> = new Map()
+
     private constructor() {
         // Singleton pattern
         if (typeof window !== 'undefined') {
@@ -98,6 +101,9 @@ export class TranscriptManager {
         // 清理狀態
         this.connectionStates.set(sessionId, false)
         this.reconnectAttempts.delete(sessionId)
+
+        // 🎯 清理監聽器
+        this.listeners.delete(sessionId)
     }
 
     /* ============================================================
@@ -107,7 +113,10 @@ export class TranscriptManager {
     private async establishConnection(sessionId: string): Promise<void> {
         const ws = new TranscriptWebSocket(sessionId)
 
-        // ✅ 使用型別安全的事件綁定（移除 hack）
+        // 建立連接 (需在事件綁定前先 connect，確保 ws 還原 onmessage 位置)
+        await ws.connect()
+
+        // ✅ 使用型別安全的事件綁定（移除 hack）—— connect 之後再綁定，確保 this.ws 已存在
         this.bindWebSocketEvents(ws, sessionId)
 
         // 設定關閉處理
@@ -122,9 +131,6 @@ export class TranscriptManager {
             }
         })
 
-        // 建立連接
-        await ws.connect()
-
         // 保存連接
         this.connections.set(sessionId, ws)
         this.connectionStates.set(sessionId, true)
@@ -137,9 +143,20 @@ export class TranscriptManager {
     private bindWebSocketEvents(ws: TranscriptWebSocket, sessionId: string): void {
         console.log(`🎯 [TranscriptManager] 綁定事件處理器: ${sessionId}`)
 
-        // ✅ 型別安全的事件監聽器
-        ws.onMessage((event: MessageEvent) => {
-            const msg = JSON.parse(event.data)
+        // ✅ 型別安全的事件監聽器 (TranscriptWebSocket 已先 JSON.parse)
+        ws.onMessage((msg: any) => {
+            // msg 已是解析後的 JSON 物件
+            console.log(`🔥 [TranscriptManager-New] 收到 WebSocket 訊息:`, {
+                sessionId,
+                messageType: msg.type,
+                hasText: !!msg.text,
+                textPreview: msg.text?.substring(0, 50),
+                fullMessage: msg,
+                timestamp: new Date().toISOString()
+            })
+
+            console.log(`🎯 [TranscriptManager-New] 當前監聽器數量: ${this.listeners.get(sessionId)?.size || 0}`)
+
             switch (msg.type) {
                 case 'transcript_segment':
                     this.handleTranscriptSegment(sessionId, msg)
@@ -165,6 +182,14 @@ export class TranscriptManager {
                 case 'phase':
                     this.handlePhase(sessionId, msg)
                     break
+                default:
+                    console.warn(`⚠️ [TranscriptManager-New] 未知訊息類型:`, {
+                        sessionId,
+                        messageType: msg.type,
+                        fullMessage: msg,
+                        allKeys: Object.keys(msg)
+                    })
+                    break
             }
         })
     }
@@ -174,6 +199,14 @@ export class TranscriptManager {
      * ============================================================ */
 
     private handleTranscriptSegment(sessionId: string, msg: TranscriptSegmentMessage): void {
+        console.log('🎯 [TranscriptManager-New] handleTranscriptSegment 被調用!', {
+            sessionId,
+            messageType: msg.type,
+            hasText: !!msg.text,
+            textPreview: msg.text?.substring(0, 50),
+            currentListeners: this.listeners.get(sessionId)?.size || 0
+        })
+
         // 若文字為空白，直接忽略，避免產生空白時間戳
         if (!msg.text || msg.text.trim().length === 0) {
             console.log('⚠️ [TranscriptManager] 收到空白逐字稿片段，已忽略', {
@@ -192,58 +225,27 @@ export class TranscriptManager {
             confidence: msg.confidence
         })
 
-        // 轉換為 UI 格式並推送到 store
-        // 使用 start_time 並轉換為 HH:MM:SS 格式
+        // 記錄段落開始時間（秒）
         const startTimeInSeconds = msg.start_time ?? 0
-        const hours = Math.floor(startTimeInSeconds / 3600)
-        const minutes = Math.floor((startTimeInSeconds % 3600) / 60)
-        const seconds = Math.floor(startTimeInSeconds % 60)
 
-        // 檢查是否需要添加時間戳標籤
-        const lastLabelTime = this.lastLabelTimes.get(sessionId) ?? 0
-        const shouldAddLabel = startTimeInSeconds - lastLabelTime >= this.labelIntervalSec
+        // 目前由 RecordingFlowService 統一處理逐字稿並更新 store，
+        // TranscriptManager 僅負責接收訊息並廣播，避免重複插入造成時間戳 (00:00:30) 重複。
 
-        if (shouldAddLabel) {
-            // 添加時間戳標籤
-            const labelEntry: Omit<TranscriptEntry, 'id'> = {
-                startTime: startTimeInSeconds,
-                time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
-                text: msg.text // 將文字內容直接加到時間戳標籤項目中
-            }
+        // === 廣播訊息給監聽器 ===
+        this.broadcastToListeners(sessionId, msg)
 
-            console.log('🏷️ [TranscriptManager] 添加帶有內容的時間戳標籤:', {
-                sessionId,
-                startTime: startTimeInSeconds,
-                formattedTime: labelEntry.time,
-                lastLabelTime,
-                intervalSec: this.labelIntervalSec
-            })
+        // 檢查是否需要觸發狀態轉換（保持原行為）
+        this.checkAndTriggerStateTransition()
+    }
 
-            useAppStore.getState().addTranscriptEntry(labelEntry)
-            this.lastLabelTimes.set(sessionId, startTimeInSeconds)
-        } else {
-            // 如果不需要添加新的時間戳標籤，就更新最後一個逐字稿項目的文字
-            const lastEntry = useAppStore.getState().transcriptEntries.slice(-1)[0]
-            if (lastEntry) {
-                const updatedEntry: TranscriptEntry = {
-                    ...lastEntry,
-                    text: (lastEntry.text + ' ' + msg.text).trim()
-                }
-                useAppStore.getState().replaceTranscriptEntry(updatedEntry)
-                console.log('🔄 [TranscriptManager] 更新現有逐字稿:', {
-                    sessionId,
-                    startTime: updatedEntry.startTime,
-                    newText: updatedEntry.text
-                })
-            } else {
-                // 如果沒有最後一個項目，就新增一個
-                const entry: Omit<TranscriptEntry, 'id'> = {
-                    startTime: startTimeInSeconds,
-                    time: `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
-                    text: msg.text
-                }
-                useAppStore.getState().addTranscriptEntry(entry)
-            }
+    /**
+     * 檢查並觸發狀態轉換（如果需要）
+     */
+    private checkAndTriggerStateTransition(): void {
+        const currentState = useAppStore.getState()
+        if (currentState.appState === 'recording_waiting') {
+            console.log('🚀 [TranscriptManager-New] 收到逐字稿片段，觸發狀態轉換: recording_waiting → recording_active')
+            useAppStore.getState().setState('recording_active')
         }
     }
 
@@ -265,9 +267,10 @@ export class TranscriptManager {
     }
 
     private handleHeartbeatAck(sessionId: string, msg: HeartbeatAckMessage): void {
-        console.log('💓 [TranscriptManager] 心跳確認:', {
+        console.log('💓 [TranscriptManager-New] 心跳確認:', {
             sessionId,
-            timestamp: msg.timestamp
+            timestamp: msg.timestamp,
+            messageReceived: new Date().toISOString()
         })
     }
 
@@ -386,23 +389,55 @@ export class TranscriptManager {
     }
 
     /* ============================================================
- * 向後兼容方法（支援舊的 API）
- * ============================================================ */
+     * 向後兼容方法（支援舊的 API）
+     * ============================================================ */
 
-    /**
-     * @deprecated 舊 API 兼容性 - 請使用事件驅動方式
-     */
     addListener(sessionId: string, callback: (message: any) => void): void {
-        console.warn('⚠️ [TranscriptManager] addListener 已棄用，請使用事件驅動方式')
-        // 為了兼容性，暫時保留但不實作
+        console.log('🎯 [TranscriptManager] 添加監聽器:', { sessionId })
+
+        if (!this.listeners.has(sessionId)) {
+            this.listeners.set(sessionId, new Set())
+        }
+
+        this.listeners.get(sessionId)!.add(callback)
+        console.log(`✅ [TranscriptManager] 會話 ${sessionId} 現有 ${this.listeners.get(sessionId)!.size} 個監聽器`)
     }
 
-    /**
-     * @deprecated 舊 API 兼容性 - 請使用事件驅動方式
-     */
     removeListener(sessionId: string, callback: (message: any) => void): void {
-        console.warn('⚠️ [TranscriptManager] removeListener 已棄用，請使用事件驅動方式')
-        // 為了兼容性，暫時保留但不實作
+        console.log('🗑️ [TranscriptManager] 移除監聽器:', { sessionId })
+
+        const listeners = this.listeners.get(sessionId)
+        if (listeners) {
+            listeners.delete(callback)
+            if (listeners.size === 0) {
+                this.listeners.delete(sessionId)
+            }
+        }
+    }
+
+    /* ============================================================
+     * 監聽器通知方法
+     * ============================================================ */
+
+    private broadcastToListeners(sessionId: string, message: any): void {
+        const listeners = this.listeners.get(sessionId)
+        if (listeners && listeners.size > 0) {
+            console.log(`📡 [TranscriptManager] 廣播訊息給 ${listeners.size} 個監聽器:`, {
+                sessionId,
+                messageType: message.type,
+                textPreview: message.text?.substring(0, 50)
+            })
+
+            listeners.forEach(callback => {
+                try {
+                    callback(message)
+                } catch (error) {
+                    console.error('❌ [TranscriptManager] 監聽器回調失敗:', error)
+                }
+            })
+        } else {
+            console.warn('⚠️ [TranscriptManager] 沒有找到監聽器:', { sessionId })
+        }
     }
 
     /* ============================================================
@@ -429,7 +464,7 @@ export class TranscriptManager {
     async disconnectAll(): Promise<void> {
         console.log('📱 [TranscriptManager] 清理所有連接')
         const sessionIds = Array.from(this.connections.keys())
-        await Promise.all(sessionIds.map(sessionId => this.disconnect(sessionId)))
+        await Promise.all(sessionIds.map(id => this.disconnect(id)))
     }
 }
 

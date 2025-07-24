@@ -8,7 +8,7 @@ import { InitialStateLoader } from '../initial-state-loader'
 import type { ReactNode } from 'react'
 
 // Mock 外部依賴
-vi.mock('../../hooks/use-session-adapter', () => ({
+vi.mock('../../hooks/use-session', () => ({
     useSession: vi.fn(() => ({
         currentSession: null,
         isLoading: false,
@@ -22,7 +22,7 @@ vi.mock('../../hooks/use-session-adapter', () => ({
     }))
 }))
 
-vi.mock('../../hooks/use-recording-adapter', () => ({
+vi.mock('../../hooks/use-recording', () => ({
     useRecording: vi.fn(() => ({
         isRecording: false,
         recordingTime: 0,
@@ -42,7 +42,7 @@ vi.mock('../../hooks/use-notes', () => ({
     }))
 }))
 
-vi.mock('../../hooks/use-transcript-adapter', () => ({
+vi.mock('../../hooks/use-transcript', () => ({
     useTranscript: vi.fn(() => ({
         isConnected: false,
         error: null,

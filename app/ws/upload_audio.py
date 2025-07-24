@@ -17,6 +17,7 @@ from supabase import Client
 from fastapi import HTTPException
 from app.core.container import container
 from app.services.stt.factory import get_provider
+from app.services.stt.save_utils import save_and_push_result
 from ..db.database import get_supabase_client
 from ..services.r2_client import get_r2_client, R2ClientError
 
@@ -227,10 +228,12 @@ class AudioUploadManager:
                 # 轉錄呼叫
                 provider = get_provider(self.session_id)
                 logger.info(f"🎯 [WS轉錄] 開始轉錄 seq={chunk_sequence} (provider={provider.name()})")
-                result = await provider.transcribe(audio_data, self.session_id, chunk_sequence)
-                if result:
-                    logger.info(f"✅ [WS轉錄] seq={chunk_sequence} 轉錄成功")
-                    # TODO: 後續儲存/推播 result
+                transcription_result = await provider.transcribe(audio_data, self.session_id, chunk_sequence)
+                if transcription_result:
+                    logger.info(f"✅ [WS轉錄] seq={chunk_sequence} 轉錄成功: {transcription_result.get('text', '')[:50]}...")
+                    # 保存轉錄結果到數據庫並推播到前端
+                    await save_and_push_result(self.session_id, chunk_sequence, transcription_result)
+                    logger.info(f"📡 [WS轉錄] seq={chunk_sequence} 結果已保存並推播到前端")
                 else:
                     logger.warning(f"⚠️ [WS轉錄] seq={chunk_sequence} 轉錄失敗")
             else:

@@ -125,16 +125,32 @@ export class RestAudioUploader {
                     // 409 視為冪等成功
                     console.log(`✅ [RestAudioUploader] 段落 #${sequence} 已存在，視為上傳成功`)
                     const successResponse = { ack: sequence, size: blob.size, status: 'success' as const }
-                    
                     // 重置重試計數
                     this.retryCount.delete(sequence)
-                    
                     // 觸發成功回調
                     this.onUploadSuccessCallback?.(sequence, successResponse)
-                    
                     return successResponse
                 }
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+
+                // 嘗試解析 JSON 錯誤細節
+                let errorMsg = `HTTP ${response.status}: ${response.statusText}`
+                try {
+                    const errJson = await response.json()
+                    if (errJson && errJson.code && errJson.message) {
+                        errorMsg = `${errJson.code}: ${errJson.message}`
+                    } else if (errJson && errJson.detail) {
+                        // FastAPI 會把 detail 放在根層
+                        if (typeof errJson.detail === 'string') {
+                            errorMsg = errJson.detail
+                        } else if (errJson.detail?.message) {
+                            errorMsg = errJson.detail.message
+                        }
+                    }
+                } catch (_) {
+                    // ignore JSON parse errors
+                }
+
+                throw new Error(errorMsg)
             }
 
             const result: UploadSegmentResponse = await response.json()

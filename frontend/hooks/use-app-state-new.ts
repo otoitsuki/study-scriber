@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState, useRef } from "react"
 import { useAppStateContext } from "./use-app-state-context"
-import { useSession } from "./use-session-adapter"
-import { useRecording } from "./use-recording-adapter"
+import { useSessionNew as useSession } from "./use-session-new"
+import { useRecordingNew as useRecording } from "./use-recording-new"
 import { useNotes } from "./use-notes"
-import { useTranscript } from "./use-transcript-adapter"
+import { useTranscriptNew as useTranscript } from "./use-transcript-new"
 import { useToast } from "@/components/ui/use-toast"
 import type { AppData } from "../types/app-state"
 import { StateMachineManager } from '../lib/state-machine';

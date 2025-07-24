@@ -27,6 +27,7 @@ import { DefaultState } from "./components/default-state"
 import { RecordingState } from "./components/recording-state"
 import { WaitingState } from "./components/waiting-state"
 import { FinishState } from "./components/finish-state"
+import RightPanel from "./components/RightPanel"
 import { ProviderContextMenu } from "./components/provider-context-menu"
 
 export default function Component() {
@@ -192,37 +193,11 @@ export default function Component() {
           }}
         />
       case "recording_active":
-        return (
-          <RecordingState
-            transcriptEntries={transcriptEntries}
-            recordingTime={recordingTime}
-            onStopRecording={stopRecording}
-            error={error}
-          />
-        )
       case "recording_waiting":
-        return (
-          <RecordingState
-            transcriptEntries={transcriptEntries}
-            recordingTime={recordingTime}
-            onStopRecording={stopRecording}
-            error={error}
-          />
-        )
       case "processing":
-        return <WaitingState />
+        return <RightPanel />
       case "finished":
-        return (
-          <FinishState
-            transcriptEntries={transcriptEntries}
-            noteId={session?.id || ''}
-            noteContent={editorContent}
-            onToLatest={() => {
-              // TODO: 實現捲動到最新功能
-              console.log('To Latest functionality not implemented yet')
-            }}
-          />
-        )
+        return <RightPanel />
       default:
         return <DefaultState
           onStartRecording={() => {

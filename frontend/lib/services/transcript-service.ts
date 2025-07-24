@@ -2,7 +2,7 @@
 
 import { BaseService } from './base-service'
 import { ITranscriptService, TranscriptMessage } from './interfaces'
-import { transcriptManager } from '../transcript-manager'
+import { transcriptManager } from '../transcript-manager-new'
 
 /**
  * 逐字稿服務資訊介面
@@ -122,6 +122,7 @@ export class TranscriptService extends BaseService implements ITranscriptService
             throw new Error('TranscriptService 尚未啟動，請先調用 start()')
         }
 
+        console.log('🎯 [TranscriptService] 添加逐字稿監聽器開始:', { sessionId })
         this.logInfo(`添加逐字稿監聽器: ${sessionId}`)
 
         // 記錄監聽器
@@ -131,7 +132,9 @@ export class TranscriptService extends BaseService implements ITranscriptService
         this.sessionListeners.get(sessionId)!.add(callback)
 
         // 添加到 TranscriptManager
+        console.log('🎯 [TranscriptService] 調用 transcriptManager.addListener:', { sessionId })
         transcriptManager.addListener(sessionId, callback)
+        console.log('✅ [TranscriptService] 監聽器添加完成:', { sessionId })
     }
 
     /**

@@ -1,6 +1,7 @@
 "use client"
 
 import { create } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 import { serviceContainer, SERVICE_KEYS } from './services'
 import type { ISessionService } from './services/interfaces'
 import { AppState, SessionStatus, SessionType, TranscriptEntry } from '../types/app-state'
@@ -40,6 +41,12 @@ interface AppStoreState {
 
   // STT Provider 狀態
   sttProvider: STTProvider
+
+  // 新增摘要與分頁狀態
+  currentTab: 'transcript' | 'summary'
+  summary: string
+  isTranscriptReady: boolean
+  isSummaryReady: boolean
 }
 
 /**
@@ -75,6 +82,12 @@ interface AppStoreActions {
 
   // STT Provider 操作
   setSttProvider: (provider: STTProvider) => void
+
+  // 摘要與分頁操作
+  setCurrentTab: (tab: 'transcript' | 'summary') => void
+  setTranscriptReady: (ready: boolean) => void
+  setSummaryReady: (ready: boolean) => void
+  setSummary: (text: string) => void
 }
 
 /**
@@ -103,6 +116,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   transcriptEntries: [],
   editorContent: '',
   sttProvider: 'gpt4o' as STTProvider,
+
+  // 新增摘要與分頁狀態
+  currentTab: 'transcript',
+  summary: '',
+  isTranscriptReady: false,
+  isSummaryReady: false,
 
   // === 核心業務操作 ===
 
@@ -134,9 +153,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       })
 
       // 3. 獲取 RecordingFlowService
+      console.log('🎯 [AppStore] 準備獲取 RecordingFlowService')
       const { RecordingFlowService } = await import('./services/recording-flow-service')
       const recordingFlowService = new RecordingFlowService()
+      console.log('🎯 [AppStore] RecordingFlowService 實例已創建')
       await recordingFlowService.initialize()
+      console.log('🎯 [AppStore] RecordingFlowService 初始化完成')
 
       // 4. 啟動完整錄音流程（包含雙 WebSocket），傳遞開始時間戳和 STT Provider
       console.log('🔍 [AppStore] 啟動完整錄音流程...')
@@ -146,6 +168,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         hasStartTime ? startTs : undefined,   // 傳遞錄音開始時間戳
         currentState.sttProvider // 傳遞 STT Provider
       )
+      console.log('✅ [AppStore] startRecordingFlow 調用完成:', sessionResponse)
 
       console.log('✅ [AppStore] 雙 WebSocket 錄音流程啟動成功:', {
         sessionId: sessionResponse.id,
@@ -263,6 +286,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ error: null })
   },
 
+  setCurrentTab: (tab: 'transcript' | 'summary') => {
+    set({ currentTab: tab })
+  },
+
+  setTranscriptReady: (ready: boolean) => {
+    set((state) => {
+      const next = { isTranscriptReady: ready }
+      const bothReady = ready && state.isSummaryReady
+      return bothReady ? { ...next, appState: 'finished' } : next
+    })
+  },
+
+  setSummaryReady: (ready: boolean) => {
+    set((state) => {
+      const next = { isSummaryReady: ready }
+      const bothReady = ready && state.isTranscriptReady
+      return bothReady ? { ...next, appState: 'finished' } : next
+    })
+  },
+
+  setSummary: (text: string) => {
+    set({ summary: text })
+  },
+
   // === STT Provider 操作 ===
 
   setSttProvider: (provider: STTProvider) => {
@@ -277,13 +324,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   addTranscriptEntry: (entry: Omit<TranscriptEntry, 'id'>) => {
-    set((state) => ({
-      transcriptEntries: [
-        ...state.transcriptEntries,
-        { ...entry, id: crypto.randomUUID() },
-      ],
-      appState: state.appState === 'recording_waiting' ? 'recording_active' : state.appState
-    }))
+    console.log('🔥 [AppStore] addTranscriptEntry called', {
+      entry: entry.text?.substring(0, 50),
+      appState: useAppStore.getState().appState
+    })
+    set((state) => {
+      const newState = state.appState === 'recording_waiting' ? 'recording_active' : state.appState
+      console.log('🔄 [AppStore] State transition', {
+        from: state.appState,
+        to: newState
+      })
+      return {
+        transcriptEntries: [
+          ...state.transcriptEntries,
+          { ...entry, id: crypto.randomUUID() },
+        ],
+        appState: newState
+      }
+    })
   },
 
   replaceTranscriptEntry: (entry: TranscriptEntry) => {
@@ -368,6 +426,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       transcriptEntries: [],
       editorContent: '',
       sttProvider: 'gpt4o' as STTProvider,
+      currentTab: 'transcript',
+      summary: '',
+      isTranscriptReady: false,
+      isSummaryReady: false,
     })
   }
 }))
@@ -375,7 +437,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 /**
  * 便利的 Hook：只獲取狀態
  */
-export const useAppState = () => useAppStore((state: AppStore) => ({
+export const useAppState = () => useAppStore(useShallow((state: AppStore) => ({
   appState: state.appState,
   isLoading: state.isLoading,
   error: state.error,
@@ -383,13 +445,17 @@ export const useAppState = () => useAppStore((state: AppStore) => ({
   isRecording: state.isRecording,
   recordingTime: state.recordingTime,
   transcriptEntries: state.transcriptEntries,
-  editorContent: state.editorContent
-}))
+  editorContent: state.editorContent,
+  currentTab: state.currentTab,
+  summary: state.summary,
+  isTranscriptReady: state.isTranscriptReady,
+  isSummaryReady: state.isSummaryReady,
+})))
 
 /**
  * 便利的 Hook：只獲取操作
  */
-export const useAppActions = () => useAppStore((state: AppStore) => ({
+export const useAppActions = () => useAppStore(useShallow((state: AppStore) => ({
   startRecording: state.startRecording,
   stopRecording: state.stopRecording,
   setState: state.setState,
@@ -400,7 +466,11 @@ export const useAppActions = () => useAppStore((state: AppStore) => ({
   updateEditorContent: state.updateEditorContent,
   addTranscriptEntry: state.addTranscriptEntry,
   setRecordingStart: state.setRecordingStart,
-  resetState: state.resetState
-}))
+  resetState: state.resetState,
+  setCurrentTab: state.setCurrentTab,
+  setTranscriptReady: state.setTranscriptReady,
+  setSummaryReady: state.setSummaryReady,
+  setSummary: state.setSummary,
+})))
 
 export default useAppStore

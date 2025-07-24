@@ -20,15 +20,19 @@ COMMENT ON TYPE lang_code IS '語言代碼：zh-TW=繁體中文；en-US=美式�
 -- ---------- TABLE: sessions ----------
 CREATE TABLE IF NOT EXISTS sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
-    type session_type NOT NULL DEFAULT 'note_only',
-    status session_status NOT NULL DEFAULT 'active',
-    title VARCHAR(255) DEFAULT '未命名筆記',
-    lang_code lang_code NOT NULL DEFAULT 'zh-TW', -- ★ 改名
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    started_at TIMESTAMPTZ,
+    user_id UUID REFERENCES auth.users (id),
+    title TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ,
+    status session_status DEFAULT 'active',
+    -- 'recording', 'file_upload'
+    type session_type DEFAULT 'recording',
+    -- B-016: add lang_code
+    lang_code TEXT,
     stt_provider TEXT,
-    completed_at TIMESTAMPTZ
+    summary TEXT,
+    -- B-019: add started_at
+    started_at TIMESTAMPTZ
 );
 
 -- ---------- TABLE: notes ----------

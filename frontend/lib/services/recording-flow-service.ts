@@ -94,6 +94,7 @@ export class RecordingFlowService extends BaseService {
    * 開始錄音流程
    */
   async startRecordingFlow(title?: string, content?: string, startTs?: number, sttProvider?: STTProvider): Promise<SessionResponse> {
+    console.log('🚀 [RecordingFlowService] startRecordingFlow 被調用!', { title, content, startTs, sttProvider })
     this.logInfo('開始錄音流程', { title, content, startTs })
 
     try {
@@ -145,9 +146,12 @@ export class RecordingFlowService extends BaseService {
       this.logSuccess('會話準備完成')
 
       // 步驟 3: 連接逐字稿服務
+      console.log('🎯 [RecordingFlowService] 步驟 3: 開始連接逐字稿服務')
       this.logInfo('步驟 3: 連接逐字稿服務')
       await this.transcriptService.connect(this.currentSession.id)
+      console.log('🎯 [RecordingFlowService] 逐字稿服務連接完成，開始設置監聽器')
       this.setupTranscriptListener()
+      console.log('🎯 [RecordingFlowService] 監聽器設置完成')
       this.logSuccess('逐字稿服務連接成功')
 
       // 步驟 4: 開始錄音
@@ -255,9 +259,13 @@ export class RecordingFlowService extends BaseService {
    * 設定逐字稿監聽器
    */
   private setupTranscriptListener(): void {
-    if (!this.currentSession) return
+    if (!this.currentSession) {
+      console.log('❌ [RecordingFlowService] 無法設定監聽器：currentSession 為 null')
+      return
+    }
 
     const sessionId = this.currentSession.id
+    console.log('🎯 [RecordingFlowService] 開始設定逐字稿監聽器:', { sessionId })
 
     // 移除現有監聽器（如果有）
     this.transcriptService.removeTranscriptListener(sessionId, this.handleTranscriptMessage)
@@ -265,6 +273,7 @@ export class RecordingFlowService extends BaseService {
     // 添加新的監聽器
     this.transcriptService.addTranscriptListener(sessionId, this.handleTranscriptMessage)
 
+    console.log('✅ [RecordingFlowService] 逐字稿監聽器設定完成:', { sessionId })
     this.logInfo('逐字稿監聽器已設定', { sessionId })
   }
 
@@ -272,44 +281,68 @@ export class RecordingFlowService extends BaseService {
    * 處理逐字稿訊息
    */
   private handleTranscriptMessage = (msg: TranscriptMessage): void => {
+    console.log('🔥 [RecordingFlowService] handleTranscriptMessage 被調用!', {
+      messageType: msg.type,
+      hasText: !!msg.text,
+      textPreview: msg.text?.substring(0, 50),
+      fullMessage: msg,
+      timestamp: new Date().toISOString()
+    })
+
     try {
       // 1. 判斷訊息型別
       if (
         (msg.type === 'transcript' || msg.type === 'transcript_segment') &&
-        msg.text
+        msg.text && msg.text.trim().length > 0
       ) {
-        /* 2. 計算 startSec
-           a. 後端若有 start_time → 用它
-           b. 否則用 chunk_sequence × 有效切片長度 (考慮 overlap)
-        */
+        /* 2. 計算 startSec */
         const startSec =
           msg.start_time !== undefined
             ? msg.start_time
             : (msg.chunk_sequence ?? 0) * getEffectiveAudioChunkSec();
 
-        /* 3. 每隔 labelIntervalSec 秒插入一條時間碼 */
-        if (startSec - this.lastLabelSec >= this.labelIntervalSec) {
-          this.transcriptEntries.push({
-            time: formatTime(startSec),
-            text: '',              // 純時間標籤
-          })
-          this.lastLabelSec = startSec
-        }
+        const store = useAppStore.getState()
 
-        /* 4. 真正的逐字稿行 */
-        this.transcriptEntries.push({
+        // 將收到的逐字稿添加到 store
+        store.addTranscriptEntry({
+          startTime: startSec,
           time: formatTime(startSec),
-          text: msg.text.trim(),
+          text: msg.text.trim()
         })
+
+        this.logInfo('逐字稿已推送到 store', {
+          sessionId: this.currentSession?.id,
+          text: msg.text.substring(0, 50) + '...',
+          startTime: startSec,
+          currentAppState: store.appState
+        })
+
       } else if (msg.type === 'error') {
         this.logWarning('逐字稿錯誤', msg)
       } else if (msg.type === 'transcript_complete') {
-        this.setAppState('finished')
-        if (this.currentSession) {
-          this.transcriptService.disconnect(this.currentSession.id)
+        try {
+          const store = useAppStore.getState()
+          store.setTranscriptReady(true)
+        } catch (e) {
+          this.logWarning('無法設置 transcriptReady', e)
         }
-        this.isFlowActive = false
-        this.logSuccess('收到 transcript_complete，流程結束')
+        // 若 summary 已完成，則可以斷線
+        const combinedReady = useAppStore.getState()
+        if (combinedReady.isSummaryReady && this.currentSession) {
+          this.transcriptService.disconnect(this.currentSession.id)
+          this.isFlowActive = false
+        }
+        this.logSuccess('收到 transcript_complete')
+      } else if (msg.type === 'summary_ready') {
+        try {
+          const store = useAppStore.getState()
+          const summaryContent = (msg as any).data || ''
+          store.setSummary(summaryContent)
+          store.setSummaryReady(true)
+        } catch (e) {
+          this.logWarning('無法設置 summaryReady', e)
+        }
+        this.logSuccess('收到 summary_ready')
       }
     } catch (e) {
       this.logWarning('處理逐字稿訊息失敗', e)

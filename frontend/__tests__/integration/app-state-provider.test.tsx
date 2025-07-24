@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import { createElement } from 'react'
 import { AppStateProviderWrapper } from '../../providers/app-state-provider-wrapper'
-import { useAppState } from '../../hooks/use-app-state-adapter'
+import { useAppState } from '../../hooks/use-app-state'
 import { featureFlagManager } from '../../lib/feature-flags'
 
 // Mock 外部依賴
-vi.mock('../../hooks/use-session-adapter', () => ({
+vi.mock('../../hooks/use-session', () => ({
     useSession: vi.fn(() => ({
         currentSession: null,
         isLoading: false,
@@ -20,7 +20,7 @@ vi.mock('../../hooks/use-session-adapter', () => ({
     }))
 }))
 
-vi.mock('../../hooks/use-recording-adapter', () => ({
+vi.mock('../../hooks/use-recording', () => ({
     useRecording: vi.fn(() => ({
         isRecording: false,
         recordingTime: 0,
@@ -40,7 +40,7 @@ vi.mock('../../hooks/use-notes', () => ({
     }))
 }))
 
-vi.mock('../../hooks/use-transcript-adapter', () => ({
+vi.mock('../../hooks/use-transcript', () => ({
     useTranscript: vi.fn(() => ({
         isConnected: false,
         error: null,

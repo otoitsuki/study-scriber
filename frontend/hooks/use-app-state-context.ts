@@ -254,8 +254,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
                   dispatch({
                     type: "ADD_TRANSCRIPT_ENTRY",
                     payload: {
+                      id: crypto.randomUUID(),
                       time: timeStr,
-                      text: message.text
+                      text: message.text,
+                      startTime: startTime
                     }
                   })
 
@@ -267,10 +269,28 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
                     }, 100)
                   }
                 } else if (message.type === 'transcript_complete') {
+                  // 轉錄完成 - 設定 transcript ready flag
+                  try {
+                    const { useAppStore } = require('../lib/app-store-zustand')
+                    useAppStore.getState().setTranscriptReady(true)
+                  } catch (e) {
+                    console.warn('無法設定 transcriptReady:', e)
+                  }
                   // 轉錄完成
                   setTimeout(() => {
                     smManager.getStateMachine().transition('PROCESSING_COMPLETED')
                   }, 100)
+                } else if (message.type === 'summary_ready') {
+                  // 摘要完成
+                  try {
+                    const { useAppStore } = require('../lib/app-store-zustand')
+                    const store = useAppStore.getState()
+                    store.setSummary((message as any).data || '')
+                    store.setSummaryReady(true)
+                    console.log('✅ [Context] 摘要已就緒並設定到 store')
+                  } catch (e) {
+                    console.warn('無法設定 summary:', e)
+                  }
                 } else if (message.type === 'error') {
                   console.error('🚨 [副作用] 逐字稿錯誤:', message)
                   dispatch({ type: "SET_ERROR", payload: '逐字稿處理錯誤' })
@@ -323,6 +343,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
               // 更新錄音狀態
               dispatch({ type: "SET_RECORDING", payload: false })
               dispatch({ type: "SET_RECORDING_TIME", payload: 0 })
+
+              // 設置 60 秒超時，若仍未完成則強制進入 finished
+              setTimeout(() => {
+                const currentState = smManager.getStateMachine().getCurrentState()
+                if (currentState === 'processing') {
+                  console.warn('⏰ [Timeout] Processing 超時，強制進入 finished')
+                  smManager.getStateMachine().transition('PROCESSING_TIMEOUT')
+                }
+              }, 60000) // 60 seconds
 
               console.log('✅ [副作用] STOP_RECORDING 完成')
             } catch (error) {

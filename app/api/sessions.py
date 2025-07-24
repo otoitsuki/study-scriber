@@ -7,7 +7,7 @@ StudyScriber Session 管理 API 端點
 from uuid import UUID
 from typing import Dict, Any
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from supabase import Client
 from app.core.config import get_settings
 
@@ -87,6 +87,7 @@ async def create_session(
 @router.patch("/session/{session_id}/finish", response_model=SessionStatusResponse)
 async def finish_session(
     session_id: UUID,
+    background: BackgroundTasks = BackgroundTasks(),
     supabase: Client = Depends(get_supabase_client)
 ) -> SessionStatusResponse:
     """
@@ -118,6 +119,14 @@ async def finish_session(
             raise HTTPException(status_code=500, detail="無法更新會話狀態")
 
         updated_session = response.data[0]
+
+        # 👉 觸發背景摘要產生任務（若尚未存在）
+        try:
+            from app.services.summary import generate_summary  # 延遲導入避免循環
+            background.add_task(generate_summary, session_id)
+        except Exception as summary_err:
+            logger = __import__("logging").getLogger(__name__)
+            logger.error("[SessionAPI] 無法排入摘要任務: %s", summary_err)
 
         return SessionStatusResponse(
             success=True,

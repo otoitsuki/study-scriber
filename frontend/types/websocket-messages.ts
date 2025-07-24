@@ -30,6 +30,12 @@ export interface TranscriptCompleteMessage extends BaseMessage {
     message: string
 }
 
+/** 摘要就緒 */
+export interface SummaryReadyMessage extends BaseMessage {
+    type: 'summary_ready'
+    data: string
+}
+
 /** 心跳回覆 */
 export interface HeartbeatAckMessage extends BaseMessage {
     type: 'heartbeat_ack'
@@ -65,6 +71,7 @@ export type WSMessage =
     | TranscriptSegmentMessage
     | ConnectionEstablishedMessage
     | TranscriptCompleteMessage
+    | SummaryReadyMessage
     | HeartbeatAckMessage
     | PongMessage
     | ErrorMessage

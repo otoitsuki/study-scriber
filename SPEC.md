@@ -114,20 +114,43 @@ graph TD
 4. **VAD**：若判定 `silence_ratio > 98 %` 直接丟棄該 Segment  
 5. **WebSocket Hub**：依 `session_id` 分房間廣播  
 
+### 4.4 資料夾架構
+
+-  **app/**Python 後端核心
+   -  **api/**：FastAPI 路由（export、notes、segments、sessions）
+   -  **core/**：音訊處理與系統設定（VAD、FFmpeg、WebM 修復…）
+   -  **db/**：資料庫／Supabase 初始設定
+   -  **lib/**：重通用、低耦合，可外部共用工具（timeout、rate-limit 等）
+   -  **schemas/**：Pydantic 資料模型 (export, note, session)
+   -  **services/**：第三方服務封裝（Azure OpenAI、Whisper、R2、STT provider 工廠…）
+   -  **utils/**：本專案小工具、驗證器、計時器
+   -  **ws/**：WebSocket 事件（transcript feed、音訊上傳）
+
+-  **frontend/**（Next.js + TypeScript 前端）
+  - **app/**：Next.js 頁面 & 佈局
+  - **components/**：UI 元件（含 shadcn/ui 及自訂狀態元件）
+  - **hooks/**、**lib/**、**utils/**：前端商業邏輯與工具
+  - **e2e/**：Playwright 前端端對端測試
+  - **constants/**、**types/**：靜態設定與型別定義
+
+-  **e2e/**（後端端對端測試，TS 撰寫，對 API 進行驗證）
+-  **docs/**（專案規格與技術說明 Markdown，如 skip-silence-spec.md 等）
+-  **tests/** Python 單元／整合測試
+-  **main.py** 主要程式，啟動測試
+
+-  **其他根目錄檔案**
+  - **pyproject.toml**：Python 依賴與設定
+  - **PRD.md**, **SPEC.md**：產品需求 & 系統規格
+  - **playwright.config.ts**, **vitest.config.ts**：測試框架設定
+  - **package.json**、**pnpm-lock.yaml**：前端依賴
+
+
 ---
 
 ## 5. 資料庫設計
 
-### 5.1 ER 圖
-```mermaid
-erDiagram
-    sessions ||--o{ notes : has
-    sessions ||--o{ audio_files : has
-    sessions ||--o{ transcript_segments : has
-    sessions ||--o| transcripts : has
-```
 
-### 5.2 資料表定義（精簡）
+### 5.1 資料表定義
 | Table               | 主要欄位                                                        | 備註 |
 | :------------------ | :-------------------------------------------------------------- | :--- |
 | sessions            | id (UUID PK), status, title, stt_provider, created_at           |      |
@@ -166,9 +189,9 @@ erDiagram
 * 上傳失敗重試：指數退避，最長 5 分鐘；失敗則寫入 IndexedDB  
 
 ### 7.2 語音轉文字
-* Provider 由前端建立 Session 時指定  
+* Provider 用選單選擇  
 * Whisper 最高支援 25 MB／request；大檔案自動分片  
-* GPT-4o / Gemini：依 API 限制自動抽樣 16 kHz  
+* GPT-4o / Whisper：依 API 限制自動抽樣 16 kHz  
 
 ### 7.3 狀態管理
 | 狀態       | 事件 (=> 下一狀態)           |
@@ -233,9 +256,14 @@ sequenceDiagram
     使用者 ->> 前端: 點擊「匯出」
     前端 ->> 後端: POST /api/notes/export
     後端 ->> DB: SELECT transcript_segments
-    後端: 組 ZIP(note.md + transcript.txt)
+    DB -->> 後端: 回傳資料
+    後端 ->> 後端: 組 ZIP(note.md + transcript.txt)
     後端 -->> 前端: StreamingResponse
     前端 ->> 使用者: 觸發下載
+
+    %% 樣式定義
+    %%{init: {'theme':'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#000', 'primaryBorderColor': '#2196f3', 'lineColor': '#666', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#fff'}}}%%
+
 ```
 
 ---

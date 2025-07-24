@@ -6,10 +6,11 @@ import Component from "../study-scriber"
 // 添加全局除錯功能
 if (typeof window !== 'undefined') {
   // 立即初始化 TranscriptManager，確保在測試環境中可用
-  import('../lib/transcript-manager').then(({ transcriptManager }) => {
+  import('../lib/transcript-manager-new').then(({ TranscriptManager }) => {
     // 確保 TranscriptManager 已暴露到 window
-    ; (window as any).transcriptManager = transcriptManager
-    console.log('✅ TranscriptManager 已初始化並暴露到 window')
+    const manager = TranscriptManager.getInstance()
+      ; (window as any).transcriptManager = manager
+    console.log('✅ TranscriptManager (new) 已初始化並暴露到 window')
   });
 
   (window as any).debugTranscript = () => {
@@ -23,28 +24,17 @@ if (typeof window !== 'undefined') {
     };
 
     // 取得當前 session ID
-    const appData = (window as any).appData;
-    const sessionId = appData?.session?.id || '861f8cee-1f57-476c-8819-0ffe9ec084c8';
+    const { session } = (window as any).appStore.getState();
+    const sessionId = session?.id || '861f8cee-1f57-476c-8819-0ffe9ec084c8';
 
     console.log('🔍 測試逐字稿接收，Session ID:', sessionId);
 
     // 直接觸發 TranscriptManager 的訊息處理
     const manager = (window as any).transcriptManager;
     if (manager) {
-      const listeners = manager.listeners.get(sessionId);
-      if (listeners && listeners.size > 0) {
-        console.log(`📡 找到 ${listeners.size} 個監聽器，開始廣播測試訊息`);
-        listeners.forEach((callback: any) => {
-          try {
-            callback(testMessage);
-            console.log('✅ 測試訊息已發送');
-          } catch (error) {
-            console.error('❌ 發送測試訊息失敗:', error);
-          }
-        });
-      } else {
-        console.error('❌ 沒有找到監聽器，請確認 WebSocket 已連接');
-      }
+      // 在新版管理器中，我們直接呼叫內部處理函數
+      manager.handleTranscriptSegment(sessionId, testMessage);
+      console.log('✅ 測試訊息已發送');
     } else {
       console.error('❌ TranscriptManager 未初始化');
     }
@@ -52,36 +42,36 @@ if (typeof window !== 'undefined') {
 
   // 新增：診斷函數
   (window as any).debugState = () => {
-    const appData = (window as any).appData;
+    const state = (window as any).appStore.getState();
     console.log('🔍 完整應用狀態診斷：');
-    console.log('1. AppData:', appData);
-    console.log('2. Session:', appData?.session);
+    console.log('1. Zustand Store State:', state);
+    console.log('2. Session:', state.session);
     console.log('3. 錄音狀態:', {
-      isRecording: appData?.isRecording,
-      recordingTime: appData?.recordingTime,
-      state: appData?.state
+      isRecording: state.isRecording,
+      recordingTime: state.recordingTime,
+      state: state.appState
     });
     console.log('4. 逐字稿:', {
-      transcriptEntries: appData?.transcriptEntries,
-      count: appData?.transcriptEntries?.length || 0
+      transcriptEntries: state.transcriptEntries,
+      count: state.transcriptEntries?.length || 0
     });
 
     // 檢查 transcriptManager 的內部狀態
     const manager = (window as any).transcriptManager;
     if (manager) {
       console.log('5. TranscriptManager:');
-      console.log('   - 連接數:', manager.getConnectionCount());
+      console.log('   - 連接數:', manager.connections.size);
       console.log('   - 連接Map:', manager.connections);
       console.log('   - 監聽器Map:', manager.listeners);
     }
 
     // 檢查為什麼狀態是 default
     console.log('6. 狀態映射條件:');
-    console.log('   - hasSession:', !!appData?.session);
-    console.log('   - sessionStatus:', appData?.session?.status);
-    console.log('   - sessionType:', appData?.session?.type);
-    console.log('   - isRecording:', appData?.isRecording);
-    console.log('   - transcriptCount:', appData?.transcriptEntries?.length || 0);
+    console.log('   - hasSession:', !!state.session);
+    console.log('   - sessionStatus:', state.session?.status);
+    console.log('   - sessionType:', state.session?.type);
+    console.log('   - isRecording:', state.isRecording);
+    console.log('   - transcriptCount:', state.transcriptEntries?.length || 0);
   };
 
   // 新增：監聽逐字稿更新

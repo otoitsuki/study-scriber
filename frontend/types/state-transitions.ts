@@ -9,6 +9,7 @@ export type StateTransitionTrigger =
   | "SESSION_UPGRADED"              // Session 升級為錄音模式
   | "PROCESSING_STARTED"            // 開始處理剩餘逐字稿
   | "PROCESSING_COMPLETED"          // 處理完成
+  | "PROCESSING_TIMEOUT"            // 處理超時 (60s)
   | "ERROR_OCCURRED"                // 發生錯誤
   | "USER_NEW_NOTE"                 // 用戶開新筆記
   | "TRANSCRIPT_COMPLETED"          // 轉錄完全完成
@@ -143,6 +144,14 @@ export const STATE_TRANSITION_RULES: StateTransitionCondition[] = [
     trigger: "PROCESSING_COMPLETED",
     sessionExists: true,
     sessionStatus: "completed"
+  },
+
+  // 從 processing 超時轉為 finished (60s fallback)
+  {
+    currentState: "processing",
+    targetState: "finished",
+    trigger: "PROCESSING_TIMEOUT",
+    sessionExists: true
   },
 
   // 修復：從任何狀態發生錯誤回到 default
