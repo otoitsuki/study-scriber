@@ -91,28 +91,8 @@ async def export_resource(sid: UUID, type: str = "zip"):
             zf.writestr("note.md", note_md.strip())
             zf.writestr("transcript.txt", transcript_txt)
 
-            # 讀取摘要文字（若有）
-            # 嘗試讀取 sessions.summary 欄位。若資料庫尚未加入該欄位
-            #（舊版 schema），Supabase 會回傳 42703 錯誤，改以空字串處理。
-            try:
-                summary_row = (
-                    sb.table("sessions")
-                    .select("summary")
-                    .eq("id", str(sid))
-                    .limit(1)
-                    .execute()
-                    .data
-                )
-                summary_text = (
-                    summary_row[0]["summary"] if summary_row and summary_row[0].get("summary") else ""
-                ).strip()
-            except Exception:  # noqa: BLE001
-                # 可能是 sessions 表沒有 summary 欄位
-                summary_text = ""
-            if summary_text:
-                zf.writestr("summary.txt", summary_text)
-            else:
-                zf.writestr("summary.txt", "(尚未產生或無摘要)")
+            # 已暫時停用摘要匯出（summary.txt）
+            # 讀取 sessions.summary 欄位的程式碼與寫入 summary.txt 已被移除，以避免在匯出包中包含摘要檔案。
         buf.seek(0)
 
         headers = {

@@ -149,27 +149,8 @@ async def export_note(
             stt_content = _generate_stt_transcript(session_id, transcripts)
             zip_file.writestr('transcript.txt', stt_content.encode('utf-8'))
 
-            # 3. 加入摘要（若有）
-            try:
-                summary_row = (
-                    supabase.table('sessions')
-                    .select('summary')
-                    .eq('id', session_id)
-                    .limit(1)
-                    .execute()
-                    .data
-                )
-                summary_text = (
-                    summary_row[0]['summary'] if summary_row and summary_row[0].get('summary') else ''
-                ).strip()
-            except Exception:  # noqa: BLE001
-                # 若資料庫尚未加入 summary 欄位會報錯，直接忽略
-                summary_text = ''
-
-            if summary_text:
-                zip_file.writestr('summary.txt', summary_text.encode('utf-8'))
-            else:
-                zip_file.writestr('summary.txt', '(尚未產生或無摘要)'.encode('utf-8'))
+            # 已暫時停用摘要匯出（summary.txt）
+            # 原本讀取 sessions.summary 並寫入 summary.txt 的程式碼已被移除。
 
         zip_buffer.seek(0)
 

@@ -291,11 +291,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setTranscriptReady: (ready: boolean) => {
-    set((state) => {
-      const next = { isTranscriptReady: ready }
-      const bothReady = ready && state.isSummaryReady
-      return bothReady ? { ...next, appState: 'finished' } : next
-    })
+    set((state) => ({
+      isTranscriptReady: ready,
+      // 摘要功能已暫時停用，直接標記為 ready 以完成流程
+      isSummaryReady: true,
+      appState: ready ? 'finished' : state.appState
+    }))
   },
 
   setSummaryReady: (ready: boolean) => {
