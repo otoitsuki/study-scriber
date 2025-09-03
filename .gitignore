@@ -82,6 +82,7 @@ next-env.d.ts
 # Development tools
 .serena/
 .cursor/cache/
+rules/
 
 # OS generated files
 .DS_Store
