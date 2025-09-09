@@ -141,3 +141,99 @@ jspm_packages/
 # Application specific
 backend.log
 *.backup
+
+# Machine Learning Models & AI Assets
+*.pt
+*.pth
+*.bin
+*.ckpt
+*.safetensors
+*.onnx
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.model
+*.weights
+*.dylib
+*.so.*
+models/
+checkpoints/
+.cache/
+*.tfevents.*
+
+# MLX Whisper specific
+mlx-community/
+whisper-*
+faster_whisper/
+
+# Hugging Face Cache
+.cache/huggingface/
+.cache/transformers/
+transformers_cache/
+.huggingface/
+
+# PyTorch & ML Framework Cache
+torch_cache/
+.torch/
+.torchvision/
+.torchaudio/
+
+# Audio processing temp files
+*.wav
+*.mp3
+*.mp4
+*.webm
+*.m4a
+*.flac
+*.ogg
+*.aac
+temp_audio/
+audio_cache/
+audio_files/
+
+# Large data files
+*.csv.gz
+*.json.gz
+*.parquet
+*.feather
+*.arrow
+
+# Build artifacts that might be large
+*.tar.gz
+*.zip
+*.7z
+*.dmg
+*.iso
+
+# Additional ML/AI exclusions
+*.npy
+*.npz
+*.mat
+*.pb
+*.tflite
+*.mlmodel
+*.coreml
+*.ggml
+*.gguf
+*.q4_0
+*.q4_1
+*.q5_0
+*.q5_1
+*.q8_0
+*.f16
+*.f32
+
+# Vector databases
+*.index
+*.faiss
+chroma_db/
+qdrant_storage/
+pinecone_cache/
+
+# Jupyter notebook outputs
+*.ipynb_checkpoints/
+
+# macOS specific large files
+*.dSYM/
