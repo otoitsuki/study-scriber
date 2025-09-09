@@ -42,11 +42,8 @@ interface AppStoreState {
   // STT Provider 狀態
   sttProvider: STTProvider
 
-  // 新增摘要與分頁狀態
-  currentTab: 'transcript' | 'summary'
-  summary: string
+  // 錄音完成後的狀態
   isTranscriptReady: boolean
-  isSummaryReady: boolean
 }
 
 /**
@@ -83,11 +80,8 @@ interface AppStoreActions {
   // STT Provider 操作
   setSttProvider: (provider: STTProvider) => void
 
-  // 摘要與分頁操作
-  setCurrentTab: (tab: 'transcript' | 'summary') => void
+  // 錄音完成狀態操作
   setTranscriptReady: (ready: boolean) => void
-  setSummaryReady: (ready: boolean) => void
-  setSummary: (text: string) => void
 }
 
 /**
@@ -117,11 +111,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   editorContent: '',
   sttProvider: 'breeze-asr-25' as STTProvider,
 
-  // 新增摘要與分頁狀態
-  currentTab: 'transcript',
-  summary: '',
+  // 錄音完成後的狀態
   isTranscriptReady: false,
-  isSummaryReady: false,
 
   // === 核心業務操作 ===
 
@@ -286,30 +277,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ error: null })
   },
 
-  setCurrentTab: (tab: 'transcript' | 'summary') => {
-    set({ currentTab: tab })
-  },
 
   setTranscriptReady: (ready: boolean) => {
     set((state) => ({
       isTranscriptReady: ready,
-      // 摘要功能已暫時停用，直接標記為 ready 以完成流程
-      isSummaryReady: true,
       appState: ready ? 'finished' : state.appState
     }))
   },
 
-  setSummaryReady: (ready: boolean) => {
-    set((state) => {
-      const next = { isSummaryReady: ready }
-      const bothReady = ready && state.isTranscriptReady
-      return bothReady ? { ...next, appState: 'finished' } : next
-    })
-  },
-
-  setSummary: (text: string) => {
-    set({ summary: text })
-  },
 
   // === STT Provider 操作 ===
 
@@ -427,10 +402,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       transcriptEntries: [],
       editorContent: '',
       sttProvider: 'gpt4o' as STTProvider,
-      currentTab: 'transcript',
-      summary: '',
       isTranscriptReady: false,
-      isSummaryReady: false,
     })
   }
 }))
@@ -447,10 +419,7 @@ export const useAppState = () => useAppStore(useShallow((state: AppStore) => ({
   recordingTime: state.recordingTime,
   transcriptEntries: state.transcriptEntries,
   editorContent: state.editorContent,
-  currentTab: state.currentTab,
-  summary: state.summary,
   isTranscriptReady: state.isTranscriptReady,
-  isSummaryReady: state.isSummaryReady,
 })))
 
 /**
@@ -468,10 +437,7 @@ export const useAppActions = () => useAppStore(useShallow((state: AppStore) => (
   addTranscriptEntry: state.addTranscriptEntry,
   setRecordingStart: state.setRecordingStart,
   resetState: state.resetState,
-  setCurrentTab: state.setCurrentTab,
   setTranscriptReady: state.setTranscriptReady,
-  setSummaryReady: state.setSummaryReady,
-  setSummary: state.setSummary,
 })))
 
 export default useAppStore

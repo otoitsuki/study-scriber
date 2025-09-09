@@ -281,16 +281,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
                     smManager.getStateMachine().transition('PROCESSING_COMPLETED')
                   }, 100)
                 } else if (message.type === 'summary_ready') {
-                  // 摘要完成
-                  try {
-                    const { useAppStore } = require('../lib/app-store-zustand')
-                    const store = useAppStore.getState()
-                    store.setSummary((message as any).data || '')
-                    store.setSummaryReady(true)
-                    console.log('✅ [Context] 摘要已就緒並設定到 store')
-                  } catch (e) {
-                    console.warn('無法設定 summary:', e)
-                  }
+                  // 摘要功能已移除，忽略此訊息
+                  console.log('ℹ️ [Context] 收到 summary_ready 訊息，但摘要功能已移除')
                 } else if (message.type === 'error') {
                   console.error('🚨 [副作用] 逐字稿錯誤:', message)
                   dispatch({ type: "SET_ERROR", payload: '逐字稿處理錯誤' })

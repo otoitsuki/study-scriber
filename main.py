@@ -107,6 +107,30 @@ async def root():
     }
 
 
+@app.get("/v1/status")
+async def v1_status():
+    """V1 API 狀態檢查端點"""
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "service": "StudyScriber API"
+    }
+
+
+@app.get("/api/config")
+async def get_config():
+    """統一配置端點 - 提供前端使用的配置參數"""
+    return {
+        "audioChunkDurationSec": settings.AUDIO_CHUNK_DURATION_SEC,
+        "audioChunkOverlapSec": settings.AUDIO_CHUNK_OVERLAP_SEC,
+        "transcriptDisplayIntervalSec": settings.TRANSCRIPT_DISPLAY_INTERVAL_SEC,
+        "sttProviderDefault": settings.STT_PROVIDER_DEFAULT,
+        "supportedSttProviders": settings.SUPPORTED_STT_PROVIDERS,
+        "version": "0.1.0",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
 @app.get("/debug/container")
 async def debug_container():
     """除錯端點 - 檢查 provider 狀態"""

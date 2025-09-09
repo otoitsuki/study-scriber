@@ -13,11 +13,14 @@ import { formatTime } from '../../utils/time'
  * 提供統一的錄音流程管理
  */
 import { STTProvider } from '../api'
-import { getEffectiveAudioChunkDurationSec, getTranscriptLabelIntervalSec } from '../config'
+import { getUnifiedConfig, getEffectiveAudioChunkDuration } from '../config-unified'
 
-// 使用有效音頻切片長度（考慮 overlap）
+// 使用統一配置管理 - 從後端 API 讀取
 // 改為在需要時動態獲取，避免模組初始化順序問題
-const getEffectiveAudioChunkSec = () => getEffectiveAudioChunkDurationSec()
+const getEffectiveAudioChunkSec = async () => {
+  const config = await getUnifiedConfig()
+  return getEffectiveAudioChunkDuration(config)
+}
 
 /**
  * 錄音流程監聽器接口
@@ -340,23 +343,15 @@ export class RecordingFlowService extends BaseService {
         } catch (e) {
           this.logWarning('無法設置 transcriptReady', e)
         }
-        // 若 summary 已完成，則可以斷線
-        const combinedReady = useAppStore.getState()
-        if (combinedReady.isSummaryReady && this.currentSession) {
+        // 錄音已完成，可以斷線
+        if (this.currentSession) {
           this.transcriptService.disconnect(this.currentSession.id)
           this.isFlowActive = false
         }
         this.logSuccess('收到 transcript_complete')
       } else if (msg.type === 'summary_ready') {
-        try {
-          const store = useAppStore.getState()
-          const summaryContent = (msg as any).data || ''
-          store.setSummary(summaryContent)
-          store.setSummaryReady(true)
-        } catch (e) {
-          this.logWarning('無法設置 summaryReady', e)
-        }
-        this.logSuccess('收到 summary_ready')
+        // 摘要功能已移除，忽略此訊息
+        this.logInfo('收到 summary_ready 訊息，但摘要功能已移除')
       }
     } catch (e) {
       this.logWarning('處理逐字稿訊息失敗', e)

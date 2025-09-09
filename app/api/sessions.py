@@ -205,15 +205,7 @@ async def finish_session(
         # 若資料庫回傳非枚舉值（例如測試回傳 'processing'），強制標記為 completed
         updated_session["status"] = SessionStatus.COMPLETED.value
 
-        # 👉 觸發背景摘要產生任務（若尚未存在；測試模式略過）
-        IS_TESTING = os.getenv("TESTING", "").lower() in {"1", "true", "yes"}
-        if not IS_TESTING:
-            try:
-                from app.services.summary import generate_summary  # 延遲導入避免循環
-                background.add_task(generate_summary, session_id)
-            except Exception as summary_err:
-                logger = __import__("logging").getLogger(__name__)
-                logger.error("[SessionAPI] 無法排入摘要任務: %s", summary_err)
+        # 摘要功能已移除
 
         normalized = _normalize_session_record(updated_session)
         return SessionStatusResponse(

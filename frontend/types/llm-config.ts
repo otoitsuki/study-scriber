@@ -12,12 +12,10 @@ export interface LLMConfig {
 
 export interface LLMTestCapabilities {
     transcription: boolean
-    summary: boolean
 }
 
 export interface LLMTestErrors {
     transcription?: string
-    chat?: string
 }
 
 export interface LLMTestResponse {

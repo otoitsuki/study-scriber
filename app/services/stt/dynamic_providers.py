@@ -360,7 +360,8 @@ class LocalhostWhisperProviderDynamic(ISTTProvider):
                 }
                 
                 # 4. 調用 localhost Whisper API
-                timeout = httpx.Timeout(connect=5.0, read=60.0, write=30.0, pool=5.0)
+                # 15秒音檔預估處理時間約6-13秒，設定充足的超時時間
+                timeout = httpx.Timeout(connect=10.0, read=90.0, write=30.0, pool=10.0)
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(
                         self.transcription_url,

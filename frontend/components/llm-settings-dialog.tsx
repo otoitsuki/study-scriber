@@ -126,7 +126,7 @@ export function LLMSettingsDialog({ open, onOpenChange, onSave }: LLMSettingsDia
                 success: false,
                 detectedProvider: resp?.detected_provider as any || 'unknown',
                 detectedSttMethod: resp?.detected_stt_method as any || 'unknown',
-                capabilities: resp?.capabilities || { transcription: false, summary: false },
+                capabilities: resp?.capabilities || { transcription: false },
                 error: typeof errMsg === 'string' ? errMsg : '網路錯誤',
                 errors: resp?.errors as any
             })
@@ -326,7 +326,6 @@ export function LLMSettingsDialog({ open, onOpenChange, onSave }: LLMSettingsDia
 
                                 <div className="text-sm space-y-1">
                                     <p>轉錄支援：{testResult.capabilities.transcription ? "✅" : "❌"}</p>
-                                    <p>摘要支援：{testResult.capabilities.summary ? "✅" : "❌"}</p>
                                 </div>
 
                                 {testResult.error && (

@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # 音頻切片配置
     AUDIO_CHUNK_DURATION_SEC: int = Field(
-    default=30,
+    default=15,
     env="AUDIO_CHUNK_DURATION_SEC"
 )
 
@@ -62,8 +62,11 @@ class Settings(BaseSettings):
         env="AUDIO_CHUNK_OVERLAP_SEC"
     )
 
-    # 逐字稿顯示配置
-    TRANSCRIPT_DISPLAY_INTERVAL_SEC: int = Field(30, description="逐字稿時間戳顯示間隔（秒）")
+    # 逐字稿顯示配置 - 自動從 AUDIO_CHUNK_DURATION_SEC 讀取
+    @property
+    def TRANSCRIPT_DISPLAY_INTERVAL_SEC(self) -> int:
+        """逐字稿時間戳顯示間隔，與音頻切片時長保持一致"""
+        return self.AUDIO_CHUNK_DURATION_SEC
 
     # REST API 簡化架構配置
     SEGMENT_DURATION: int = Field(10, description="分段錄音時長（秒）")
