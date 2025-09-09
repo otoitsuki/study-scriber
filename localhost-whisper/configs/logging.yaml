@@ -1,0 +1,222 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  detailed:
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s'
+    datefmt: '%Y-%m-%d %H:%M:%S'
+
+  simple:
+    format: '%(asctime)s - %(levelname)s - %(message)s'
+    datefmt: '%Y-%m-%d %H:%M:%S'
+
+  json:
+    format: '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "module": "%(module)s", "line": %(lineno)d, "message": "%(message)s"}'
+    datefmt: '%Y-%m-%d %H:%M:%S'
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple
+    stream: ext://sys.stdout
+
+  file:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    formatter: detailed
+    filename: logs/mlx_whisper_api.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+    encoding: utf8
+
+  error_file:
+    class: logging.handlers.RotatingFileHandler
+    level: ERROR
+    formatter: detailed
+    filename: logs/error.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 3
+    encoding: utf8
+
+  access_file:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    formatter: json
+    filename: logs/access.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 10
+    encoding: utf8
+
+loggers:
+  # 應用程式主要日誌
+  app:
+    level: INFO
+    handlers: [console, file, error_file]
+    propagate: false
+
+  # API 訪問日誌
+  app.api:
+    level: INFO
+    handlers: [access_file]
+    propagate: false
+
+  # 模型管理日誌
+  app.services.model_manager:
+    level: INFO
+    handlers: [console, file]
+    propagate: false
+
+  # 轉錄服務日誌
+  app.services.transcription:
+    level: INFO
+    handlers: [console, file]
+    propagate: false
+
+  # 速率限制日誌
+  app.services.rate_limiter:
+    level: WARNING
+    handlers: [file]
+    propagate: false
+
+  # FastAPI 日誌
+  fastapi:
+    level: INFO
+    handlers: [console, file]
+    propagate: false
+
+  # Uvicorn 日誌
+  uvicorn:
+    level: INFO
+    handlers: [console, file]
+    propagate: false
+
+  uvicorn.access:
+    level: INFO
+    handlers: [access_file]
+    propagate: false
+
+  # MLX 相關日誌
+  mlx:
+    level: WARNING
+    handlers: [file]
+    propagate: false
+
+  # 第三方函式庫日誌等級調低
+  urllib3:
+    level: WARNING
+    handlers: [file]
+    propagate: false
+
+  requests:
+    level: WARNING
+    handlers: [file]
+    propagate: false
+
+  multipart:
+    level: WARNING
+    handlers: [file]
+    propagate: false
+
+root:
+  level: INFO
+  handlers: [console, file]
+
+# 開發環境配置
+development:
+  version: 1
+  disable_existing_loggers: false
+
+  formatters:
+    dev:
+      format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+      datefmt: '%H:%M:%S'
+
+  handlers:
+    console:
+      class: logging.StreamHandler
+      level: DEBUG
+      formatter: dev
+      stream: ext://sys.stdout
+
+    file:
+      class: logging.FileHandler
+      level: DEBUG
+      formatter: detailed
+      filename: logs/dev.log
+      encoding: utf8
+
+  root:
+    level: DEBUG
+    handlers: [console, file]
+
+# 生產環境配置
+production:
+  version: 1
+  disable_existing_loggers: false
+
+  formatters:
+    production:
+      format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+      datefmt: '%Y-%m-%d %H:%M:%S'
+
+    json_prod:
+      format: '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s", "process": %(process)d, "thread": %(thread)d}'
+      datefmt: '%Y-%m-%d %H:%M:%S'
+
+  handlers:
+    console:
+      class: logging.StreamHandler
+      level: WARNING
+      formatter: production
+      stream: ext://sys.stdout
+
+    file:
+      class: logging.handlers.TimedRotatingFileHandler
+      level: INFO
+      formatter: json_prod
+      filename: logs/mlx_whisper_api.log
+      when: midnight
+      interval: 1
+      backupCount: 30
+      encoding: utf8
+
+    error_file:
+      class: logging.handlers.TimedRotatingFileHandler
+      level: ERROR
+      formatter: json_prod
+      filename: logs/error.log
+      when: midnight
+      interval: 1
+      backupCount: 7
+      encoding: utf8
+
+  root:
+    level: INFO
+    handlers: [console, file, error_file]
+
+# 測試環境配置
+testing:
+  version: 1
+  disable_existing_loggers: false
+
+  formatters:
+    test:
+      format: '%(levelname)s - %(name)s - %(message)s'
+
+  handlers:
+    console:
+      class: logging.StreamHandler
+      level: WARNING
+      formatter: test
+      stream: ext://sys.stdout
+
+    memory:
+      class: logging.handlers.MemoryHandler
+      level: DEBUG
+      capacity: 1000
+      target: console
+
+  root:
+    level: WARNING
+    handlers: [memory]

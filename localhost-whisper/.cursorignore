@@ -1,0 +1,7 @@
+/node_modules
+/build
+/temp
+/xnotes
+/.claude
+/__pycache__
+CLAUDE.local.md

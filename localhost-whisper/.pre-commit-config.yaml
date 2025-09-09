@@ -1,0 +1,7 @@
+repos:
+- repo: https://github.com/psf/black
+  rev: 24.4.2          # 固定版本以確保團隊一致
+  hooks:
+    - id: black
+      language_version: python3.12  # 與專案 Python 版本一致
+      exclude: "migrations/"    # 若有 Django 資料庫遷移檔可排除
