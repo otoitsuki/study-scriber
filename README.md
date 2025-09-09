@@ -286,23 +286,7 @@ make cleanup
 make clean-ports
 ```
 
-## 系統診斷
-
-如果遇到問題，可以使用內建的系統診斷工具：
-
-1. 點擊右上角設定按鈕 (⚙️)
-2. 選擇「系統診斷」
-3. 查看各項檢查結果：
-   - WebSocket 連線狀態
-   - 後端 API 可用性
-   - STT 提供者狀態
-   - 麥克風權限
-   - 資料庫連線
 
 ## 支援與回饋
 
 如有問題或建議，請在 [GitHub Issues](https://github.com/otoitsuki/study-scriber/issues) 中回報。
-
-## 授權
-
-本專案採用 MIT License。詳見 [LICENSE](LICENSE) 檔案。
