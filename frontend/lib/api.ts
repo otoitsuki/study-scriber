@@ -1,7 +1,10 @@
 import axios, { AxiosResponse, AxiosError } from 'axios'
+import { LLMConfig, LLMTestResponse } from '@/types/llm-config'
 
 // API 基礎配置 - 使用環境變數
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// 若設定為 'internal'，則走同源（由 Next rewrites 代理）
+const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || 'internal'
+const API_BASE_URL = rawApiUrl === 'internal' ? '' : rawApiUrl
 
 // 差異化超時配置
 const API_TIMEOUTS = {
@@ -51,6 +54,38 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
   backoffFactor: 2    // 指數退避因子
 }
 
+// 將 Axios 錯誤格式化為可讀字串，避免 Next 以 console.error 觸發錯誤覆蓋只顯示 {}
+const formatAxiosError = (error: AxiosError, clientName?: string): string => {
+  const method = error.config?.method?.toUpperCase()
+  const url = error.config?.url
+  const status = error.response?.status
+  const code = error.code
+  const message = error.message
+
+  let dataSnippet = ''
+  try {
+    const data = (error.response as any)?.data
+    if (typeof data === 'string') {
+      dataSnippet = data
+    } else if (data != null) {
+      dataSnippet = JSON.stringify(data)
+    }
+  } catch {
+    dataSnippet = '[unserializable response.data]'
+  }
+
+  const parts = [
+    clientName ? `client=${clientName}` : undefined,
+    method && url ? `${method} ${url}` : url || undefined,
+    status != null ? `status=${status}` : undefined,
+    code ? `code=${code}` : undefined,
+    message ? `message=${message}` : undefined,
+    dataSnippet ? `data=${dataSnippet}` : undefined,
+  ].filter(Boolean)
+
+  return parts.join(' | ')
+}
+
 // 指數退避算法
 const calculateDelay = (attempt: number, config: RetryConfig): number => {
   const delay = config.baseDelay * Math.pow(config.backoffFactor, attempt - 1)
@@ -97,17 +132,15 @@ async function withRetry<T>(
       if (axios.isAxiosError(error)) {
         // 不可重試的錯誤，立即失敗
         if (!isRetriableError(error)) {
-          console.log(`❌ [API重試] ${context} 遇到不可重試錯誤，立即終止:`, {
-            status: error.response?.status,
-            code: error.code,
-            message: error.message,
-          });
-          throw error;
+          const formatted = formatAxiosError(error as AxiosError)
+          console.warn(`❌ [API重試] ${context} 不可重試錯誤，終止 | ${formatted}`)
+          throw error
         }
 
         // 最後一次嘗試失敗
         if (isLastAttempt) {
-          console.error(`❌ [API重試] ${context} 重試失敗，已達最大重試次數 (${retryConfig.maxRetries})`)
+          const formatted = formatAxiosError(error as AxiosError)
+          console.warn(`❌ [API重試] ${context} 重試失敗 (${retryConfig.maxRetries}/${retryConfig.maxRetries}) | ${formatted}`)
           throw error
         }
 
@@ -152,14 +185,9 @@ const setupInterceptors = (client: typeof sessionClient, clientName: string) => 
         error.config?.url?.includes('/api/session/active')
 
       if (!isExpected404) {
-        console.error(`❌ [${clientName}] API 錯誤:`, {
-          method: error.config?.method?.toUpperCase(),
-          url: error.config?.url,
-          status: error.response?.status,
-          code: error.code,
-          message: error.message,
-          isRetriable: isRetriableError(error)
-        })
+        // 使用 warning 並輸出字串，避免 Next 將 console.error 轉為錯誤覆蓋且只顯示 {}
+        const formatted = formatAxiosError(error, clientName)
+        console.warn(`⚠️ API 錯誤: ${formatted}`)
       }
 
       return Promise.reject(error)
@@ -179,12 +207,13 @@ export interface SessionCreateRequest {
   type: 'note_only' | 'recording'
   content?: string
   start_ts?: number  // 錄音開始時間戳（毫秒），用於精確時間同步
-  lang_code?: string  // BCP-47 語言碼（如 zh-TW, en-US）
-  stt_provider?: string  // 語音轉文字 Provider 名稱（如 whisper, gpt4o）
+  language?: string  // BCP-47 語言碼（如 zh-TW, en-US），符合後端 SessionCreateRequest schema
+  stt_provider?: string  // 語音轉文字 Provider 名稱（如 whisper, gpt4o）- 已淡化
+  llm_config?: LLMConfig  // 自訂 LLM 配置，將覆蓋環境變數設定
 }
 
 // STT Provider 類型定義
-export type STTProvider = 'whisper' | 'gemini' | 'gpt4o'
+export type STTProvider = 'whisper' | 'gemini' | 'gpt4o' | 'localhost-breeze'
 
 export interface SessionResponse {
   id: string
@@ -218,7 +247,7 @@ export interface NoteResponse {
 
 // Session API - 使用會話專用客戶端和重試機制
 export const sessionAPI = {
-  // 建立新會話
+  // 建立新會話（支援 LLM 配置）
   async createSession(data: SessionCreateRequest): Promise<SessionResponse> {
     return withRetry(
       async () => {
@@ -284,6 +313,23 @@ export const sessionAPI = {
       { maxRetries: 2 }
     )
   },
+
+  // 測試 LLM 連線配置
+  async testLLMConnection(config: LLMConfig): Promise<LLMTestResponse> {
+    return withRetry(
+      async () => {
+        const response = await defaultClient.post('/api/llm/test', {
+          base_url: config.baseUrl,
+          api_key: config.apiKey,
+          model: config.model,
+          api_version: config.apiVersion || undefined
+        })
+        return response.data
+      },
+      `測試 LLM 連線 (${config.model})`,
+      { maxRetries: 1 } // 測試連線不重試，避免多次錯誤嘗試
+    )
+  },
 }
 
 // Notes API - 使用筆記專用客戶端和重試機制
@@ -333,8 +379,76 @@ export const exportAPI = {
 
 // WebSocket URL 建構 - 使用環境變數
 export const getWebSocketURL = (path: string): string => {
-  const wsBaseURL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
-  return `${wsBaseURL}${path}`
+  const rawWs = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
+  // 若設定為 'internal'，以同源協議與主機組 ws(s)://origin
+  if (rawWs === 'internal' && typeof window !== 'undefined') {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.host
+    return `${protocol}//${host}${path}`
+  }
+  return `${rawWs}${path}`
+}
+
+// LLM 配置輔助函數
+export const llmConfigUtils = {
+  // 從 localStorage 載入 LLM 配置
+  loadFromStorage(): LLMConfig | null {
+    try {
+      const baseUrl = localStorage.getItem('llm_base_url')
+      const apiKey = localStorage.getItem('llm_api_key')
+      const model = localStorage.getItem('llm_model')
+      const apiVersion = localStorage.getItem('llm_api_version')
+
+      if (!baseUrl || !apiKey || !model) {
+        return null
+      }
+
+      return {
+        baseUrl,
+        apiKey,
+        model,
+        apiVersion: apiVersion || undefined
+      }
+    } catch {
+      return null
+    }
+  },
+
+  // 建立會話時自動附加 LLM 配置
+  async createSessionWithLLMConfig(data: Omit<SessionCreateRequest, 'llm_config'>): Promise<SessionResponse> {
+    const llmConfig = this.loadFromStorage()
+
+    // 將 camelCase 的 LLM 配置轉換為 snake_case，符合後端 Pydantic 模型
+    const requestData: Omit<SessionCreateRequest, 'llm_config'> & { llm_config?: any } = { ...data }
+    if (llmConfig) {
+      // 正規化 baseUrl：若缺少協定，預設補上 https://
+      let baseUrl = llmConfig.baseUrl
+      if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+        baseUrl = `https://${baseUrl}`
+      }
+
+      requestData.llm_config = {
+        base_url: baseUrl,
+        api_key: llmConfig.apiKey,
+        model: llmConfig.model,
+        api_version: llmConfig.apiVersion
+      }
+    }
+    // 日誌請求內容，便於排查後端 500 錯誤
+    console.log('🚀 [API] createSession payload:', requestData)
+
+    return sessionAPI.createSession(requestData)
+  },
+
+  // 測試當前儲存的 LLM 配置
+  async testStoredConfig(): Promise<LLMTestResponse | null> {
+    const config = this.loadFromStorage()
+    if (!config) {
+      return null
+    }
+
+    return sessionAPI.testLLMConnection(config)
+  }
 }
 
 // 匯出重試功能供其他模組使用

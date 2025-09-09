@@ -4,11 +4,12 @@
 
 ## 主要功能
 
-- **即時錄音轉錄**：支援 Azure Whisper、Gemini、GPT-4o 多種 STT 引擎
+- **即時錄音轉錄**：支援 Azure Whisper、Gemini、GPT-4o 與本地 Breeze-ASR-25 多種 STT 引擎
 - **筆記編輯**：Markdown 格式筆記，支援即時編輯與自動儲存
 - **AI 摘要**：基於筆記與逐字稿自動生成結構化摘要 ✨
 - **分頁檢視**：逐字稿與摘要分頁顯示，便於快速回顧
 - **完整匯出**：ZIP 格式匯出包含筆記、逐字稿與摘要檔案
+- **本地 STT**：支援 Localhost Breeze-ASR-25，完全離線、保護隱私
 
 ## 環境變數設定
 
@@ -118,9 +119,49 @@ cd frontend && npm run dev
 # 6. 匯出 ZIP 檔案驗證內容
 ```
 
+## 本地 STT 引擎 (可選)
+
+除了雲端 STT 服務，系統也支援本地 Breeze-ASR-25 模型：
+
+### 系統需求
+- **macOS 12+** 與 **Apple Silicon** 處理器 (M1/M2/M3)
+- **Python 3.11+** 與 **MLX** 框架
+- **建議 16GB+ 記憶體**
+
+### 安裝與啟動
+```bash
+# 安裝 MLX 依賴（首次需要）
+cd localhost-whisper
+uv sync
+
+# 啟動完整開發環境（主後端 + localhost-whisper + 前端）
+make dev-with-local
+```
+
+### 前端設定
+在 LLM 設定對話框中配置：
+- **Base URL**: `http://localhost:8001/v1`
+- **Model**: `breeze-asr-25` 
+- **API Key**: 任意值（localhost 不驗證）
+
+### 優勢
+- ✅ **完全離線**：無需網路連線，資料不會上傳雲端
+- ✅ **隱私保護**：音檔在本機處理，無資料外洩風險
+- ✅ **中文優化**：專為繁體中文與中英混用場景優化
+- ✅ **高效能**：基於 MLX 優化 Apple Silicon 硬體
+- ✅ **零費用**：無 API 使用費用
+
+### 注意事項
+- 首次啟動會下載模型檔案（約 3-4GB），請耐心等待
+- 僅支援 Apple Silicon，Intel Mac 不建議使用
+- 詳細說明請參考 [localhost-whisper/README.md](localhost-whisper/README.md)
+
+---
+
 ## 部署注意事項
 
 1. **Azure OpenAI 配額**：確保有足夠的 API 配額支援摘要生成
 2. **資料庫遷移**：確保 `sessions` 表包含 `summary TEXT` 欄位
 3. **環境變數**：正確設定所有必要的環境變數
-4. **網路延遲**：考慮調整 WebSocket 超時與重連機制 
+4. **網路延遲**：考慮調整 WebSocket 超時與重連機制
+5. **本地 STT**：可選安裝 MLX 與 localhost-whisper 以支援離線轉錄

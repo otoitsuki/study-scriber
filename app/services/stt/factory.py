@@ -10,7 +10,16 @@ from app.services.stt.interfaces import ISTTProvider
 from app.services.stt.whisper_provider import WhisperProvider
 from app.services.stt.gpt4o_provider import GPT4oProvider
 from app.services.stt.gemini_provider import GeminiProvider
+from app.services.stt.breeze_asr25_provider import BreezeASR25Provider
+from app.services.stt.localhost_whisper_provider import LocalhostWhisperProvider
+from app.services.stt.dynamic_providers import (
+    WhisperProviderDynamic,
+    GPT4oProviderDynamic,
+    GeminiProviderDynamic,
+    LocalhostWhisperProviderDynamic
+)
 from app.core.config import get_settings
+from app.core.llm_manager import llm_manager
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +45,50 @@ def _instance(cls: Type[ISTTProvider]) -> ISTTProvider:
 # ------------------------------------------------------------------
 def get_provider(session_id: UUID) -> ISTTProvider:
     """
-    根據 sessions.stt_provider 欄位，回傳對應 ISTTProvider 物件。
-    預設 whisper。
+    根據 session 的 LLM 配置或 sessions.stt_provider 欄位，回傳對應 ISTTProvider 物件。
+    優先順序：1. Session LLM 配置 2. DB stt_provider 3. 環境變數預設
     """
+
+    # 1. 優先檢查是否有 session 專屬的 LLM 配置
+    llm_config = llm_manager.get_config(session_id)
+
+    if llm_config:
+        logger.info(f"🎯 Using session LLM config for {session_id}: model={llm_config.model}")
+
+        # 根據模型判斷 STT 方法
+        stt_method = llm_manager.detect_stt_method(llm_config.model)
+
+        # 建立動態 provider
+        if stt_method == "whisper":
+            return WhisperProviderDynamic(
+                base_url=llm_config.base_url,
+                api_key=llm_config.api_key,
+                model=llm_config.model,
+                api_version=llm_config.api_version
+            )
+        elif stt_method == "gpt4o-audio":
+            return GPT4oProviderDynamic(
+                base_url=llm_config.base_url,
+                api_key=llm_config.api_key,
+                model=llm_config.model,
+                api_version=llm_config.api_version
+            )
+        elif stt_method == "gemini":
+            return GeminiProviderDynamic(
+                api_key=llm_config.api_key,
+                model=llm_config.model,
+                endpoint=llm_config.base_url
+            )
+        elif stt_method == "localhost-whisper":
+            return LocalhostWhisperProviderDynamic(
+                base_url=llm_config.base_url,
+                api_key=llm_config.api_key or "dummy",
+                model=llm_config.model
+            )
+
+    # 2. Fallback 到原有邏輯（從 DB 讀 stt_provider）
+    logger.info(f"📦 No session LLM config found for {session_id}, using DB stt_provider")
+
     supa = get_supabase_client()
     row = (
         supa.table("sessions")
@@ -49,14 +99,20 @@ def get_provider(session_id: UUID) -> ISTTProvider:
     )
 
     provider_code: str = (
-    row.data or {}
-).get("stt_provider", settings.STT_PROVIDER_DEFAULT).lower()
+        row.data or {}
+    ).get("stt_provider", settings.STT_PROVIDER_DEFAULT).lower()
 
     match provider_code:
         case "gpt4o" | "gpt-4o":
             return _instance(GPT4oProvider)
         case "gemini" | "google_gemini":
             return _instance(GeminiProvider)
+        case "breeze-asr-25":
+            # 使用 Breeze-ASR-25 Provider
+            return _instance(BreezeASR25Provider)
+        case "localhost-whisper" | "localhost-breeze":
+            # 使用 Localhost Whisper Provider
+            return _instance(LocalhostWhisperProvider)
         case "whisper" | _:
             # 包含 None / 空字串 → whisper
             return _instance(WhisperProvider)

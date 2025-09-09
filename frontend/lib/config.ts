@@ -87,9 +87,19 @@ function getAudioChunkOverlap(): number {
 /**
  * 應用程式配置實例
  */
+const rawApi = process.env.NEXT_PUBLIC_API_URL || 'internal'
+const resolvedApiUrl = rawApi === 'internal' ? '' : rawApi
+const rawWs = process.env.NEXT_PUBLIC_WS_URL || 'internal'
+const resolvedWsUrl = (() => {
+  if (rawWs === 'internal' && typeof window !== 'undefined') {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${protocol}//${window.location.host}`
+  }
+  return rawWs
+})()
 export const appConfig: AppConfig = {
-  apiUrl: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
-  wsUrl: process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000',
+  apiUrl: resolvedApiUrl,
+  wsUrl: resolvedWsUrl,
   isDevelopment: process.env.NODE_ENV === 'development',
   audio: {
     chunkInterval: getAudioChunkInterval(),

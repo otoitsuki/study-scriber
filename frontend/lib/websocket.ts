@@ -46,23 +46,35 @@ export class WebSocketManager {
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
+      // 添加連接超時機制（5秒）
+      const timeout = setTimeout(() => {
+        console.error('❌ WebSocket 連接超時:', this.url)
+        if (this.ws) {
+          this.ws.close()
+        }
+        reject(new Error(`WebSocket connection timeout after 5 seconds: ${this.url}`))
+      }, 5000)
+
       try {
         this.ws = new WebSocket(this.url)
         this.isManualClose = false
 
         this.ws.onopen = () => {
           console.log('✅ WebSocket 連接成功:', this.url)
+          clearTimeout(timeout)
           this.reconnectAttempts = 0
           resolve()
         }
 
         this.ws.onerror = (error) => {
           console.error('❌ WebSocket 連接錯誤:', error)
+          clearTimeout(timeout)
           reject(error)
         }
 
         this.ws.onclose = (event) => {
           console.log('🔌 WebSocket 連接關閉:', event.code, event.reason)
+          clearTimeout(timeout)
 
           if (!this.isManualClose && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++
@@ -74,6 +86,7 @@ export class WebSocketManager {
           }
         }
       } catch (error) {
+        clearTimeout(timeout)
         reject(error)
       }
     })

@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { serviceContainer, SERVICE_KEYS } from './services'
 import type { ISessionService } from './services/interfaces'
 import { AppState, SessionStatus, SessionType, TranscriptEntry } from '../types/app-state'
-import { TranscriptManager } from './transcript-manager'
+import { transcriptManager } from './transcript-manager-new'
 
 /**
  * App 狀態介面
@@ -115,7 +115,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   timerId: null,
   transcriptEntries: [],
   editorContent: '',
-  sttProvider: 'gpt4o' as STTProvider,
+  sttProvider: 'breeze-asr-25' as STTProvider,
 
   // 新增摘要與分頁狀態
   currentTab: 'transcript',
@@ -157,8 +157,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const { RecordingFlowService } = await import('./services/recording-flow-service')
       const recordingFlowService = new RecordingFlowService()
       console.log('🎯 [AppStore] RecordingFlowService 實例已創建')
-      await recordingFlowService.initialize()
-      console.log('🎯 [AppStore] RecordingFlowService 初始化完成')
+      await recordingFlowService.start()  // 使用 start() 而不是 initialize()
+      console.log('🎯 [AppStore] RecordingFlowService 啟動完成')
 
       // 4. 啟動完整錄音流程（包含雙 WebSocket），傳遞開始時間戳和 STT Provider
       console.log('🔍 [AppStore] 啟動完整錄音流程...')

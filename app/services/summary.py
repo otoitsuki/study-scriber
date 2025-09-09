@@ -13,6 +13,7 @@ from uuid import UUID
 from app.db.database import get_supabase_client
 from app.services.azure_openai_v2 import get_azure_openai_client
 from app.ws.transcript_feed import manager as ws_manager
+from app.core.llm_manager import llm_manager
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +77,20 @@ async def generate_summary(session_id: UUID) -> Optional[str]:
         logger.info("[Summary] Summary already exists for session %s", session_id)
         return check.data[0]["summary"]
 
-    client = get_azure_openai_client()
+    # 使用 LLM Manager 取得客戶端與模型
+    client = await llm_manager.create_client(session_id)
+    model = llm_manager.get_model_for_session(session_id)
+
     if client is None:
-        logger.error("[Summary] Azure OpenAI client not configured")
-        return None
+        logger.error("[Summary] No LLM client available for session %s", session_id)
+        # Fallback 到環境變數
+        client = get_azure_openai_client()
+        if client is None:
+            logger.error("[Summary] No fallback Azure OpenAI client configured")
+            return None
+        model = DEFAULT_MODEL
+
+    logger.info(f"[Summary] Using model: {model} for session {session_id}")
 
     prompt = DEFAULT_PROMPT.format(notes=notes, transcript=transcript)
 
@@ -88,7 +99,7 @@ async def generate_summary(session_id: UUID) -> Optional[str]:
         try:
             logger.info("[Summary] Generating summary for session %s (attempt %s)", session_id, attempt)
             response = await client.chat.completions.create(
-                model=DEFAULT_MODEL,
+                model=model,  # 使用 session 配置的模型
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
             )

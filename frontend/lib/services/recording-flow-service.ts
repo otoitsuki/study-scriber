@@ -130,8 +130,11 @@ export class RecordingFlowService extends BaseService {
       }
 
       // ③ 啟動逐字稿服務
-      await this.transcriptService.start(session.id)
-      this.setAppState('processing')
+      if (!this.transcriptService.isRunning) {
+        await this.transcriptService.start()
+      }
+      // 開始錄音階段應保持在等待逐字稿狀態
+      this.setAppState('recording_waiting')
 
       // 步驟 1: 使用新建立的會話
       this.currentSession = session
@@ -145,17 +148,28 @@ export class RecordingFlowService extends BaseService {
       }
       this.logSuccess('會話準備完成')
 
-      // 步驟 3: 連接逐字稿服務
+      // 步驟 3: 連接逐字稿服務（允許失敗，不阻止錄音）
       console.log('🎯 [RecordingFlowService] 步驟 3: 開始連接逐字稿服務')
       this.logInfo('步驟 3: 連接逐字稿服務')
-      await this.transcriptService.connect(this.currentSession.id)
-      console.log('🎯 [RecordingFlowService] 逐字稿服務連接完成，開始設置監聽器')
-      this.setupTranscriptListener()
-      console.log('🎯 [RecordingFlowService] 監聽器設置完成')
-      this.logSuccess('逐字稿服務連接成功')
+      
+      try {
+        await this.transcriptService.connect(this.currentSession.id)
+        console.log('🎯 [RecordingFlowService] 逐字稿服務連接完成，開始設置監聽器')
+        this.setupTranscriptListener()
+        console.log('🎯 [RecordingFlowService] 監聽器設置完成')
+        this.logSuccess('逐字稿服務連接成功')
+      } catch (error) {
+        console.warn('⚠️ [RecordingFlowService] 逐字稿服務連接失敗，但繼續錄音流程:', error)
+        this.logWarning('逐字稿服務連接失敗，將繼續純錄音模式', error instanceof Error ? error.message : String(error))
+        // 不拋出錯誤，讓錄音流程繼續
+      }
 
       // 步驟 4: 開始錄音
       this.logInfo('步驟 4: 開始錄音')
+      // 確保錄音服務已啟動
+      if (!this.recordingService.isRunning) {
+        await this.recordingService.start()
+      }
       await this.recordingService.startRecording(this.currentSession.id)
 
       // 通知全域狀態：設置錄音開始時間，啟動計時器

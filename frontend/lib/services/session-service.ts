@@ -2,7 +2,7 @@
 
 import { BaseService } from './base-service'
 import { ISessionService } from './interfaces'
-import { sessionAPI, type SessionCreateRequest, type SessionResponse } from '../api'
+import { sessionAPI, llmConfigUtils, type SessionCreateRequest, type SessionResponse } from '../api'
 import axios from 'axios'
 
 /**
@@ -117,15 +117,17 @@ export class SessionService extends BaseService implements ISessionService {
         this.logInfo('創建錄音會話', { title, hasContent: !!content, hasStartTs: !!startTs, sttProvider })
 
         try {
-            const sessionData: SessionCreateRequest = {
+            const sessionData: Omit<SessionCreateRequest, 'llm_config'> = {
                 title,
                 type: 'recording',
                 content,
                 start_ts: startTs,
-                stt_provider: sttProvider
+                stt_provider: sttProvider,
+                // 後端期望 language 欄位，符合 SessionCreateRequest schema
+                language: 'zh-TW',
             }
 
-            const session = await sessionAPI.createSession(sessionData)
+            const session = await llmConfigUtils.createSessionWithLLMConfig(sessionData)
 
             this.logSuccess('錄音會話創建成功', {
                 sessionId: session.id,
@@ -150,13 +152,15 @@ export class SessionService extends BaseService implements ISessionService {
         this.logInfo('創建純筆記會話', { title, hasContent: !!content })
 
         try {
-            const sessionData: SessionCreateRequest = {
+            const sessionData: Omit<SessionCreateRequest, 'llm_config'> = {
                 title,
                 type: 'note_only',
                 content,
+                // 後端期望 language 欄位，符合 SessionCreateRequest schema
+                language: 'zh-TW',
             }
 
-            const session = await sessionAPI.createSession(sessionData)
+            const session = await llmConfigUtils.createSessionWithLLMConfig(sessionData)
 
             this.logSuccess('純筆記會話創建成功', {
                 sessionId: session.id,

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Square, AlertCircle, Clock } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAppState, useAppActions } from "../lib/app-store-zustand";
+import { WaitingState } from "./waiting-state";
 
 export default function RightPanel() {
     const {
@@ -22,6 +23,7 @@ export default function RightPanel() {
     };
 
     const isRecordingPhase = appState === "recording_waiting" || appState === "recording_active";
+    const isProcessing = appState === "processing";
 
     return (
         <div className="w-full h-full border-l bg-background flex flex-col">
@@ -73,14 +75,21 @@ export default function RightPanel() {
                         </div>
                     </div>
                 ) : (
-                    <ScrollArea className="h-full p-4 space-y-2">
-                        {transcriptEntries.map((entry, idx) => (
-                            <div key={idx} className="whitespace-pre-wrap text-sm text-muted-foreground">
-                                {entry.time ? `[${entry.time}] ` : ""}
-                                {entry.text}
+                    isProcessing ? (
+                        // processing 階段顯示等待 UI
+                        <WaitingState />
+                    ) : (
+                        <ScrollArea className="h-full">
+                            <div className="p-4 space-y-4">
+                                {transcriptEntries.map((entry, idx) => (
+                                    <div key={idx} className="flex gap-4 text-sm">
+                                        <span className="text-muted-foreground font-mono">{entry.time}</span>
+                                        <span className="flex-1">{entry.text}</span>
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </ScrollArea>
+                        </ScrollArea>
+                    )
                 )}
             </div>
         </div>

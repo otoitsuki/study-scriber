@@ -77,13 +77,11 @@ app = FastAPI(
 )
 
 # CORS 設定
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+# 從設定讀取允許的來源（以逗號分隔），避免硬編碼
+origins_list = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

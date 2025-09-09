@@ -2,19 +2,16 @@ import { toast } from '@/hooks/use-toast'
 
 export async function downloadZip(sessionId: string, editorContent: string) {
     try {
-        console.log('準備匯出:', {
-            sessionId,
-            contentLength: editorContent.length,
-            url: 'http://localhost:8000/api/notes/export'
-        });
+        const exportUrl = '/api/notes/export'
+        console.log('準備匯出:', { sessionId, contentLength: editorContent.length, url: exportUrl });
         // 先測試後端是否可以連接
         try {
-            const healthCheck = await fetch('http://localhost:8000/health');
+            const healthCheck = await fetch('/health');
             console.log('後端健康檢查:', healthCheck.ok);
         } catch (e) {
             console.error('無法連接到後端:', e);
         }
-        const response = await fetch('http://localhost:8000/api/notes/export', {
+        const response = await fetch(exportUrl, {
             method: 'POST',
             mode: 'cors',  // 明確指定 CORS 模式
             headers: {

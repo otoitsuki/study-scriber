@@ -76,6 +76,7 @@ export class TranscriptService extends BaseService implements ITranscriptService
             this.logSuccess(`逐字稿服務連接成功: ${sessionId}`)
         } catch (error) {
             this.handleError(`逐字稿服務連接失敗: ${sessionId}`, error)
+            throw error // 重新拋出錯誤，確保上層服務能夠處理
         }
     }
 

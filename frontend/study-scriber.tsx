@@ -171,17 +171,8 @@ export default function Component() {
 
 
   const renderRightPanel = () => {
-    // 狀態異常檢查：如果是 recording_waiting 但沒有 session，應該顯示 default 狀態
-    if (appState === "recording_waiting" && !session) {
-      console.log("⚠️ [StudyScriber] 檢測到狀態異常: recording_waiting 但沒有 session，顯示 DefaultState")
-      return <DefaultState
-        onStartRecording={() => {
-          console.log("📱 StudyScriber: 準備調用 startRecording（狀態修復）")
-          startRecording()
-        }}
-      />
-    }
-
+    // 若為 recording_waiting 但暫無 session，仍顯示 RightPanel（會呈現等待 UI）
+    // 避免回退到 DefaultState 造成使用者體驗中斷
     switch (appState) {
       case "default":
         console.log("🔄 [StudyScriber] 渲染 DefaultState，startRecording 函數:", typeof startRecording)
@@ -236,8 +227,6 @@ export default function Component() {
           )}
 
           <ProviderContextMenu
-            currentProvider={sttProvider}
-            onProviderChange={setSttProvider}
             disabled={appState === 'recording_active' || appState === 'processing' || appState === 'recording_waiting'}
           />
         </div>

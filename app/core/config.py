@@ -11,13 +11,17 @@ _ENV_FILE: str = ".env.local" if os.getenv("TESTING", "").lower() in {"1", "true
 
 class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000"
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
     DB_MODE: str = "supabase"
     STT_PROVIDER_DEFAULT: str = Field(
-        default="whisper",
+        default="breeze-asr-25",
         env="DEFAULT_STT_PROVIDER",
+    )
+    SUPPORTED_STT_PROVIDERS: list = Field(
+        default=["whisper", "gpt4o", "gemini", "breeze-asr-25"],
+        description="支援的 STT Providers 列表"
     )
     AZURE_OPENAI_API_KEY: str = ""
     AZURE_OPENAI_ENDPOINT: str = ""
