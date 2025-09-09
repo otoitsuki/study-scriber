@@ -10,10 +10,10 @@
 
 ## 2. 產品定位
 
-| 項目     | 描述                                                                                                         |
-| -------- | ------------------------------------------------------------------------------------------------------------ |
-| 目標族群 | 成年自學者、學生、專業人士                                                                                   |
-| 痛點     | 備課／聽課同時要做筆記、整理逐字稿耗時、重點摘要費時、隱私安全顧慮、雲端服務成本高                           |
+| 項目     | 描述                                                                                                |
+| -------- | --------------------------------------------------------------------------------------------------- |
+| 目標族群 | 成年自學者、學生、專業人士                                                                          |
+| 痛點     | 備課／聽課同時要做筆記、整理逐字稿耗時、重點摘要費時、隱私安全顧慮、雲端服務成本高                  |
 | 核心價值 | 1 個畫面完成「純筆記」或「錄音 → 即時逐字稿 → 筆記」，支援雲端與本地STT，完整隱私保護，課後一鍵匯出 |
 
 ---
@@ -245,9 +245,10 @@ R2_BUCKET_NAME=your_bucket
 
 **前端必要變數：**
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_key  
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+# frontend/.env.local
+NEXT_PUBLIC_API_URL=internal
+NEXT_PUBLIC_WS_URL=ws://localhost:8000
+NODE_ENV=development
 ```
 
 ### 5.4 生產環境注意事項
@@ -257,3 +258,75 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 3. **WebSocket 配置**：調整 WebSocket 超時與重連機制適應網路環境
 4. **本地 STT 隱私**：生產環境可完全關閉網路存取，確保資料隱私
 5. **容器化部署**：Docker 支援，但本地 STT 需要 macOS + Apple Silicon 環境
+
+---
+
+## 6. 品質保證
+
+### 6.1 端到端測試 (E2E Testing)
+
+**測試框架：** Playwright + TypeScript
+
+**覆蓋範圍：**
+- **完整錄音流程測試** (`frontend/e2e/recording-full-flow.spec.ts`)
+- **匯出功能測試** (`frontend/e2e/export-flow.spec.ts`) 
+- **即時逐字稿測試** (`frontend/e2e/transcript-realtime.spec.ts`)
+- **整合測試** (`frontend/e2e/integration-complete.spec.ts`)
+
+**核心測試場景：**
+
+| 測試類型 | 測試場景 | 預期結果 |
+|----------|----------|----------|
+| **錄音流程** | 基本錄音開始/停止 | 成功建立會話、狀態正確轉換 |
+| **權限處理** | 麥克風權限拒絕 | 顯示適當錯誤訊息 |
+| **網路錯誤** | WebSocket 連線中斷 | 自動重連機制正常運作 |
+| **逐字稿顯示** | 即時逐字稿接收 | 逐字稿正確顯示、時間戳準確 |
+| **檔案匯出** | ZIP 檔案生成 | 包含筆記與逐字稿、格式正確 |
+| **大檔案處理** | 長時間錄音匯出 | 處理超大檔案不會失敗 |
+
+**測試執行：**
+```bash
+# 執行所有 E2E 測試
+cd frontend
+npx playwright test
+
+# 執行特定測試
+npx playwright test recording-full-flow.spec.ts
+npx playwright test export-flow.spec.ts --headed
+
+# 產生測試報告
+npx playwright show-report
+```
+
+**測試數據驗證：**
+- **WebSocket 連線狀態**：確保即時通訊正常
+- **音檔上傳驗證**：檢查檔案完整性與格式
+- **ZIP 檔案結構**：驗證匯出內容的完整性
+- **時間戳準確性**：確保逐字稿時間戳正確對應
+- **錯誤恢復機制**：網路中斷後的自動重連
+
+### 6.2 系統診斷工具
+
+**診斷面板：** 整合在設定選單中的系統診斷工具
+
+**診斷項目：**
+- **WebSocket 連線狀態**：檢查即時通訊是否正常
+- **後端健康檢查**：驗證主要 API 端點可用性
+- **STT 提供者狀態**：檢查配置的 STT 引擎是否可用
+- **音檔錄製功能**：確認瀏覽器音檔錄製權限與功能
+- **資料庫連線**：驗證 Supabase 連線狀態
+
+**使用方式：**
+1. 點擊右上角設定按鈕 (⚙️)
+2. 選擇「系統診斷」選項
+3. 查看各項檢查結果
+4. 根據診斷結果進行問題排查
+
+**診斷輸出範例：**
+```
+✅ WebSocket 連線正常 (ws://localhost:8000/ws)
+✅ 後端 API 可用 (http://localhost:8000)
+❌ localhost-whisper 無法連線 (timeout)
+✅ 麥克風權限已授予
+⚠️ 資料庫連線緩慢 (>2s)
+```

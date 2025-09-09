@@ -7,6 +7,7 @@ import {
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuPortal,
+    DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { Settings, Brain } from "lucide-react"
@@ -43,15 +44,16 @@ export function ProviderContextMenu({
                     </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuPortal>
-                    <DropdownMenuContent side="bottom" sideOffset={4} className="bg-white rounded-md">
+                    <DropdownMenuContent side="bottom" sideOffset={4} className="bg-white border border-gray-200 shadow-lg rounded-md">
                         {/* 主要的 LLM 設定選項 */}
                         <DropdownMenuItem
                             onClick={() => setLlmDialogOpen(true)}
-                            className="flex items-center gap-2"
+                            className="flex items-center gap-2 text-gray-700 hover:bg-gray-50"
                         >
                             <Brain className="w-4 h-4" />
                             LLM 設定
                         </DropdownMenuItem>
+
 
                     </DropdownMenuContent>
                 </DropdownMenuPortal>
@@ -63,6 +65,7 @@ export function ProviderContextMenu({
                 onOpenChange={setLlmDialogOpen}
                 onSave={handleLLMConfigSave}
             />
+
         </>
     )
 }

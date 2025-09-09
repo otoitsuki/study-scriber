@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     )
 
     request_timeout: int = Field(
-        default=900, description="請求逾時時間（秒）", ge=30, le=3600  # 15 minutes
+        default=600, description="請求逾時時間（秒）", ge=30, le=3600  # 10 minutes
     )
 
     # ===============================

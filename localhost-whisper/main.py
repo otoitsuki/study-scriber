@@ -11,7 +11,9 @@ MLX Whisper API 啟動腳本
 import asyncio
 import logging
 import os
+import signal
 import sys
+import multiprocessing
 from pathlib import Path
 
 # 添加專案根目錄到 Python 路徑
@@ -84,6 +86,8 @@ def main():
             log_level=settings.log_level.lower(),
             access_log=True,
             use_colors=True,
+            timeout_keep_alive=30,  # 保持連線超時
+            timeout_graceful_shutdown=60,  # 優雅關機超時
         )
 
     elif mode == "production":
@@ -97,6 +101,8 @@ def main():
             access_log=True,
             server_header=False,
             date_header=False,
+            timeout_keep_alive=30,  # 保持連線超時
+            timeout_graceful_shutdown=60,  # 優雅關機超時
         )
 
     elif mode == "test":
@@ -108,6 +114,8 @@ def main():
             workers=1,
             log_level="debug",
             access_log=True,
+            timeout_keep_alive=30,  # 保持連線超時
+            timeout_graceful_shutdown=60,  # 優雅關機超時
         )
 
     else:
@@ -116,11 +124,48 @@ def main():
         sys.exit(1)
 
 
+def cleanup_and_exit():
+    """清理所有子進程並退出"""
+    logger.info("🧹 清理 MLX Whisper 相關進程...")
+    try:
+        # 終止所有子進程
+        current_process = multiprocessing.current_process()
+        for child in multiprocessing.active_children():
+            logger.info(f"🔍 終止子進程: {child.pid}")
+            child.terminate()
+            child.join(timeout=2)
+            if child.is_alive():
+                logger.warning(f"⚠️ 強制終止子進程: {child.pid}")
+                child.kill()
+        
+        # 清理 multiprocessing 資源
+        multiprocessing.util._cleanup_resources()
+    except Exception as e:
+        logger.error(f"清理過程中發生錯誤: {e}")
+    
+    logger.info("✅ MLX Whisper 服務已關閉")
+
+
+def signal_handler(signum, frame):
+    """處理終止信號"""
+    logger.info(f"🛑 收到信號 {signum}，正在關閉服務...")
+    cleanup_and_exit()
+    sys.exit(0)
+
+
 if __name__ == "__main__":
+    # 註冊信號處理器
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("🛑 收到中斷信號，正在關閉服務...")
+        logger.info("🛑 收到 Ctrl+C，正在關閉服務...")
+        cleanup_and_exit()
     except Exception as e:
         logger.error(f"❌ 啟動失敗: {str(e)}", exc_info=True)
+        cleanup_and_exit()
         sys.exit(1)
+    finally:
+        cleanup_and_exit()

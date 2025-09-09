@@ -132,11 +132,28 @@ def download_model(model_name: str, models_dir: Path) -> bool:
         if info.get("type") == "huggingface":
             hf_repo = info.get("hf_repo", model_name)
             logger.info(f"🔄 正在從 HuggingFace 下載模型: {hf_repo}")
-            model = mlx_whisper.load_model(hf_repo)
+            model = mlx_whisper.load_models.load_model(hf_repo)
+
+            # 將 HuggingFace 模型複製到本地目錄
+            if model is not None:
+                import shutil
+                from huggingface_hub import snapshot_download
+
+                logger.info(f"📂 將模型複製到本地目錄: {model_path}")
+                try:
+                    # 下載到本地目錄
+                    snapshot_download(
+                        repo_id=hf_repo,
+                        local_dir=str(model_path),
+                        local_dir_use_symlinks=False  # 複製實際文件而非符號鏈接
+                    )
+                    logger.info(f"✅ 模型已複製到本地: {model_path}")
+                except Exception as copy_error:
+                    logger.warning(f"⚠️ 複製到本地失敗，但模型仍可從 HuggingFace 緩存使用: {copy_error}")
         else:
             # 使用 mlx_whisper 下載標準模型
             logger.info("🔄 正在下載模型檔案...")
-            model = mlx_whisper.load_model(model_name)
+            model = mlx_whisper.load_models.load_model(model_name)
 
         if model is None:
             logger.error(f"❌ 模型 {model_name} 下載失敗")

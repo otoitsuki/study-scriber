@@ -5,15 +5,19 @@
 from typing import Optional, Dict, Any
 from uuid import UUID
 import logging
+import asyncio
 from openai import AsyncOpenAI, AsyncAzureOpenAI, RateLimitError
 
 from app.services.stt.interfaces import ISTTProvider
 from app.core.ffmpeg import detect_audio_format, webm_to_wav
+from app.core.config import get_settings
 from app.db.database import get_supabase_client
 from app.utils.timer import PerformanceTimer
 from app.utils.timing import calc_times
+from app.lib.httpx_timeout import get_httpx_timeout
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 class WhisperProviderDynamic(ISTTProvider):
@@ -93,7 +97,7 @@ class WhisperProviderDynamic(ISTTProvider):
                     return None
 
                 # 3. 計算時間戳
-                start_time, end_time = calc_times(session_id, chunk_seq)
+                start_time, end_time = calc_times(chunk_seq)
 
                 return {
                     "text": text,
@@ -203,7 +207,7 @@ class GPT4oProviderDynamic(ISTTProvider):
                     return None
 
                 # 3. 計算時間戳
-                start_time, end_time = calc_times(session_id, chunk_seq)
+                start_time, end_time = calc_times(chunk_seq)
 
                 return {
                     "text": text,
@@ -290,11 +294,11 @@ class LocalhostWhisperProviderDynamic(ISTTProvider):
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
-        
+
         # 確保 base_url 格式正確
         if not self.base_url.startswith("http"):
             self.base_url = f"http://{self.base_url}"
-        
+
         # 正確處理 URL 構建
         if self.base_url.endswith("/v1"):
             # 如果 base_url 已包含 /v1，直接使用
@@ -311,7 +315,9 @@ class LocalhostWhisperProviderDynamic(ISTTProvider):
         """檢查 localhost whisper 服務是否可用"""
         import httpx
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+            # 使用較長的超時進行健康檢查，因為模型載入可能需要時間
+            health_timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+            async with httpx.AsyncClient(timeout=health_timeout) as client:
                 response = await client.get(self.health_url)
                 return response.status_code == 200
         except Exception as e:
@@ -358,22 +364,50 @@ class LocalhostWhisperProviderDynamic(ISTTProvider):
                     "response_format": "json",
                     "temperature": 0
                 }
-                
-                # 4. 調用 localhost Whisper API
-                # 15秒音檔預估處理時間約6-13秒，設定充足的超時時間
-                timeout = httpx.Timeout(connect=10.0, read=90.0, write=30.0, pool=10.0)
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    response = await client.post(
-                        self.transcription_url,
-                        files=files,
-                        data=data
-                    )
-                    
-                    if response.status_code != 200:
-                        logger.error(f"Localhost Whisper API 錯誤: {response.status_code} - {response.text}")
+
+                # 4. 調用 localhost Whisper API，使用配置的超時設定和重試機制
+                timeout = get_httpx_timeout()
+                max_retries = settings.MAX_RETRIES
+                retry_delay = settings.RETRY_DELAY_SEC
+
+                for attempt in range(max_retries):
+                    try:
+                        async with httpx.AsyncClient(timeout=timeout) as client:
+                            logger.info(f"🔄 嘗試轉錄 (第 {attempt + 1}/{max_retries} 次): session={session_id}, seq={chunk_seq}")
+
+                            response = await client.post(
+                                self.transcription_url,
+                                files=files,
+                                data=data
+                            )
+
+                            if response.status_code != 200:
+                                logger.error(f"Localhost Whisper API 錯誤: {response.status_code} - {response.text}")
+                                if attempt < max_retries - 1:
+                                    logger.info(f"⏳ 等待 {retry_delay} 秒後重試...")
+                                    await asyncio.sleep(retry_delay)
+                                    continue
+                                return None
+
+                            result = response.json()
+                            logger.info(f"✅ 轉錄成功: session={session_id}, seq={chunk_seq}")
+                            break
+
+                    except httpx.ReadTimeout as e:
+                        logger.warning(f"⚠️ 轉錄超時 (第 {attempt + 1}/{max_retries} 次): {e}")
+                        if attempt < max_retries - 1:
+                            logger.info(f"⏳ 等待 {retry_delay} 秒後重試...")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        logger.error(f"❌ 轉錄最終失敗，已達最大重試次數: session={session_id}, seq={chunk_seq}")
                         return None
-                    
-                    result = response.json()
+                    except Exception as e:
+                        logger.error(f"❌ 轉錄請求異常 (第 {attempt + 1}/{max_retries} 次): {e}")
+                        if attempt < max_retries - 1:
+                            logger.info(f"⏳ 等待 {retry_delay} 秒後重試...")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        return None
 
                 text = result.get("text", "").strip()
                 if not text:
@@ -402,7 +436,7 @@ class LocalhostWhisperProviderDynamic(ISTTProvider):
         """轉換語言代碼為 Whisper 支援的格式"""
         lang_map = {
             "zh-TW": "zh",
-            "en-US": "en", 
+            "en-US": "en",
             "ja-JP": "ja",
             "ko-KR": "ko"
         }

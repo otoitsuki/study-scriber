@@ -1,6 +1,9 @@
 # StudyScriber
 
-智慧錄音筆記應用程式，支援即時逐字稿轉錄與 Markdown 筆記編輯。
+AI 智慧錄音筆記工具，支援即時逐字稿轉錄與 Markdown 筆記編輯。
+特色是除了 OpenAI
+ Whisper 模型以外，也支援 Localhost MLX Breeze-ASR-25 
+模型，非常適合作為中英文混合課程的筆記工具。
 
 ## 主要功能
 
@@ -83,13 +86,6 @@ AUDIO_CHUNK_DURATION_SEC=15
 AUDIO_CHUNK_OVERLAP_SEC=0
 ```
 
-前端環境變數 `frontend/.env.local`：
-
-```bash
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-```
 
 ### 啟動應用程式
 
@@ -269,3 +265,44 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 **3. 資料庫連線問題**
 - 檢查 Supabase URL 與 API Key 是否正確
 - 確認資料庫權限設定
+
+**4. 錄音不運作**
+- 檢查麥克風權限是否允許
+- 確認瀏覽器支援 MediaRecorder API
+- 使用系統診斷工具檢查各項狀態
+
+**5. 逐字稿不顯示**
+- 檢查 STT Provider 配置是否正確
+- 確認 API Key 有效且有足夠配額
+- 查看瀏覽器開發者工具 Console 錯誤訊息
+- 使用右上角設定選單中的「系統診斷」檢查連線狀態
+
+**6. 進程清理問題**
+```bash
+# 強制清理所有相關進程
+make cleanup
+
+# 清理特定端口
+make clean-ports
+```
+
+## 系統診斷
+
+如果遇到問題，可以使用內建的系統診斷工具：
+
+1. 點擊右上角設定按鈕 (⚙️)
+2. 選擇「系統診斷」
+3. 查看各項檢查結果：
+   - WebSocket 連線狀態
+   - 後端 API 可用性
+   - STT 提供者狀態
+   - 麥克風權限
+   - 資料庫連線
+
+## 支援與回饋
+
+如有問題或建議，請在 [GitHub Issues](https://github.com/otoitsuki/study-scriber/issues) 中回報。
+
+## 授權
+
+本專案採用 MIT License。詳見 [LICENSE](LICENSE) 檔案。

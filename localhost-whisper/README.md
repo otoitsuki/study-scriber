@@ -91,9 +91,10 @@ AUDIO_CHUNK_OVERLAP_SEC=0
 前端環境變數 `frontend/.env.local`：
 
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+# 前端環境變數（frontend/.env.local）
+NEXT_PUBLIC_API_URL=internal
+NEXT_PUBLIC_WS_URL=ws://localhost:8000
+NODE_ENV=development
 ```
 
 ### 啟動應用程式

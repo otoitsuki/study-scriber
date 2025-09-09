@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     MAX_QUEUE_SIZE: int = Field(100, description="最大隊列大小")
     QUEUE_TIMEOUT_SECONDS: int = Field(300, description="隊列超時（秒）")
 
+    # HTTP 客戶端超時設定
+    HTTPX_CONNECT_TIMEOUT: float = Field(15.0, description="HTTP 連接超時（秒）")
+    HTTPX_READ_TIMEOUT: float = Field(300.0, description="HTTP 讀取超時（秒）- localhost-whisper 需要更長時間")
+    HTTPX_WRITE_TIMEOUT: float = Field(60.0, description="HTTP 寫入超時（秒）")
+    HTTPX_POOL_TIMEOUT: float = Field(15.0, description="HTTP 連接池超時（秒）")
+
     # 你可以依需求再加更多欄位
 
     # 靜音判斷參數

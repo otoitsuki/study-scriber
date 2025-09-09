@@ -107,11 +107,8 @@ def get_provider(session_id: UUID) -> ISTTProvider:
             return _instance(GPT4oProvider)
         case "gemini" | "google_gemini":
             return _instance(GeminiProvider)
-        case "breeze-asr-25":
-            # 使用 Breeze-ASR-25 Provider
-            return _instance(BreezeASR25Provider)
-        case "localhost-whisper" | "localhost-breeze":
-            # 使用 Localhost Whisper Provider
+        case "breeze-asr-25" | "localhost-whisper" | "localhost-breeze":
+            # 使用 Localhost Whisper Provider (包含 breeze-asr-25 本地模型)
             return _instance(LocalhostWhisperProvider)
         case "whisper" | _:
             # 包含 None / 空字串 → whisper

@@ -13,14 +13,8 @@ import { formatTime } from '../../utils/time'
  * 提供統一的錄音流程管理
  */
 import { STTProvider } from '../api'
-import { getUnifiedConfig, getEffectiveAudioChunkDuration } from '../config-unified'
+import { getTranscriptLabelIntervalSec, getAudioChunkIntervalSec } from '../config'
 
-// 使用統一配置管理 - 從後端 API 讀取
-// 改為在需要時動態獲取，避免模組初始化順序問題
-const getEffectiveAudioChunkSec = async () => {
-  const config = await getUnifiedConfig()
-  return getEffectiveAudioChunkDuration(config)
-}
 
 /**
  * 錄音流程監聽器接口
@@ -154,7 +148,7 @@ export class RecordingFlowService extends BaseService {
       // 步驟 3: 連接逐字稿服務（允許失敗，不阻止錄音）
       console.log('🎯 [RecordingFlowService] 步驟 3: 開始連接逐字稿服務')
       this.logInfo('步驟 3: 連接逐字稿服務')
-      
+
       try {
         await this.transcriptService.connect(this.currentSession.id)
         console.log('🎯 [RecordingFlowService] 逐字稿服務連接完成，開始設置監聽器')
@@ -316,7 +310,7 @@ export class RecordingFlowService extends BaseService {
         const startSec =
           msg.start_time !== undefined
             ? msg.start_time
-            : (msg.chunk_sequence ?? 0) * getEffectiveAudioChunkSec();
+            : (msg.chunk_sequence ?? 0) * getAudioChunkIntervalSec();
 
         const store = useAppStore.getState()
 
