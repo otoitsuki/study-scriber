@@ -213,7 +213,7 @@ export interface SessionCreateRequest {
 }
 
 // STT Provider 類型定義
-export type STTProvider = 'whisper' | 'gemini' | 'gpt4o' | 'localhost-breeze'
+export type STTProvider = 'whisper' | 'gemini' | 'gpt4o' | 'localhost-breeze' | 'localhost-whisper-turbo'
 
 export interface SessionResponse {
   id: string

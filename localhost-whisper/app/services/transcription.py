@@ -353,8 +353,18 @@ class TranscriptionService:
                 transcribe_options["language"] = language
 
             # 設定引導文字
+            # 對中文添加繁體中文引導，確保輸出繁體中文而非簡體中文
+            traditional_chinese_prompt = ""
+            if language and language.lower() in ["zh", "chinese", "zh-tw", "zh-cn"]:
+                traditional_chinese_prompt = "以下是繁體中文的句子。"
+            
             if prompt:
-                transcribe_options["initial_prompt"] = prompt
+                if traditional_chinese_prompt:
+                    transcribe_options["initial_prompt"] = f"{traditional_chinese_prompt} {prompt}"
+                else:
+                    transcribe_options["initial_prompt"] = prompt
+            elif traditional_chinese_prompt:
+                transcribe_options["initial_prompt"] = traditional_chinese_prompt
 
             # 設定溫度
             if temperature > 0:
@@ -373,6 +383,10 @@ class TranscriptionService:
                 transcribe_options["word_timestamps"] = False
 
             logger.debug(f"開始 MLX Whisper 轉錄: options={transcribe_options}")
+            
+            # 記錄繁體中文引導狀態
+            if "initial_prompt" in transcribe_options:
+                logger.info(f"使用引導文字確保繁體中文輸出: {transcribe_options['initial_prompt'][:30]}...")
 
             # 取得模型資訊，決定使用本地路徑還是 HuggingFace repo
             model_info = self.settings.get_model_info(model_name)

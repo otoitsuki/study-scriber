@@ -1,8 +1,9 @@
 """Convert canonical BCP-47 lang_code ⇄ provider-specific code."""
 
 _CANONICAL_TO_SHORT = {
-    "zh-TW": "zh",
-    "zh":    "zh",
+    "zh-TW": "zh",  # 繁體中文映射到 zh，並通過 initial_prompt 控制輸出
+    "zh-CN": "zh",  # 簡體中文也映射到 zh
+    "zh":    "zh",  # 通用中文
     "en-US": "en",
     "en":    "en",
 }

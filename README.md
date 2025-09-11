@@ -7,7 +7,7 @@ AI 智慧錄音筆記工具，支援即時逐字稿轉錄與 Markdown 筆記編�
 
 ## 主要功能
 
-- **即時錄音轉錄**：支援 Azure OpenAI Whisper、Azure GPT-4o-transcribe  與本地 Breeze-ASR-25 多種 STT 模型
+- **即時錄音轉錄**：支援 Azure OpenAI Whisper、Azure GPT-4o-transcribe、本地 Breeze-ASR-25 與 Whisper Large3 Turbo 多種 STT 模型
 - **筆記編輯**：Markdown 格式筆記，支援即時編輯與自動儲存
 - **隱私保護**：使用本地 STT 引擎完全離線，不上傳雲端
 - **完整匯出**：ZIP 格式匯出包含 Markdown 筆記與時間戳逐字稿
@@ -214,9 +214,9 @@ curl -s http://localhost:8000/api/config | python3 -m json.tool
 - 不需要修改 `frontend/.env.local`
 - 前端會自動從 `/api/config` 讀取新配置
 
-## 本地 STT 引擎 (Breeze-ASR-25, Only for Apple Silicon)
+## 本地 STT 引擎 (Breeze-ASR-25 / Whisper Large3 Turbo, Only for Apple Silicon)
 
-除了雲端 STT 服務，系統也支援本地 Breeze-ASR-25 模型：
+除了雲端 STT 服務，系統也支援本地 Breeze-ASR-25 和 Whisper Large3 Turbo 模型：
 
 ### 系統需求
 - **macOS 12+** 與 **Apple Silicon** 處理器 (M1/M2/M3)
@@ -236,8 +236,12 @@ make dev-with-local
 ### 前端設定
 在 LLM 設定對話框中配置：
 - **Base URL**: `http://localhost:8001/v1`
-- **Model**: `breeze-asr-25` 
+- **Model**: `breeze-asr-25` 或 `whisper-large3-turbo`
 - **API Key**: 任意值（localhost 不驗證）
+
+### 可用模型
+- **breeze-asr-25**: 專為繁體中文優化，中英混合效果佳
+- **whisper-large3-turbo**: OpenAI Whisper Large v3 Turbo，速度更快，多語言支持
 
 
 ### 注意事項

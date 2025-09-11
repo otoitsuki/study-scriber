@@ -107,9 +107,19 @@ def get_provider(session_id: UUID) -> ISTTProvider:
             return _instance(GPT4oProvider)
         case "gemini" | "google_gemini":
             return _instance(GeminiProvider)
-        case "breeze-asr-25" | "localhost-whisper" | "localhost-breeze":
-            # 使用 Localhost Whisper Provider (包含 breeze-asr-25 本地模型)
+        case "breeze-asr-25" | "localhost-breeze":
+            # 使用 Localhost Whisper Provider with Breeze-ASR-25 模型
+            provider = LocalhostWhisperProvider(model="breeze-asr-25")
+            _provider_cache[f"localhost-whisper-breeze"] = provider
+            return provider
+        case "localhost-whisper":
+            # 使用預設的 Localhost Whisper Provider
             return _instance(LocalhostWhisperProvider)
+        case "localhost-whisper-turbo":
+            # 使用 Localhost Whisper Provider with Large3 Turbo 模型
+            provider = LocalhostWhisperProvider(model="whisper-large3-turbo")
+            _provider_cache[f"localhost-whisper-turbo"] = provider
+            return provider
         case "whisper" | _:
             # 包含 None / 空字串 → whisper
             return _instance(WhisperProvider)

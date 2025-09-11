@@ -14,7 +14,7 @@ export interface TranscriptEntry {
   startTime: number
   time: string
   text: string
-  provider?: 'whisper' | 'gemini'  // STT Provider 標識
+  provider?: 'whisper' | 'gemini' | 'localhost-breeze' | 'localhost-whisper-turbo'  // STT Provider 標識
 }
 
 export interface AppData {

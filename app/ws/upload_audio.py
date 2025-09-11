@@ -46,16 +46,24 @@ class AudioUploadManager:
         self.max_pending_uploads = 5  # 最大並行上傳數
 
     async def _initialize_received_chunks(self):
-        """從資料庫初始化已收到的切片集合"""
-        try:
-            response = self.supabase_client.table("audio_files").select("chunk_sequence").eq("session_id", str(self.session_id)).execute()
-            if response.data:
-                self.received_chunks = {item['chunk_sequence'] for item in response.data}
-                logger.info(f"從資料庫恢復 {len(self.received_chunks)} 個已存在的切片記錄 for session {self.session_id}")
-        except Exception as e:
-            logger.error(f"從資料庫初始化 received_chunks 失敗: {e}")
-            # 即使初始化失敗，也繼續執行，但使用空的集合
-            self.received_chunks = set()
+        """
+        從資料庫初始化已收到的切片集合
+        
+        修改：為了避免重啟後繼續處理舊的音頻切片，
+        現在總是從空集合開始，不恢復之前的切片記錄。
+        """
+        # 注釋掉恢復邏輯，總是從頭開始
+        # try:
+        #     response = self.supabase_client.table("audio_files").select("chunk_sequence").eq("session_id", str(self.session_id)).execute()
+        #     if response.data:
+        #         self.received_chunks = {item['chunk_sequence'] for item in response.data}
+        #         logger.info(f"從資料庫恢復 {len(self.received_chunks)} 個已存在的切片記錄 for session {self.session_id}")
+        # except Exception as e:
+        #     logger.error(f"從資料庫初始化 received_chunks 失敗: {e}")
+        
+        # 總是從空集合開始，確保每次連接都是全新開始
+        self.received_chunks = set()
+        logger.info(f"🔄 Session {self.session_id} 使用全新的切片集合（不恢復舊數據）")
 
     async def handle_connection(self):
         """處理 WebSocket 連接"""

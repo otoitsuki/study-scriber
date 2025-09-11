@@ -83,6 +83,8 @@ class LLMConfigManager:
 
         if "breeze-asr" in model_lower:
             return "localhost-whisper"
+        elif "whisper-large3-turbo" in model_lower:
+            return "localhost-whisper"
         elif "whisper" in model_lower:
             return "whisper"
         elif "gpt-4o" in model_lower or "gpt4o" in model_lower:

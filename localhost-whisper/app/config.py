@@ -129,6 +129,7 @@ class Settings(BaseSettings):
             "whisper-small",
             "whisper-medium",
             "whisper-large-v3",
+            "whisper-large3-turbo",
             "breeze-asr-25",
         ]
         if v not in valid_models:
@@ -190,6 +191,7 @@ class Settings(BaseSettings):
             "whisper-small",
             "whisper-medium",
             "whisper-large-v3",
+            "whisper-large3-turbo",
             "breeze-asr-25",
         ]
 
@@ -233,6 +235,12 @@ class Settings(BaseSettings):
             "whisper-small": {"params": "244M", "memory": "~2.5GB", "speed": "4x"},
             "whisper-medium": {"params": "769M", "memory": "~5GB", "speed": "2x"},
             "whisper-large-v3": {"params": "1550M", "memory": "~10GB", "speed": "1x"},
+            "whisper-large3-turbo": {
+                "params": "809M", 
+                "memory": "~6GB", 
+                "speed": "1.5x",
+                "description": "Whisper Large v3 Turbo - faster inference with similar accuracy"
+            },
             "breeze-asr-25": {
                 "params": "1550M",
                 "memory": "~10GB",

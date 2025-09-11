@@ -50,8 +50,17 @@ function getAudioChunkInterval(): number {
     }
   }
 
-  // 預設值：10秒
-  return 30 * 1000
+  // 嘗試讀取後端統一配置的秒數格式，並轉換為毫秒
+  const backendDuration = process.env.NEXT_PUBLIC_AUDIO_CHUNK_DURATION_SEC
+  if (backendDuration) {
+    const parsed = parseInt(backendDuration, 10)
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed * 1000 // 轉換為毫秒
+    }
+  }
+
+  // 預設值：15秒（與後端保持一致）
+  return 15 * 1000
 }
 
 /**

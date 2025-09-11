@@ -63,6 +63,15 @@ MODELS_INFO = {
         "speed": "1x",
         "description": "最大模型，準確度最高但速度較慢",
     },
+    "whisper-large3-turbo": {
+        "params": "809M",
+        "size": "~3GB",
+        "memory": "~6GB",
+        "speed": "1.5x",
+        "description": "Whisper Large v3 Turbo - 更快的推理速度，類似的準確度",
+        "hf_repo": "mlx-community/whisper-large-v3-turbo",
+        "type": "huggingface",
+    },
     "breeze-asr-25": {
         "params": "1550M",
         "size": "~6GB",
@@ -92,21 +101,32 @@ def print_models_info():
 
 
 def check_model_exists(model_name: str, models_dir: Path) -> bool:
-    """檢查模型是否已存在"""
-    # 對於 HuggingFace 模型，它們會自動快取，不需要預下載
-    if (
-        model_name in MODELS_INFO
-        and MODELS_INFO[model_name].get("type") == "huggingface"
-    ):
-        return True  # HuggingFace 模型總是"存在"的，因為可以動態載入
-
+    """
+    檢查模型是否已存在本地目錄
+    
+    修復：之前錯誤地假設所有 HuggingFace 模型都"總是存在"，
+    現在正確檢查本地文件是否真實下載到 models/ 目錄中。
+    """
     model_path = models_dir / model_name
 
     # 檢查目錄是否存在且包含模型檔案
     if model_path.exists() and model_path.is_dir():
         # 簡單檢查是否有檔案
         model_files = list(model_path.glob("*"))
-        return len(model_files) > 0
+        if len(model_files) > 0:
+            # 對於 HuggingFace 模型，額外檢查是否有關鍵文件
+            if (
+                model_name in MODELS_INFO
+                and MODELS_INFO[model_name].get("type") == "huggingface"
+            ):
+                # 檢查是否有權重文件或配置文件
+                has_weights = any(
+                    file.name.endswith(('.safetensors', '.bin', '.ckpt'))
+                    for file in model_path.glob("*")
+                )
+                has_config = (model_path / "config.json").exists()
+                return has_weights or has_config
+            return True
 
     return False
 

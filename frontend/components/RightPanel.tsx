@@ -1,5 +1,6 @@
 "use client"
 
+import { useRef, useEffect } from "react";
 import { ScrollArea } from "./ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Square, AlertCircle, Clock } from "lucide-react";
@@ -16,6 +17,30 @@ export default function RightPanel() {
     } = useAppState();
     const { stopRecording } = useAppActions();
 
+    // ScrollArea refs for auto-scrolling
+    const recordingScrollRef = useRef<HTMLDivElement>(null);
+    const finishedScrollRef = useRef<HTMLDivElement>(null);
+
+    // Auto-scroll to bottom when new transcript entries are added
+    useEffect(() => {
+        const scrollToBottom = () => {
+            const isRecordingPhase = appState === "recording_waiting" || appState === "recording_active";
+            const targetRef = isRecordingPhase ? recordingScrollRef : finishedScrollRef;
+            
+            if (targetRef.current) {
+                const scrollContainer = targetRef.current.querySelector('[data-radix-scroll-area-viewport]');
+                if (scrollContainer) {
+                    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+                }
+            }
+        };
+
+        // Use setTimeout to ensure DOM is updated
+        const timeoutId = setTimeout(scrollToBottom, 50);
+        
+        return () => clearTimeout(timeoutId);
+    }, [transcriptEntries.length, appState]); // Trigger when entries length changes or state changes
+
     const formatTime = (seconds: number) => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
@@ -31,7 +56,7 @@ export default function RightPanel() {
             <div className="flex-1 overflow-hidden">
                 {isRecordingPhase ? (
                     <div className="h-full flex flex-col">
-                        <ScrollArea className="flex-1">
+                        <ScrollArea className="flex-1" ref={recordingScrollRef}>
                             {error && (
                                 <Alert variant="destructive" className="m-4">
                                     <AlertCircle className="h-4 w-4" />
@@ -79,7 +104,7 @@ export default function RightPanel() {
                         // processing 階段顯示等待 UI
                         <WaitingState />
                     ) : (
-                        <ScrollArea className="h-full">
+                        <ScrollArea className="h-full" ref={finishedScrollRef}>
                             <div className="p-4 space-y-4">
                                 {transcriptEntries.map((entry, idx) => (
                                     <div key={idx} className="flex gap-4 text-sm">

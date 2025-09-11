@@ -32,10 +32,55 @@ from app.core.config import settings
 from app.core.container import container
 from app.services.stt.factory import get_provider
 from app.services.azure_openai_v2 import queue_manager
+from app.db.database import get_supabase_client
 
 # 配置日誌
 logging.basicConfig(level=settings.LOG_LEVEL, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+async def cleanup_incomplete_sessions():
+    """
+    清理重啟前未完成的 session
+    
+    將所有 'active' 和 'processing' 狀態的 session 標記為 'error'，
+    避免重啟後繼續處理舊的音頻切片。
+    """
+    try:
+        logger.info("🧹 開始清理未完成的 session...")
+        supabase = get_supabase_client()
+        
+        # 查詢所有未完成的 session
+        response = supabase.table("sessions")\
+            .select("id, status, title")\
+            .in_("status", ["active", "processing"])\
+            .execute()
+        
+        if response.data:
+            session_count = len(response.data)
+            logger.info(f"📋 發現 {session_count} 個未完成的 session，正在清理...")
+            
+            # 將這些 session 標記為 error 狀態
+            update_response = supabase.table("sessions")\
+                .update({
+                    "status": "error",
+                    "completed_at": datetime.utcnow().isoformat(),
+                    "error_message": "程序重啟，session 被中斷"
+                })\
+                .in_("status", ["active", "processing"])\
+                .execute()
+            
+            if update_response.data:
+                logger.info(f"✅ 成功清理 {len(update_response.data)} 個未完成的 session")
+                for session in update_response.data:
+                    logger.debug(f"   - Session {session['id']}: {session.get('title', 'Untitled')} -> error")
+            else:
+                logger.warning("⚠️ 清理 session 時沒有更新任何記錄")
+        else:
+            logger.info("✨ 沒有發現未完成的 session，無需清理")
+            
+    except Exception as e:
+        logger.error(f"❌ 清理未完成 session 時發生錯誤: {e}")
+        # 不拋出異常，避免影響程序啟動
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,6 +93,9 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 StudyScriber 正在啟動...")
     check_ffmpeg_health()
     await check_database_connection()
+
+    # 清理重啟前未完成的 session，避免繼續處理舊的音頻切片
+    await cleanup_incomplete_sessions()
 
     # Task 3: 啟動隊列管理器
     try:

@@ -28,19 +28,21 @@ class LocalhostWhisperProvider(ISTTProvider):
     """
     Localhost Whisper Provider
     透過 HTTP API 調用運行在 localhost 的 Whisper 服務
-    預設使用 Breeze-ASR-25 模型
+    支持可配置模型
     """
     
     name = "localhost-whisper"
     
-    def __init__(self, base_url: str = "http://localhost:8001"):
+    def __init__(self, base_url: str = "http://localhost:8001", model: str = "breeze-asr-25"):
         """
         初始化 Localhost Whisper Provider
         
         Args:
             base_url: localhost whisper 服務的基礎 URL
+            model: 使用的模型名稱
         """
         self.base_url = base_url.rstrip("/")
+        self.model = model
         self.transcription_url = f"{self.base_url}/v1/audio/transcriptions"
         self.health_url = f"{self.base_url}/health"
         
@@ -115,12 +117,18 @@ class LocalhostWhisperProvider(ISTTProvider):
                 files = {
                     "file": ("chunk.wav", wav_bytes, "audio/wav")
                 }
+                # 準備請求數據
                 data = {
-                    "model": "breeze-asr-25",  # 使用 Breeze-ASR-25 模型
+                    "model": self.model,  # 使用配置的模型
                     "language": api_language,
                     "response_format": "json",
                     "temperature": 0
                 }
+                
+                # 如果是繁體中文，添加繁體中文引導
+                if canonical == "zh-TW":
+                    data["prompt"] = "以下是繁體中文的句子。"
+                    logger.debug(f"為繁體中文添加引導文字: {data['prompt']}")
                 
                 # 6. 調用 localhost Whisper API
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -159,7 +167,7 @@ class LocalhostWhisperProvider(ISTTProvider):
                     "timestamp": datetime.utcnow().isoformat(),
                     "duration": settings.AUDIO_CHUNK_DURATION_SEC,
                     "provider": "localhost-whisper",
-                    "model": "breeze-asr-25"
+                    "model": self.model
                 }
                 
             except httpx.TimeoutException:
