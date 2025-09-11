@@ -536,8 +536,9 @@ class TranscriptionService:
             # 改用其他方式來減少重複
 
             # 1. Beam search 設定（提升解碼品質）
-            transcribe_options["beam_size"] = 5  # 使用 beam search
-            transcribe_options["best_of"] = 3    # 從多個候選中選最佳
+            # 注意：當前版本的 MLX Whisper 不支援 beam search，暫時移除
+            # transcribe_options["beam_size"] = 5  # 使用 beam search
+            # transcribe_options["best_of"] = 3    # 從多個候選中選最佳
 
             # 2. 長度懲罰（避免過短或過長輸出）
             transcribe_options["length_penalty"] = 1.0
