@@ -275,59 +275,59 @@ class TranscriptionService:
             logger.error(f"音檔載入失敗: {str(e)}")
             raise AudioProcessingError(f"無法載入音檔: {str(e)}")
 
-    def _is_audio_silent(self, audio_array: np.ndarray, 
+    def _is_audio_silent(self, audio_array: np.ndarray,
                         energy_threshold: float = 0.001,
                         silence_ratio_threshold: float = 0.9) -> bool:
         """
         檢測音頻是否為靜音或低能量
-        
+
         Args:
             audio_array: 音頻陣列
             energy_threshold: 能量門檻
             silence_ratio_threshold: 靜音比例門檻
-            
+
         Returns:
             bool: 是否為靜音
         """
         try:
             # 計算音頻能量（RMS）
             energy = np.sqrt(np.mean(audio_array ** 2))
-            
+
             # 如果整體能量過低，直接判定為靜音
             if energy < energy_threshold:
                 logger.debug(f"🔇 [靜音檢測] 整體能量過低: {energy:.6f} < {energy_threshold}")
                 return True
-            
+
             # 分段檢測靜音
             frame_length = int(0.1 * 16000)  # 100ms 窗口
             hop_length = frame_length // 2
-            
+
             silent_frames = 0
             total_frames = 0
-            
+
             for i in range(0, len(audio_array) - frame_length, hop_length):
                 frame = audio_array[i:i + frame_length]
                 frame_energy = np.sqrt(np.mean(frame ** 2))
-                
+
                 total_frames += 1
                 if frame_energy < energy_threshold:
                     silent_frames += 1
-            
+
             silence_ratio = silent_frames / total_frames if total_frames > 0 else 1.0
-            
+
             is_silent = silence_ratio >= silence_ratio_threshold
             logger.debug(
                 f"🔇 [靜音檢測] 能量: {energy:.6f}, 靜音比例: {silence_ratio:.2f}, "
                 f"是否靜音: {is_silent}"
             )
-            
+
             return is_silent
-            
+
         except Exception as e:
             logger.warning(f"靜音檢測失敗: {str(e)}")
             return False  # 檢測失敗時預設為非靜音，避免過度過濾
 
-    def _is_repetitive_text(self, text: str, 
+    def _is_repetitive_text(self, text: str,
                           max_repetition_ratio: float = 0.6,
                           min_char_threshold: int = 3) -> bool:
         """
@@ -338,7 +338,7 @@ class TranscriptionService:
         import sys
         import os
         sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
-        
+
         try:
             from app.utils.text_quality import is_repetitive_text
             return is_repetitive_text(text, max_repetition_ratio, min_char_threshold)
@@ -346,51 +346,51 @@ class TranscriptionService:
             # 如果無法導入共用函數，使用本地實現作為備用
             logger.warning("無法導入共用文本品質檢查函數，使用本地實現")
             return self._is_repetitive_text_local(text, max_repetition_ratio, min_char_threshold)
-    
-    def _is_repetitive_text_local(self, text: str, 
+
+    def _is_repetitive_text_local(self, text: str,
                                 max_repetition_ratio: float = 0.6,
                                 min_char_threshold: int = 3) -> bool:
         """本地實現的重複文本檢測（備用）"""
         try:
             if not text or len(text.strip()) < min_char_threshold:
                 return True  # 空文本或過短文本視為低品質
-            
+
             text = text.strip()
-            
+
             # 檢測單字符重複模式
             char_counts = {}
             for char in text:
                 if char.strip():  # 忽略空白字符
                     char_counts[char] = char_counts.get(char, 0) + 1
-            
+
             if char_counts:
                 # 計算最高頻字符的比例
                 max_char_count = max(char_counts.values())
                 repetition_ratio = max_char_count / len(text.replace(' ', ''))
-                
+
                 if repetition_ratio > max_repetition_ratio:
                     logger.debug(
                         f"🔄 [重複檢測] 高重複比例: {repetition_ratio:.2f} > {max_repetition_ratio}, "
                         f"文本: '{text[:20]}...'"
                     )
                     return True
-            
+
             # 檢測常見的 Whisper 幻覺模式
             hallucination_patterns = [
                 r'^([乖嗯呃啊哦]{3,})',  # 重複的中文字符
-                r'^([a-zA-Z])\1{4,}',      # 重複的英文字符 
+                r'^([a-zA-Z])\1{4,}',      # 重複的英文字符
                 r'^(.{1,2})\1{3,}',       # 短模式重複
                 r'(謝謝觀看|謝謝收聽|謝謝|感謝|Subscribe)',  # 常見的幻覺短語
             ]
-            
+
             import re
             for pattern in hallucination_patterns:
                 if re.search(pattern, text):
                     logger.debug(f"🔄 [模式檢測] 檢測到幻覺模式: '{text[:20]}...'")
                     return True
-            
+
             return False
-            
+
         except Exception as e:
             logger.warning(f"重複文本檢測失敗: {str(e)}")
             return False  # 檢測失敗時預設為非重複
@@ -398,11 +398,11 @@ class TranscriptionService:
     def _filter_transcription_result(self, result: Dict[str, Any], audio_array: np.ndarray) -> Optional[Dict[str, Any]]:
         """
         過濾轉錄結果，移除低品質輸出
-        
+
         Args:
             result: 轉錄結果
             audio_array: 音頻陣列
-            
+
         Returns:
             過濾後的結果，如果應該被過濾則返回 None
         """
@@ -411,26 +411,26 @@ class TranscriptionService:
             if self._is_audio_silent(audio_array):
                 logger.info("🔇 [品質過濾] 音頻為靜音，過濾轉錄結果")
                 return None
-            
+
             # 2. 檢查文本品質
             text = result.get("text", "").strip()
             if not text:
                 logger.info("🔇 [品質過濾] 轉錄結果為空，過濾")
                 return None
-            
+
             # 3. 檢測重複模式
             if self._is_repetitive_text(text):
                 logger.info(f"🔄 [品質過濾] 檢測到重複模式，過濾: '{text[:30]}...'")
                 return None
-            
+
             # 4. 檢查文本長度合理性
             if len(text) > 500:  # 15秒音頻不應該產生過長文本
                 logger.warning(f"🔇 [品質過濾] 文本過長，可能為幻覺: {len(text)} 字符")
                 return None
-            
+
             logger.debug(f"✅ [品質過濾] 轉錄結果通過品質檢查: '{text[:50]}...'")
             return result
-            
+
         except Exception as e:
             logger.warning(f"品質過濾失敗: {str(e)}")
             return result  # 過濾失敗時返回原結果
@@ -517,7 +517,7 @@ class TranscriptionService:
             traditional_chinese_prompt = ""
             if language and language.lower() in ["zh", "chinese", "zh-tw", "zh-cn"]:
                 traditional_chinese_prompt = "以下是繁體中文的句子。"
-            
+
             if prompt:
                 if traditional_chinese_prompt:
                     transcribe_options["initial_prompt"] = f"{traditional_chinese_prompt} {prompt}"
@@ -529,27 +529,58 @@ class TranscriptionService:
             # 設定溫度（降低溫度減少幻覺）
             transcribe_options["temperature"] = max(0.0, min(temperature, 0.2))
 
+            # ===============================
+            # 防疊字核心參數設定
+            # ===============================
+            # 注意：MLX Whisper 不支援 no_repeat_ngram_size 和 repetition_penalty 參數
+            # 改用其他方式來減少重複
+
+            # 1. Beam search 設定（提升解碼品質）
+            transcribe_options["beam_size"] = 5  # 使用 beam search
+            transcribe_options["best_of"] = 3    # 從多個候選中選最佳
+
+            # 2. 長度懲罰（避免過短或過長輸出）
+            transcribe_options["length_penalty"] = 1.0
+
+            # ===============================
+            # 抑制幻覺 Token 設定
+            # ===============================
+
             # 添加 suppress_tokens 來抑制常見的幻覺 token
-            # 這些是 Whisper 常見幻覺輸出的 token ID
             suppress_tokens = [
                 # 常見的重複字符和無意義音素
                 50257,  # <endoftext>
                 50362,  # (music)
                 50363,  # (applause)
+                50364,  # (laughter)
+                50365,  # [BLANK_AUDIO]
                 # 可以根據需要添加更多 token
             ]
-            
+
             # 對於中文，添加額外的抑制策略
             if language and language.lower() in ["zh", "chinese", "zh-tw", "zh-cn"]:
-                # 可以根據觀察到的幻覺模式添加特定 token
-                pass
-            
+                # 中文常見幻覺模式的額外抑制
+                # 這些 token ID 可能需要根據實際觀察到的幻覺進行調整
+                chinese_hallucination_tokens = [
+                    # 可以根據觀察到的特定幻覺模式添加對應的 token ID
+                ]
+                suppress_tokens.extend(chinese_hallucination_tokens)
+
+                logger.debug(f"🇹🇼 為中文模式添加額外幻覺抑制 tokens: {len(chinese_hallucination_tokens)} 個")
+
             transcribe_options["suppress_tokens"] = suppress_tokens
 
+            # ===============================
+            # 品質控制參數
+            # ===============================
+
             # 設定其他參數來減少幻覺
-            transcribe_options["no_speech_threshold"] = 0.4  # 提高靜音檢測門檻
-            transcribe_options["logprob_threshold"] = -0.8   # 提高置信度門檻
-            transcribe_options["compression_ratio_threshold"] = 2.0  # 降低重複內容門檻
+            transcribe_options["no_speech_threshold"] = 0.4     # 提高靜音檢測門檻
+            transcribe_options["logprob_threshold"] = -0.8      # 提高置信度門檻
+            transcribe_options["compression_ratio_threshold"] = 2.0  # 降低重複內容門檻（更嚴格）
+
+            # 條件熵設定（MLX Whisper 支援此參數）
+            transcribe_options["condition_on_previous_text"] = False  # 不依賴前文，減少累積錯誤
 
             # 設定時間戳
             # 根據請求的 granularities 決定是否啟用 word_timestamps
@@ -564,7 +595,7 @@ class TranscriptionService:
                 transcribe_options["word_timestamps"] = False
 
             logger.debug(f"開始 MLX Whisper 轉錄: options={transcribe_options}")
-            
+
             # 記錄繁體中文引導狀態
             if "initial_prompt" in transcribe_options:
                 logger.info(f"使用引導文字確保繁體中文輸出: {transcribe_options['initial_prompt'][:30]}...")
@@ -606,7 +637,7 @@ class TranscriptionService:
                 result, timestamp_granularities
             )
 
-            # 品質過濾
+            # 品質過濾和後處理
             filtered_result = self._filter_transcription_result(processed_result, audio_array)
             if filtered_result is None:
                 # 返回空結果表示被過濾
@@ -618,6 +649,40 @@ class TranscriptionService:
                     "words": [],
                     "_filtered": True  # 標記為已過濾
                 }
+
+            # 應用後處理去重
+            if filtered_result.get("text"):
+                try:
+                    # 導入後處理函數
+                    import sys
+                    import os
+                    sys.path.append(os.path.join(os.path.dirname(__file__), '../../../'))
+                    from app.utils.text_quality import postprocess_transcription_text
+
+                    original_text = filtered_result["text"]
+                    processed_text = postprocess_transcription_text(original_text, "MLX-Whisper")
+
+                    if processed_text != original_text:
+                        logger.info(f"🔧 [後處理] 文本去重完成: '{original_text[:30]}...' -> '{processed_text[:30]}...'")
+                        filtered_result["text"] = processed_text
+
+                        # 如果後處理後文本為空，標記為過濾
+                        if not processed_text.strip():
+                            logger.info("🔇 [後處理] 去重後文本為空，標記為過濾")
+                            return {
+                                "text": "",
+                                "language": result.get("language", "unknown"),
+                                "segments": [],
+                                "words": [],
+                                "_filtered": True,
+                                "_postprocessed": True
+                            }
+
+                except ImportError as e:
+                    logger.warning(f"無法導入後處理函數，跳過去重步驟: {e}")
+                except Exception as e:
+                    logger.error(f"後處理過程發生錯誤: {e}")
+                    # 發生錯誤時使用原始結果
 
             logger.debug(
                 f"MLX Whisper 轉錄完成，文字長度: {len(filtered_result['text'])}, segments_count: {len(filtered_result['segments'])}"
