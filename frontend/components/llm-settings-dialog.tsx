@@ -7,8 +7,15 @@ import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { Badge } from './ui/badge'
-import { Loader2, CheckCircle, XCircle, Info, Eye, EyeOff } from 'lucide-react'
+import { Loader2, CheckCircle, XCircle, Info, Eye, EyeOff, Globe } from 'lucide-react'
 import { useToast } from './ui/use-toast'
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from './ui/select'
 import {
     LLMConfig,
     LLMConfigFormData,
@@ -17,6 +24,13 @@ import {
     COMMON_MODELS,
     LLM_CONFIG_STORAGE_KEYS
 } from '@/types/llm-config'
+import { LanguageCode } from '@/types/language'
+import {
+    getSelectedLanguage,
+    saveSelectedLanguage,
+    getLanguageLabel,
+    getSupportedLanguages
+} from '@/lib/language-utils'
 import { sessionAPI } from '@/lib/api'
 
 interface LLMSettingsDialogProps {
@@ -42,9 +56,13 @@ export function LLMSettingsDialog({ open, onOpenChange, onSave }: LLMSettingsDia
     const [showApiKey, setShowApiKey] = useState(false)
     const [isDirty, setIsDirty] = useState(false)
 
+    // 語言設定狀態
+    const [selectedLanguage, setSelectedLanguage] = useState<LanguageCode>('zh-TW')
+
     // 載入 localStorage 的設定
     useEffect(() => {
         if (open) {
+            // 載入 LLM 配置
             const savedConfig = {
                 baseUrl: localStorage.getItem(LLM_CONFIG_STORAGE_KEYS.BASE_URL) || DEFAULT_LLM_CONFIGS.openai.baseUrl,
                 apiKey: localStorage.getItem(LLM_CONFIG_STORAGE_KEYS.API_KEY) || '',
@@ -52,6 +70,11 @@ export function LLMSettingsDialog({ open, onOpenChange, onSave }: LLMSettingsDia
                 apiVersion: localStorage.getItem(LLM_CONFIG_STORAGE_KEYS.API_VERSION) || ''
             }
             setFormData(savedConfig)
+
+            // 載入語言設定
+            const savedLanguage = getSelectedLanguage()
+            setSelectedLanguage(savedLanguage)
+
             setTestResult(null)
             setIsDirty(false)
         }
@@ -62,6 +85,12 @@ export function LLMSettingsDialog({ open, onOpenChange, onSave }: LLMSettingsDia
         setFormData(prev => ({ ...prev, [field]: value }))
         setIsDirty(true)
         setTestResult(null) // 清除測試結果
+    }
+
+    // 語言變更處理
+    const handleLanguageChange = (language: LanguageCode) => {
+        setSelectedLanguage(language)
+        setIsDirty(true)
     }
 
     // 快速設定預設值
@@ -146,11 +175,14 @@ export function LLMSettingsDialog({ open, onOpenChange, onSave }: LLMSettingsDia
             return
         }
 
-        // 儲存到 localStorage
+        // 儲存 LLM 配置到 localStorage
         localStorage.setItem(LLM_CONFIG_STORAGE_KEYS.BASE_URL, formData.baseUrl)
         localStorage.setItem(LLM_CONFIG_STORAGE_KEYS.API_KEY, formData.apiKey)
         localStorage.setItem(LLM_CONFIG_STORAGE_KEYS.MODEL, formData.model)
         localStorage.setItem(LLM_CONFIG_STORAGE_KEYS.API_VERSION, formData.apiVersion)
+
+        // 儲存語言設定
+        saveSelectedLanguage(selectedLanguage)
 
         // 回傳配置給父元件
         onSave({
@@ -162,7 +194,7 @@ export function LLMSettingsDialog({ open, onOpenChange, onSave }: LLMSettingsDia
 
         toast({
             title: "設定已儲存",
-            description: "LLM 配置將在下次建立會話時生效"
+            description: "LLM 配置和語言設定將在下次建立會話時生效"
         })
 
         onOpenChange(false)
@@ -299,6 +331,33 @@ export function LLMSettingsDialog({ open, onOpenChange, onSave }: LLMSettingsDia
                                 placeholder="2024-06-01"
                                 className="font-mono text-sm bg-white text-neutral-900 placeholder:text-neutral-400 dark:bg-neutral-900 dark:text-neutral-50"
                             />
+                        </div>
+
+                        {/* 語言選擇 */}
+                        <div>
+                            <Label htmlFor="language">語音轉錄語言</Label>
+                            <Select
+                                value={selectedLanguage}
+                                onValueChange={(value) => handleLanguageChange(value as LanguageCode)}
+                            >
+                                <SelectTrigger className="w-full bg-white text-neutral-900 dark:bg-neutral-900 dark:text-neutral-50">
+                                    <Globe className="h-4 w-4 mr-2" />
+                                    <SelectValue placeholder="選擇語言" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {getSupportedLanguages().map((lang) => (
+                                        <SelectItem key={lang.code} value={lang.code}>
+                                            <div className="flex items-center gap-2">
+                                                <span>{lang.nativeLabel}</span>
+                                                <span className="text-xs text-muted-foreground">({lang.label})</span>
+                                            </div>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground mt-1">
+                                目前選擇：{getLanguageLabel(selectedLanguage)}
+                            </p>
                         </div>
                     </div>
 

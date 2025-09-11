@@ -10,6 +10,7 @@ AI 智慧錄音筆記工具，支援即時逐字稿轉錄與 Markdown 筆記編�
 - **即時錄音轉錄**：支援 Azure OpenAI Whisper、Azure GPT-4o-transcribe、本地 Breeze-ASR-25 與 Whisper Large3 Turbo 多種 STT 模型
 - **筆記編輯**：Markdown 格式筆記，支援即時編輯與自動儲存
 - **隱私保護**：使用本地 STT 引擎完全離線，不上傳雲端
+- **智能過濾**：自動過濾無聲音檔產生的重複字符，提升轉錄品質
 - **完整匯出**：ZIP 格式匯出包含 Markdown 筆記與時間戳逐字稿
 
 ## 安裝與啟動指南

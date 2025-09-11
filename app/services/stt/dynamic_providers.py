@@ -15,6 +15,7 @@ from app.db.database import get_supabase_client
 from app.utils.timer import PerformanceTimer
 from app.utils.timing import calc_times
 from app.lib.httpx_timeout import get_httpx_timeout
+from app.utils.text_quality import check_transcription_quality
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -311,6 +312,7 @@ class LocalhostWhisperProviderDynamic(ISTTProvider):
 
         logger.info(f"✅ Created LocalhostWhisperProviderDynamic: endpoint={self.base_url}, model={model}")
 
+
     async def _check_service_health(self) -> bool:
         """檢查 localhost whisper 服務是否可用"""
         import httpx
@@ -409,12 +411,22 @@ class LocalhostWhisperProviderDynamic(ISTTProvider):
                             continue
                         return None
 
+                # 5. 檢查是否被過濾
+                if result.get("_filtered"):
+                    logger.info(f"LocalhostWhisperDynamic 結果被品質過濾: session={session_id}, chunk={chunk_seq}")
+                    return None
+                
                 text = result.get("text", "").strip()
                 if not text:
                     logger.info(f"Localhost Whisper 回傳空文字 session={session_id} seq={chunk_seq}")
                     return None
+                
+                # 6. 額外的品質檢查（雙重保險）
+                if not check_transcription_quality(text, "LocalhostWhisperDynamic"):
+                    logger.info(f"DynamicProvider 層品質檢查失敗，過濾結果: session={session_id}, chunk={chunk_seq}")
+                    return None
 
-                # 5. 計算時間戳
+                # 7. 計算時間戳
                 start_time, end_time = calc_times(chunk_seq)
 
                 return {

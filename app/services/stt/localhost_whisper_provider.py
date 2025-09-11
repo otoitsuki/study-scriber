@@ -17,6 +17,7 @@ from app.services.stt.lang_map import to_whisper
 from app.utils.timer import PerformanceTimer
 from app.utils.timing import calc_times
 from app.core.ffmpeg import detect_audio_format, webm_to_wav
+from app.utils.text_quality import check_transcription_quality
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class LocalhostWhisperProvider(ISTTProvider):
         # HTTP 客戶端設定
         self.timeout = httpx.Timeout(connect=5.0, read=60.0, write=30.0, pool=5.0)
         
+
     async def _check_service_health(self) -> bool:
         """檢查 localhost whisper 服務是否可用"""
         try:
@@ -147,16 +149,26 @@ class LocalhostWhisperProvider(ISTTProvider):
                 # 7. 調試輸出
                 logger.debug(f"Localhost Whisper raw response: {result}")
                 
-                # 8. 提取文本
+                # 8. 檢查是否被過濾
+                if result.get("_filtered"):
+                    logger.info(f"Localhost Whisper 結果被品質過濾: session_id={session_id}, chunk={chunk_seq}")
+                    return None
+                
+                # 9. 提取文本
                 text = result.get("text", "").strip()
                 if not text:
                     logger.info(f"Localhost Whisper 返回空文本: session_id={session_id}, chunk={chunk_seq}")
                     return None
                 
-                # 9. 計算時間戳
+                # 10. 額外的品質檢查（雙重保險）
+                if not check_transcription_quality(text, "LocalhostWhisper"):
+                    logger.info(f"Provider 層品質檢查失敗，過濾結果: session_id={session_id}, chunk={chunk_seq}")
+                    return None
+                
+                # 11. 計算時間戳
                 start_time, end_time = calc_times(chunk_seq)
                 
-                # 10. 返回結果
+                # 12. 返回結果
                 return {
                     "text": text,
                     "chunk_sequence": chunk_seq,

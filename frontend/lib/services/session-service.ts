@@ -3,6 +3,7 @@
 import { BaseService } from './base-service'
 import { ISessionService } from './interfaces'
 import { sessionAPI, llmConfigUtils, type SessionCreateRequest, type SessionResponse } from '../api'
+import { getSelectedLanguage } from '../language-utils'
 import axios from 'axios'
 
 /**
@@ -123,8 +124,8 @@ export class SessionService extends BaseService implements ISessionService {
                 content,
                 start_ts: startTs,
                 stt_provider: sttProvider,
-                // 後端期望 language 欄位，符合 SessionCreateRequest schema
-                language: 'zh-TW',
+                // 使用使用者選擇的語言，而不是硬編碼
+                language: getSelectedLanguage(),
             }
 
             const session = await llmConfigUtils.createSessionWithLLMConfig(sessionData)
@@ -156,8 +157,8 @@ export class SessionService extends BaseService implements ISessionService {
                 title,
                 type: 'note_only',
                 content,
-                // 後端期望 language 欄位，符合 SessionCreateRequest schema
-                language: 'zh-TW',
+                // 使用使用者選擇的語言，而不是硬編碼
+                language: getSelectedLanguage(),
             }
 
             const session = await llmConfigUtils.createSessionWithLLMConfig(sessionData)

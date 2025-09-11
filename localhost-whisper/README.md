@@ -4,7 +4,7 @@
 
 ## 主要功能
 
-- **即時錄音轉錄**：支援 Azure OpenAI Whisper、Azure GPT-4o-transcribe  與本地 Breeze-ASR-25 多種 STT 模型
+- **即時錄音轉錄**：支援 Azure OpenAI Whisper、Azure GPT-4o-transcribe  與本地 MLX Whisper 多種 STT 模型
 - **筆記編輯**：Markdown 格式筆記，支援即時編輯與自動儲存
 - **隱私保護**：使用本地 STT 引擎完全離線，不上傳雲端
 - **完整匯出**：ZIP 格式匯出包含 Markdown 筆記與時間戳逐字稿

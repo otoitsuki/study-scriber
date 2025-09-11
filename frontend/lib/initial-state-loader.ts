@@ -31,14 +31,14 @@ export class InitialStateLoader {
             const savedAppState = this.loadSavedAppState()
 
             // 修正：如果儲存的狀態是暫時性或已完成的，則重置為預設狀態
+            const transientAppStates = ['recording_waiting', 'recording_active', 'processing', 'finished', 'uploading']
             console.log('🔍 [InitialStateLoader] 檢查儲存的狀態:', {
                 savedState: savedAppState?.state,
-                shouldReset: savedAppState?.state && ['recording_waiting', 'recording_active', 'processing', 'finished'].includes(savedAppState.state)
+                shouldReset: savedAppState?.state && transientAppStates.includes(savedAppState.state)
             })
 
             const validInitialState =
-                savedAppState?.state &&
-                    !['recording_waiting', 'recording_active', 'processing', 'finished'].includes(savedAppState.state)
+                savedAppState?.state && !transientAppStates.includes(savedAppState.state)
                     ? savedAppState.state
                     : 'default'
 
@@ -93,9 +93,15 @@ export class InitialStateLoader {
 
             // 驗證會話資料結構
             if (session && typeof session === 'object' && session.id) {
-                // 只有在會話狀態不是 completed 或 error 時才恢復
-                if (session.status === 'completed' || session.status === 'error') {
-                    console.log('🔄 [InitialStateLoader] 上次會話已完成，不恢復:', session.status)
+                // 不恢復已完成、錯誤或暫時性狀態的會話
+                const transientStates = ['completed', 'error', 'active', 'processing', 'recording', 'uploading']
+                if (transientStates.includes(session.status)) {
+                    console.log('🔄 [InitialStateLoader] 上次會話狀態為暫時性/已完成，不恢復:', {
+                        status: session.status,
+                        id: session.id
+                    })
+                    // 清除 localStorage 中的過期會話資料
+                    localStorage.removeItem(this.STORAGE_KEYS.LAST_SESSION)
                     return null
                 }
 
