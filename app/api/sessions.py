@@ -379,6 +379,80 @@ async def get_session(
     return SessionOut.model_validate(normalized)
 
 
+@router.get("/session/{session_id}/validate-for-recording")
+async def validate_session_for_recording(
+    session_id: UUID,
+    supabase: Client = Depends(_get_supabase_dep)
+) -> dict:
+    """
+    驗證會話是否可用於錄音上傳
+    
+    - 檢查會話是否存在、狀態是否為 active、類型是否為 recording
+    - 提供詳細的驗證結果，幫助前端診斷問題
+    """
+    try:
+        logger.info(f"🔍 [會話驗證API] 檢查會話 {session_id} 的錄音上傳可用性")
+        
+        # 檢查會話是否存在
+        response = supabase.table("sessions").select("*").eq("id", str(session_id)).limit(1).execute()
+        
+        if not response.data:
+            return {
+                "valid": False,
+                "error_code": "session_not_found",
+                "message": f"會話 {session_id} 不存在",
+                "session": None
+            }
+        
+        session = response.data[0]
+        session_status = session.get('status')
+        session_type = session.get('type')
+        
+        logger.info(f"📋 [會話驗證API] 會話詳情: status={session_status}, type={session_type}")
+        
+        # 檢查狀態和類型
+        issues = []
+        if session_status != 'active':
+            issues.append(f"狀態為 {session_status}，需要 active")
+        if session_type != 'recording':
+            issues.append(f"類型為 {session_type}，需要 recording")
+        
+        if issues:
+            return {
+                "valid": False,
+                "error_code": "session_invalid_state",
+                "message": f"會話不可用於錄音: {'; '.join(issues)}",
+                "session": {
+                    "id": str(session_id),
+                    "status": session_status,
+                    "type": session_type,
+                    "title": session.get('title')
+                }
+            }
+        
+        logger.info(f"✅ [會話驗證API] 會話 {session_id} 可用於錄音")
+        return {
+            "valid": True,
+            "error_code": None,
+            "message": "會話可用於錄音上傳",
+            "session": {
+                "id": str(session_id),
+                "status": session_status,
+                "type": session_type,
+                "title": session.get('title')
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"💥 [會話驗證API] 驗證過程出錯: {e}")
+        return {
+            "valid": False,
+            "error_code": "validation_error",
+            "message": f"驗證過程出錯: {str(e)}",
+            "session": None
+        }
+
+
 @router.patch("/session/{session_id}/provider")
 async def update_session_provider(
     session_id: UUID,

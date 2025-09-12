@@ -3,6 +3,7 @@ StudyScriber 音檔切片上傳 API
 """
 
 import logging
+from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, Depends, HTTPException
 from starlette.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_409_CONFLICT
@@ -17,6 +18,7 @@ from app.core.container import container
 from app.utils.validators import valid_webm
 from app.services.stt.factory import get_provider
 from app.services.stt.save_utils import save_and_push_result
+from app.utils.db_compatibility import safe_insert_audio_file, safe_update_processing_status
 
 
 logger = logging.getLogger(__name__)
@@ -65,24 +67,66 @@ async def upload_segment(
 
     # 會話驗證 - 檢查 session 存在且狀態正確
     try:
-        session_response = supabase.table("sessions").select("*").eq("id", str(sid)).eq("status", "active").limit(1).execute()
-        if not session_response.data:
-            detail = {"code": "session_not_active", "message": "Session not found or not active"}
-            logger.error(detail)
+        # 先檢查會話是否存在
+        logger.info(f"🔍 [會話驗證] 檢查會話 {sid} 的存在性和狀態")
+        all_session_response = supabase.table("sessions").select("*").eq("id", str(sid)).limit(1).execute()
+        
+        if not all_session_response.data:
+            detail = {"code": "session_not_found", "message": f"Session {sid} not found"}
+            logger.error(f"❌ [會話驗證] {detail}")
             raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
+        
+        session = all_session_response.data[0]
+        logger.info(f"📋 [會話驗證] 找到會話: id={session.get('id')}, status={session.get('status')}, type={session.get('type')}")
+        
+        # 檢查會話狀態
+        if session.get('status') != 'active':
+            # 嘗試自動重新激活會話（如果是意外變成 completed 的狀況）
+            if session.get('status') == 'completed' and session.get('type') == 'recording':
+                logger.warning(f"⚠️ [會話修復] 嘗試重新激活意外完成的錄音會話 {sid}")
+                try:
+                    reactivate_response = supabase.table("sessions").update({
+                        "status": "active",
+                        "updated_at": datetime.utcnow().isoformat()
+                    }).eq("id", str(sid)).execute()
+                    
+                    if reactivate_response.data:
+                        logger.info(f"✅ [會話修復] 成功重新激活會話 {sid}")
+                        session = reactivate_response.data[0]  # 使用更新後的會話資料
+                    else:
+                        logger.error(f"❌ [會話修復] 無法重新激活會話 {sid}")
+                        raise Exception("Failed to reactivate session")
+                except Exception as reactivate_error:
+                    logger.error(f"💥 [會話修復] 重新激活失敗: {reactivate_error}")
+                    detail = {
+                        "code": "session_not_active", 
+                        "message": f"Session {sid} is {session.get('status')}, not active (reactivation failed)"
+                    }
+                    raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
+            else:
+                detail = {
+                    "code": "session_not_active", 
+                    "message": f"Session {sid} is {session.get('status')}, not active"
+                }
+                logger.error(f"❌ [會話驗證] {detail}")
+                raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
-        session = session_response.data[0]
+        # 檢查會話類型
         if session.get('type') != 'recording':
-            detail = {"code": "session_not_recording", "message": "Session is not in recording mode"}
-            logger.error(detail)
+            detail = {
+                "code": "session_not_recording", 
+                "message": f"Session {sid} is {session.get('type')}, not recording mode"
+            }
+            logger.error(f"❌ [會話驗證] {detail}")
             raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
+        
+        logger.info(f"✅ [會話驗證] 會話 {sid} 驗證通過")
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Session validation error: {e}")
-        detail = {"code": "session_validation_failed", "message": "Session validation failed"}
-        logger.error(detail)
+        logger.error(f"💥 [會話驗證] 意外錯誤: {e}")
+        detail = {"code": "session_validation_failed", "message": f"Session validation failed: {str(e)}"}
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=detail)
 
     # 序號唯一性檢查 - (session_id, seq) UNIQUE
@@ -138,16 +182,18 @@ async def process_and_transcribe(sid: UUID, seq: int, webm_blob: bytes):
         # 2. 記錄到資料庫 audio_files 表
         supabase = get_supabase_client()
         app_settings = get_settings()
+        # 準備音檔記錄資料
         audio_file_data = {
             "session_id": str(sid),
             "chunk_sequence": seq,
             "r2_key": blob_path,
             "r2_bucket": r2_client.bucket_name,
             "file_size": len(webm_blob),
-            "duration_seconds": app_settings.AUDIO_CHUNK_DURATION_SEC  # 從環境變數讀取切片時長
+            "duration_seconds": app_settings.AUDIO_CHUNK_DURATION_SEC
         }
 
-        audio_response = supabase.table("audio_files").insert(audio_file_data).execute()
+        # 使用相容性工具安全插入記錄
+        audio_response = safe_insert_audio_file(supabase, audio_file_data)
         if not audio_response.data:
             raise Exception("Failed to insert audio file record")
 
@@ -155,16 +201,29 @@ async def process_and_transcribe(sid: UUID, seq: int, webm_blob: bytes):
 
         # 3. 啟動轉錄服務
         try:
+            # 更新狀態為轉錄中
+            safe_update_processing_status(supabase, str(sid), seq, "transcribing")
+
             provider = get_provider(sid)
             logger.info(f"🎯 [轉錄啟動] 開始轉錄切片 {seq} (provider={provider.name})")
             result = await provider.transcribe(webm_blob, sid, seq)
+            
             if result:
                 await save_and_push_result(sid, seq, result)
-                logger.info(f"✅ [轉錄啟動] 切片 {seq} 轉錄成功")
+                # 更新狀態為完成
+                safe_update_processing_status(supabase, str(sid), seq, "completed")
+                logger.info(f"✅ [轉錄完成] 切片 {seq} 轉錄成功")
             else:
-                logger.warning(f"⚠️ [轉錄啟動] 切片 {seq} 轉錄失敗")
+                # 更新狀態為失敗
+                safe_update_processing_status(supabase, str(sid), seq, "failed", "Transcription returned empty result")
+                logger.warning(f"⚠️ [轉錄失敗] 切片 {seq} 轉錄失敗")
+                
         except Exception as transcription_error:
             logger.error(f"❌ [轉錄服務錯誤] 切片 {seq}: {transcription_error}")
+            
+            # 更新狀態為失敗並記錄錯誤
+            safe_update_processing_status(supabase, str(sid), seq, "failed", str(transcription_error))
+            
             await transcript_hub.broadcast_error(str(sid), "transcription_service_error", str(transcription_error), seq)
 
         logger.info(f"✅ [背景轉錄] 切片 {seq} 處理完成")

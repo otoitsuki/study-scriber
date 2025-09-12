@@ -33,6 +33,7 @@ from app.core.container import container
 from app.services.stt.factory import get_provider
 from app.services.azure_openai_v2 import queue_manager
 from app.db.database import get_supabase_client
+from app.utils.db_compatibility import safe_cleanup_transcribing_segments
 
 # 配置日誌
 logging.basicConfig(level=settings.LOG_LEVEL, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -40,46 +41,53 @@ logger = logging.getLogger(__name__)
 
 async def cleanup_incomplete_sessions():
     """
-    清理重啟前未完成的 session
+    清理重啟前未完成的 session 和音檔處理狀態
     
-    將所有 'active' 和 'processing' 狀態的 session 標記為 'error'，
+    1. 將所有 'active' 狀態的 session 標記為 'completed'
+    2. 將所有 'transcribing' 狀態的音檔標記為 'failed'
     避免重啟後繼續處理舊的音頻切片。
     """
     try:
-        logger.info("🧹 開始清理未完成的 session...")
+        logger.info("🧹 開始清理未完成的 session 和音檔處理狀態...")
         supabase = get_supabase_client()
         
-        # 查詢所有未完成的 session
-        response = supabase.table("sessions")\
+        # 1. 查詢並清理活躍的 session
+        session_response = supabase.table("sessions")\
             .select("id, status, title")\
-            .in_("status", ["active", "processing"])\
+            .eq("status", "active")\
             .execute()
         
-        if response.data:
-            session_count = len(response.data)
-            logger.info(f"📋 發現 {session_count} 個未完成的 session，正在清理...")
+        if session_response.data:
+            session_count = len(session_response.data)
+            logger.info(f"📋 發現 {session_count} 個活躍的 session，正在清理...")
             
-            # 將這些 session 標記為 error 狀態
-            update_response = supabase.table("sessions")\
+            # 將這些 session 標記為 completed 狀態
+            session_update_response = supabase.table("sessions")\
                 .update({
-                    "status": "error",
-                    "completed_at": datetime.utcnow().isoformat(),
-                    "error_message": "程序重啟，session 被中斷"
+                    "status": "completed",
+                    "completed_at": datetime.utcnow().isoformat()
                 })\
-                .in_("status", ["active", "processing"])\
+                .eq("status", "active")\
                 .execute()
             
-            if update_response.data:
-                logger.info(f"✅ 成功清理 {len(update_response.data)} 個未完成的 session")
-                for session in update_response.data:
-                    logger.debug(f"   - Session {session['id']}: {session.get('title', 'Untitled')} -> error")
+            if session_update_response.data:
+                logger.info(f"✅ 成功清理 {len(session_update_response.data)} 個未完成的 session")
+                for session in session_update_response.data:
+                    logger.debug(f"   - Session {session['id']}: {session.get('title', 'Untitled')} -> completed")
             else:
                 logger.warning("⚠️ 清理 session 時沒有更新任何記錄")
         else:
-            logger.info("✨ 沒有發現未完成的 session，無需清理")
+            logger.info("✨ 沒有發現未完成的 session")
+
+        # 2. 清理正在轉錄中的音檔切片（如果支援處理狀態欄位的話）
+        cleanup_result = safe_cleanup_transcribing_segments(supabase)
+        if cleanup_result == -1:
+            logger.info("💡 提示：如需完整的處理狀態追蹤，請執行資料庫遷移添加 processing_status 欄位")
+            
+        logger.info("🎉 清理完成！系統已準備好處理新的請求")
             
     except Exception as e:
-        logger.error(f"❌ 清理未完成 session 時發生錯誤: {e}")
+        logger.error(f"❌ 清理未完成狀態時發生錯誤: {e}")
         # 不拋出異常，避免影響程序啟動
 
 @asynccontextmanager

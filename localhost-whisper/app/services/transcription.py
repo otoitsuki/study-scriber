@@ -328,7 +328,7 @@ class TranscriptionService:
             return False  # 檢測失敗時預設為非靜音，避免過度過濾
 
     def _is_repetitive_text(self, text: str,
-                          max_repetition_ratio: float = 0.6,
+                          max_repetition_ratio: float = 0.7,  # 與主要系統保持一致
                           min_char_threshold: int = 3) -> bool:
         """
         檢測文本是否為重複字符模式（幻覺輸出）
@@ -340,15 +340,16 @@ class TranscriptionService:
         sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 
         try:
-            from app.utils.text_quality import is_repetitive_text
-            return is_repetitive_text(text, max_repetition_ratio, min_char_threshold)
+            from app.utils.text_quality import is_low_quality_text
+            # 使用統一的品質檢查標準
+            return is_low_quality_text(text, max_repetition_ratio=max_repetition_ratio, min_char_threshold=min_char_threshold)
         except ImportError:
             # 如果無法導入共用函數，使用本地實現作為備用
             logger.warning("無法導入共用文本品質檢查函數，使用本地實現")
             return self._is_repetitive_text_local(text, max_repetition_ratio, min_char_threshold)
 
     def _is_repetitive_text_local(self, text: str,
-                                max_repetition_ratio: float = 0.6,
+                                max_repetition_ratio: float = 0.7,  # 與主要系統保持一致
                                 min_char_threshold: int = 3) -> bool:
         """本地實現的重複文本檢測（備用）"""
         try:
@@ -375,12 +376,15 @@ class TranscriptionService:
                     )
                     return True
 
-            # 檢測常見的 Whisper 幻覺模式
+            # 檢測更多疊字和幻覺模式
             hallucination_patterns = [
-                r'^([乖嗯呃啊哦]{3,})',  # 重複的中文字符
-                r'^([a-zA-Z])\1{4,}',      # 重複的英文字符
-                r'^(.{1,2})\1{3,}',       # 短模式重複
+                r'([乖嗯呃啊哦嘿]{3,})',     # 重複的中文字符（移除開頭限制）
+                r'([a-zA-Z])\1{4,}',          # 重複的英文字符
+                r'(.{1,3})\1{3,}',            # 短模式重複（更嚴格）
+                r'(那那那|就是就是|我我我|的的的|你你你|這這這|要要要|是是是|會會會|有有有|可以可以|現在現在|做做做){2,}',  # 常見中文疊字模式
                 r'(謝謝觀看|謝謝收聽|謝謝|感謝|Subscribe)',  # 常見的幻覺短語
+                r'([我你他她它])\1{2,}',        # 人稱代詞重複
+                r'([的了在和與或但是就這那]{2,})\1+',  # 常見中文虛詞重複
             ]
 
             import re
@@ -388,6 +392,20 @@ class TranscriptionService:
                 if re.search(pattern, text):
                     logger.debug(f"🔄 [模式檢測] 檢測到幻覺模式: '{text[:20]}...'")
                     return True
+
+            # 新增：檢測連續相同詞組重複（針對「我現在要做的就是」這類重複）
+            words = text.split()
+            if len(words) >= 6:
+                # 檢查是否有長詞組重複超過3次
+                for i in range(len(words) - 5):
+                    phrase = ' '.join(words[i:i+3])  # 3詞詞組
+                    count = 0
+                    for j in range(i, len(words) - 2):
+                        if ' '.join(words[j:j+3]) == phrase:
+                            count += 1
+                    if count >= 3:  # 如果3詞詞組重複3次或更多
+                        logger.debug(f"🔄 [詞組重複] 檢測到重複詞組: '{phrase}' 重複 {count} 次")
+                        return True
 
             return False
 
@@ -526,8 +544,8 @@ class TranscriptionService:
             elif traditional_chinese_prompt:
                 transcribe_options["initial_prompt"] = traditional_chinese_prompt
 
-            # 設定溫度（降低溫度減少幻覺）
-            transcribe_options["temperature"] = max(0.0, min(temperature, 0.2))
+            # 設定溫度（大幅降低溫度減少幻覺和疊字）
+            transcribe_options["temperature"] = 0.0  # 強制使用最低溫度
 
             # ===============================
             # 防疊字核心參數設定
@@ -575,10 +593,10 @@ class TranscriptionService:
             # 品質控制參數
             # ===============================
 
-            # 設定其他參數來減少幻覺
-            transcribe_options["no_speech_threshold"] = 0.4     # 提高靜音檢測門檻
-            transcribe_options["logprob_threshold"] = -0.8      # 提高置信度門檻
-            transcribe_options["compression_ratio_threshold"] = 2.0  # 降低重複內容門檻（更嚴格）
+            # 設定更嚴格的參數來減少疊字和幻覺
+            transcribe_options["no_speech_threshold"] = 0.5     # 進一步提高靜音檢測門檻
+            transcribe_options["logprob_threshold"] = -0.5      # 大幅提高置信度門檻（更嚴格）
+            transcribe_options["compression_ratio_threshold"] = 1.8  # 更嚴格的重複內容檢測
 
             # 條件熵設定（MLX Whisper 支援此參數）
             transcribe_options["condition_on_previous_text"] = False  # 不依賴前文，減少累積錯誤
@@ -614,9 +632,41 @@ class TranscriptionService:
                 )
                 logger.debug(f"使用本地模型路徑: {path_or_hf_repo}")
 
-            # 執行轉錄
+            # 分離 transcribe 參數和 decode 參數
+            # mlx_whisper.transcribe 直接支援的參數
+            transcribe_args = {
+                key: transcribe_options[key]
+                for key in transcribe_options
+                if key in [
+                    'verbose', 'temperature', 'compression_ratio_threshold',
+                    'logprob_threshold', 'no_speech_threshold',
+                    'condition_on_previous_text', 'initial_prompt',
+                    'word_timestamps', 'clip_timestamps',
+                    'hallucination_silence_threshold'
+                ]
+            }
+
+            # DecodingOptions 支援的參數 (作為 decode_options)
+            decode_args = {
+                key: transcribe_options[key]
+                for key in transcribe_options
+                if key in [
+                    'task', 'language', 'sample_len', 'best_of',
+                    'beam_size', 'patience', 'length_penalty', 'prompt',
+                    'prefix', 'suppress_tokens', 'suppress_blank',
+                    'without_timestamps', 'max_initial_timestamp', 'fp16'
+                ]
+            }
+
+            logger.debug(f"transcribe_args: {list(transcribe_args.keys())}")
+            logger.debug(f"decode_args: {list(decode_args.keys())}")
+
+            # 執行轉錄，分離參數
             result = mlx_whisper.transcribe(
-                audio_array, path_or_hf_repo=path_or_hf_repo, **transcribe_options
+                audio_array,
+                path_or_hf_repo=path_or_hf_repo,
+                **transcribe_args,
+                **decode_args
             )
 
             # 調試：記錄原始結果結構
@@ -729,12 +779,32 @@ class TranscriptionService:
                     if segment and isinstance(
                         segment, dict
                     ):  # 確保 segment 不是 None 且是字典
+                        # 驗證時間戳數據
+                        start_time = float(segment.get("start", 0))
+                        end_time = float(segment.get("end", 0))
+                        text = segment.get("text", "").strip()
+
+                        # 檢查時間戳是否有效
+                        if end_time <= start_time:
+                            logger.warning(
+                                f"跳過無效段落 {i}: start={start_time}, end={end_time}, "
+                                f"text='{text[:50]}{'...' if len(text) > 50 else ''}'"
+                            )
+                            # 如果時間戳無效但有文字，嘗試修正
+                            if text and start_time == 0 and end_time == 0:
+                                # 如果時間戳都是0，設定一個最小的有效時間範圍
+                                start_time = float(i)
+                                end_time = float(i) + 1.0
+                                logger.info(f"修正段落 {i} 時間戳為: {start_time}-{end_time}")
+                            else:
+                                continue  # 跳過這個無效段落
+
                         segments.append(
                             SegmentInfo(
                                 id=i,
-                                start=float(segment.get("start", 0)),
-                                end=float(segment.get("end", 0)),
-                                text=segment.get("text", "").strip(),
+                                start=start_time,
+                                end=end_time,
+                                text=text,
                             )
                         )
                 processed["segments"] = segments
@@ -742,15 +812,35 @@ class TranscriptionService:
             # 處理單詞資訊
             if TimestampGranularity.WORD in granularities_set and result.get("words"):
                 words = []
-                for word_data in result.get("words", []):
+                for j, word_data in enumerate(result.get("words", [])):
                     if word_data and isinstance(
                         word_data, dict
                     ):  # 確保 word_data 不是 None 且是字典
+                        # 驗證單詞時間戳數據
+                        word_text = word_data.get("word", "").strip()
+                        word_start = float(word_data.get("start", 0))
+                        word_end = float(word_data.get("end", 0))
+
+                        # 檢查時間戳是否有效
+                        if word_end <= word_start:
+                            logger.warning(
+                                f"跳過無效單詞 {j}: word='{word_text}', "
+                                f"start={word_start}, end={word_end}"
+                            )
+                            # 如果單詞有效但時間戳無效，嘗試修正
+                            if word_text and word_start == 0 and word_end == 0:
+                                # 設定最小的有效時間範圍
+                                word_start = float(j) * 0.1
+                                word_end = word_start + 0.1
+                                logger.info(f"修正單詞 {j} '{word_text}' 時間戳為: {word_start}-{word_end}")
+                            else:
+                                continue  # 跳過這個無效單詞
+
                         words.append(
                             WordInfo(
-                                word=word_data.get("word", ""),
-                                start=float(word_data.get("start", 0)),
-                                end=float(word_data.get("end", 0)),
+                                word=word_text,
+                                start=word_start,
+                                end=word_end,
                             )
                         )
                 processed["words"] = words

@@ -55,7 +55,12 @@ CREATE TABLE IF NOT EXISTS audio_files (
     r2_bucket TEXT NOT NULL,
     file_size INTEGER NOT NULL,
     duration_seconds DECIMAL(10, 3),
+    processing_status TEXT DEFAULT 'uploaded' CHECK (processing_status IN ('uploaded', 'transcribing', 'completed', 'failed')),
+    error_message TEXT,
+    transcription_started_at TIMESTAMPTZ,
+    transcription_completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (session_id, chunk_sequence)
 );
 
@@ -92,6 +97,10 @@ CREATE INDEX IF NOT EXISTS idx_notes_session_id ON notes (session_id);
 CREATE INDEX IF NOT EXISTS idx_audio_files_session_id ON audio_files (session_id);
 
 CREATE INDEX IF NOT EXISTS idx_audio_files_sequence ON audio_files (session_id, chunk_sequence);
+
+CREATE INDEX IF NOT EXISTS idx_audio_files_processing_status ON audio_files (processing_status);
+
+CREATE INDEX IF NOT EXISTS idx_audio_files_session_status ON audio_files (session_id, processing_status);
 
 CREATE INDEX IF NOT EXISTS idx_transcript_segments_session_id ON transcript_segments (session_id);
 

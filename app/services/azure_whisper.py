@@ -64,7 +64,10 @@ class AzureWhisperService:
                             file=audio_file,
                             language=api_language,
                             response_format="json",
-                            temperature=0
+                            temperature=0.0,  # 低溫度減少幻覺
+                            # Azure OpenAI Whisper 防疊字參數
+                            # 注意：部分參數可能需要根據 Azure 版本調整
+                            prompt="以下是繁體中文的句子。" if api_language in ["zh", "zh-tw", "chinese"] else None
                         )
                     # Debug Azure 回傳內容
                     try:
@@ -78,8 +81,29 @@ class AzureWhisperService:
                     text = getattr(transcript, "text", None) or (transcript.get("text") if isinstance(transcript, dict) else None)
                     if not text or not text.strip():
                         return None
+
+                    # 應用後處理去重
+                    try:
+                        from app.utils.text_quality import postprocess_transcription_text
+                        original_text = text.strip()
+                        processed_text = postprocess_transcription_text(original_text, "Azure-Whisper")
+
+                        if processed_text != original_text:
+                            logger.info(f"🔧 [Azure後處理] 文本去重完成: '{original_text[:30]}...' -> '{processed_text[:30]}...'")
+
+                        # 如果後處理後文本為空，返回 None
+                        if not processed_text.strip():
+                            logger.info("🔇 [Azure後處理] 去重後文本為空，過濾此chunk")
+                            return None
+
+                        final_text = processed_text
+
+                    except Exception as e:
+                        logger.warning(f"Azure Whisper 後處理失敗，使用原始文本: {e}")
+                        final_text = text.strip()
+
                     return {
-                        "text": text.strip(),
+                        "text": final_text,
                         "chunk_sequence": chunk_seq,
                         "session_id": str(session_id),
                         "lang_code": canonical_lang,

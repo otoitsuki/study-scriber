@@ -311,3 +311,62 @@ async def liveness_check() -> JSONResponse:
         },
         status_code=status.HTTP_200_OK,
     )
+
+
+@router.get(
+    "/v1/status",
+    summary="V1 狀態檢查",
+    description="提供 v1 API 兼容的狀態端點"
+)
+async def status_check_v1(
+    settings: Settings = Depends(get_settings),
+    model_manager: ModelManager = Depends(get_model_manager),
+) -> JSONResponse:
+    """
+    V1 狀態檢查端點
+    
+    提供與 v1 API 兼容的狀態檢查，返回簡化的狀態信息。
+    這個端點主要用於兼容性和監控目的。
+    """
+    try:
+        # 取得基本狀態資訊
+        model_info = await check_model_status(model_manager)
+        uptime = calculate_uptime()
+        
+        # 建立簡化的 v1 狀態回應
+        status_data = {
+            "status": "healthy",
+            "version": "1.0.0",
+            "uptime": round(uptime, 2),
+            "timestamp": datetime.now().isoformat(),
+            "service": "MLX Whisper API",
+            "models": {
+                "loaded": len(model_info.get("loaded_models", [])),
+                "loading": len(model_info.get("loading_models", [])),
+                "supported": len(model_info.get("supported_models", []))
+            }
+        }
+        
+        return JSONResponse(
+            content=status_data,
+            status_code=status.HTTP_200_OK,
+            headers={"Cache-Control": "no-cache", "X-API-Version": "v1"}
+        )
+        
+    except Exception as e:
+        logger.error(f"V1 狀態檢查失敗: {str(e)}", exc_info=True)
+        
+        # 返回錯誤狀態
+        error_status = {
+            "status": "error",
+            "version": "1.0.0",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+            "service": "MLX Whisper API"
+        }
+        
+        return JSONResponse(
+            content=error_status,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Cache-Control": "no-cache", "X-API-Version": "v1"}
+        )
